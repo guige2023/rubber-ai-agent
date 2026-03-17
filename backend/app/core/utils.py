@@ -14,17 +14,19 @@ def load_skill_from_directory(directory: Path) -> Optional[SkillModel]:
 
     try:
         content = skill_md_path.read_text(encoding="utf-8")
+        metadata = {}
         if content.startswith("---"):
             parts = content.split("---", 2)
             if len(parts) >= 3:
-                metadata = yaml.safe_load(parts[1])
-                return SkillModel(
-                    name=metadata.get("name", directory.name),
-                    description=metadata.get("description", ""),
-                    path=directory,
-                    version=metadata.get("version", "0.1.0"),
-                    author=metadata.get("author", "Unknown"),
-                )
+                metadata = yaml.safe_load(parts[1]) or {}
+        
+        return SkillModel(
+            name=metadata.get("name", directory.name),
+            description=metadata.get("description", ""),
+            path=directory,
+            version=metadata.get("version", "0.1.0"),
+            author=metadata.get("author", "Unknown"),
+        )
     except Exception as e:
         logger.error(f"Error loading skill from {directory}: {e}")
     return None

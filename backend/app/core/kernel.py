@@ -1,19 +1,26 @@
-import yaml
-import asyncio
-import platform
 import logging
+import platform
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
-from datetime import datetime, timezone
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, UsageLimits
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
+from sqlmodel import select
 
-from app.core.config import config, get_active_model_id, get_provider_llm_config
-from app.core.db import get_session
-from app.models.database import Session, Message, Task, Schedule
-from app.models.schemas import SkillModel, TaskStatus, TaskModel, ScheduleModel
+from app.core.config import Settings
+from app.core.db import get_session, init_db
+# Refactored Imports
+from app.core.deps import AgentDeps
 from app.core.prompts import OS_PROMPT
+from app.core.toolkits.file import FileToolkit
+from app.core.toolkits.skill import SkillToolkit
+from app.core.toolkits.task import TaskToolkit
+from app.core.toolkits.web import WebToolkit
 from app.core.utils import load_skill_from_directory
+from app.models.database import Session, Message, Task
+from app.models.schemas import SkillModel, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -23,19 +30,39 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class FerrymanKernel:
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
         self.skills: Dict[str, SkillModel] = {}
         self.tasks: Dict[str, Task] = {}
-        self.workspace_root: Path = config.root_dir / "workspaces"
+        self.workspace_root: Path = settings.root_dir / "workspaces"
         self._master_agent: Optional[Agent] = None
         self._browsers: Dict[str, Any] = {}
-        self.mcp_client: Any = None # To be initialized later
+        self._session_headless: Dict[str, bool] = {}
+        # self.mcp_client: Any = None  # To be initialized later
+        self._init_directories(settings)
+        init_db()
 
     # ---- Skill management ------------------------------------------------
 
+    @staticmethod
+    def _init_directories(settings: Settings) -> None:
+        sub_dirs = [
+            *settings.skills_dir,
+            settings.user_dir / "reports",
+            settings.user_dir / "tasks",
+            settings.user_dir / "logs",
+            settings.user_dir / "workspaces",
+            settings.browser_dir,
+        ]
+
+        for sd in sub_dirs:
+            if not sd.exists():
+                sd.mkdir(parents=True, exist_ok=True)
+                logger.info(f"📁 Created directory: {sd}")
+
     def scan_skills(self) -> None:
         """Scan user & official skill directories."""
-        for base in config.skills_dir:
+        for base in self._settings.skills_dir:
             if not base.exists():
                 continue
             for item in base.iterdir():
@@ -68,17 +95,17 @@ class FerrymanKernel:
 
     # ---- Workspace & task management -------------------------------------
 
-    def ensure_session_workspace(self, session_id: str) -> Path:
+    def get_session_workspace(self, session_id: str) -> Path:
         session_dir = self.workspace_root / session_id / "artifacts"
         session_dir.mkdir(parents=True, exist_ok=True)
         return session_dir
 
-    def _persist_task(
-        self,
-        session_id: str,
-        title: str,
-        parent_id: Optional[str] = None,
-        args: Optional[Dict] = None,
+    def persist_task(
+            self,
+            session_id: str,
+            title: str,
+            parent_id: Optional[str] = None,
+            args: Optional[Dict] = None,
     ) -> Task:
         logger.debug(f"Creating task: {title} (session_id: {session_id}, parent_id: {parent_id})")
         task = Task(
@@ -88,28 +115,27 @@ class FerrymanKernel:
             args=args or {},
         )
         self.tasks[task.id] = task
-        
+
         # Persist to DB
         with get_session() as session:
             session.add(task)
             session.commit()
             session.refresh(task)
             logger.debug(f"Task persisted to DB with ID: {task.id}")
-            
+
         return task
 
-    def _persist_task_update(
-        self,
-        task_id: str,
-        status: Optional[str] = None,
-        metadata: Optional[Dict] = None,
+    def persist_task_update(
+            self,
+            task_id: str,
+            status: Optional[str] = None,
+            metadata: Optional[Dict] = None,
     ) -> None:
         logger.debug(f"Updating task {task_id}: status={status}, metadata={metadata}")
         with get_session() as session:
-            from sqlmodel import select
             statement = select(Task).where(Task.id == task_id)
             db_task = session.exec(statement).first()
-            
+
             if db_task:
                 if status:
                     db_task.status = status
@@ -123,388 +149,209 @@ class FerrymanKernel:
                 db_task.updated_at = datetime.now()
                 session.add(db_task)
                 session.commit()
-                
+
                 # Update in-memory cache too
                 self.tasks[task_id] = db_task
 
+    @staticmethod
+    def update_session_usage(session_id: str, input_tokens: int, output_tokens: int) -> None:
+        """Update the cumulative token usage for a session in the database."""
+        with get_session() as session:
+            session_obj = session.get(Session, session_id)
+            if session_obj:
+                session_obj.input_tokens += input_tokens
+                session_obj.output_tokens += output_tokens
+                session_obj.updated_at = datetime.now(timezone.utc)
+                session.add(session_obj)
+                session.commit()
+                logger.debug(f"Updated usage for session {session_id}: +{input_tokens} in, +{output_tokens} out")
+
     # ---- Master Agent ----------------------------------------------------
 
-    async def mcp_tool_bridge(self, ctx: RunContext[None], tool_name: str, arguments: dict) -> dict:
-        """Call an external MCP tool."""
-        if not self.mcp_client:
-            return {"status": "error", "message": "MCP Client not initialized"}
-        return await self.mcp_client.call_tool(tool_name, arguments)
+    # async def mcp_tool_bridge(self, ctx: RunContext[None], tool_name: str, arguments: dict) -> dict:
+    #     """Call an external MCP tool."""
+    #     if not self.mcp_client:
+    #         return {"status": "error", "message": "MCP Client not initialized"}
+    #     return await self.mcp_client.call_tool(tool_name, arguments)
 
-    async def get_browser(self, session_id: str):
-        """Lazy load a BrowserController for the session."""
-        if not hasattr(self, "_browsers"):
-            self._browsers = {}
+    async def get_browser(self, session_id: str, headless: Optional[bool] = None) -> Any:
+        """Lazy load a BrowserController for the session. Re-initializes if mode changes."""
+        await self.cleanup_stale_browsers()
+
+        requested_headless = headless if headless is not None else True
+
+        # 1. Check if we need to switch mode
+        if session_id in self._browsers:
+            entry = self._browsers[session_id]
+            existing_browser = entry["instance"]
+
+            # Only trigger mode change if explicitly requested AND differing
+            if headless is not None and existing_browser._headless != headless:
+                logger.info(
+                    f"🔄 Browser mode change detected ({existing_browser._headless} -> {headless}). Restarting...")
+                await self.close_browser(session_id)
+            else:
+                # Update last active timestamp
+                entry["last_active"] = time.time()
+                return existing_browser
+
+        # 1.5 Enforce Max Instances Limit (LRU Eviction)
+        max_instances = self._settings.get("system.browser.max_instances", 3)
+        if session_id not in self._browsers and len(self._browsers) >= max_instances:
+            oldest_sid = min(self._browsers.keys(), key=lambda sid: self._browsers[sid]["last_active"])
+            logger.info(f"🚀 Max browser instances ({max_instances}) reached. Evicting oldest: {oldest_sid}")
+            await self.close_browser(oldest_sid)
+
+        # 2. Create if missing (or just deleted above)
         if session_id not in self._browsers:
             from app.core.browser import BrowserController
-            browser = BrowserController(headless=True)
+            browser = BrowserController(
+                headless=requested_headless,
+                user_data_dir=str(self._settings.browser_dir)
+            )
             await browser.__aenter__()
-            self._browsers[session_id] = browser
-        return self._browsers[session_id]
+            self._browsers[session_id] = {
+                "instance": browser,
+                "last_active": time.time()
+            }
+
+        return self._browsers[session_id]["instance"]
 
     async def close_browser(self, session_id: str):
-        if hasattr(self, "_browsers") and session_id in self._browsers:
-            await self._browsers[session_id].__aexit__(None, None, None)
-            del self._browsers[session_id]
+        """Safely close and remove a browser instance from cache."""
+        # Pop from dict first to ensure it's removed from cache regardless of closing success
+        entry = self._browsers.pop(session_id, None)
+        if entry:
+            browser = entry["instance"]
+            try:
+                await browser.__aexit__(None, None, None)
+            except Exception as e:
+                logger.exception(f"Failed to gracefully close browser for session {session_id}, "
+                                 f"but removed from cache, exception: {e}")
+
+    async def cleanup_stale_browsers(self):
+        """Close browsers that have been inactive for longer than the configured TTL."""
+        ttl = self._settings.get("system.browser.ttl", 1800)  # Default 30 minutes
+        now = time.time()
+        stale_sids = [
+            sid for sid, entry in self._browsers.items()
+            if now - entry["last_active"] > ttl
+        ]
+
+        for sid in stale_sids:
+            logger.info(f"🧹 Cleaning up stale browser for session: {sid}")
+            await self.close_browser(sid)
 
     def _build_system_prompt(self, session_id: str) -> str:
         """Render the OS Prompt with runtime context."""
-        workspace = self.ensure_session_workspace(session_id)
-        return OS_PROMPT.format(
+        self.get_session_workspace(session_id)
+        
+        # Determine browser visibility
+        is_headless = self._session_headless.get(session_id, True)
+        visibility = "Visible (headless=False). You can ask the user to help." if not is_headless else "Headless (Invisible). Manual intervention is NOT possible."
+        
+        system_prompt = OS_PROMPT.format(
             os_name=platform.system(),
-            current_time=datetime.now().isoformat(),
-            root_dir=str(config.root_dir),
+            current_time=datetime.now().astimezone().isoformat(),
+            root_dir=str(self._settings.root_dir),
             skill_list=self.get_skill_index_xml(),
+            browser_visibility=visibility,
+            session_id=session_id
         )
+        return system_prompt
 
-    def _build_agent(self, session_id: str, system_prompt: str) -> Agent:
-        """
-        Create a PydanticAI Agent with standard OS tools and a given system prompt.
-        Dynamic model initialization using the Registry.
-        """
-        active_model_id = get_active_model_id()
+    def _init_llm_model(self) -> Any:
+        """Initialize the LLM model based on current settings."""
+        active_model_id = self._settings.get_active_model_id()
         provider, model_name = active_model_id.split(":", 1) if ":" in active_model_id else ("gemini", active_model_id)
-        
+
         # Get provider-specific keys/urls from Registry
-        provider_config = get_provider_llm_config(provider)
-        
-        # Standardize Base URL and API Key (Strip spaces, convert empty to None)
+        provider_config = self._settings.get_provider_llm_config(provider)
+
+        # Standardize Base URL and API Key
         api_key = provider_config.get("api_key")
         base_url = provider_config.get("base_url")
         if base_url and isinstance(base_url, str):
             base_url = base_url.strip() or None
         if api_key and isinstance(api_key, str):
             api_key = api_key.strip()
-            
-        # Cleaned kwargs for Provider instantiation
-        p_kwargs = {
-            "api_key": api_key,
-            "base_url": base_url
-        }
-        # Final cleanup of None values to let PydanticAI defaults work
-        p_kwargs = {k: v for k, v in p_kwargs.items() if v is not None}
 
-        # Explicit model initialization to support base_url and api_key overrides via Providers
-        llm_model: Any = model_name
+        p_kwargs = {k: v for k, v in {"api_key": api_key, "base_url": base_url}.items() if v is not None}
+
         try:
             if provider == "openai":
-                from pydantic_ai.models.openai import OpenAIModel
+                from pydantic_ai.models.openai import OpenAIChatModel
                 from pydantic_ai.providers.openai import OpenAIProvider
-                p_instance = OpenAIProvider(**p_kwargs)
-                llm_model = OpenAIModel(model_name, provider=p_instance)
+                return OpenAIChatModel(model_name, provider=OpenAIProvider(**p_kwargs))
             elif provider == "anthropic":
                 from pydantic_ai.models.anthropic import AnthropicModel
                 from pydantic_ai.providers.anthropic import AnthropicProvider
-                p_instance = AnthropicProvider(**p_kwargs)
-                llm_model = AnthropicModel(model_name, provider=p_instance)
+                return AnthropicModel(model_name, provider=AnthropicProvider(**p_kwargs))
             elif provider == "gemini":
                 from pydantic_ai.models.google import GoogleModel
                 from pydantic_ai.providers.google import GoogleProvider
-                p_instance = GoogleProvider(**p_kwargs)
-                llm_model = GoogleModel(model_name, provider=p_instance)
+                return GoogleModel(model_name, provider=GoogleProvider(**p_kwargs))
         except Exception as e:
-            logger.warning(f"Failed to initialize explicit model for {provider}, falling back to string name: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            logger.exception(f"Failed to initialize explicit model for {provider}, "
+                             f"falling back to string name, exception: {e}")
 
-        agent: Agent["FerrymanKernel"] = Agent(
+        return model_name
+
+    def build_agent(self, system_prompt: str) -> Agent:
+        """
+        Create a PydanticAI Agent with modular toolkits and a given system prompt.
+        """
+        llm_model = self._init_llm_model()
+
+        agent: Agent = Agent(
             model=llm_model,
             system_prompt=system_prompt,
-            deps_type=FerrymanKernel,
+            deps_type=AgentDeps,
         )
 
-        # -- Tool: read_skill_sop ------------------------------------------
-        @agent.tool
-        async def read_skill_sop(
-            ctx: RunContext["FerrymanKernel"], skill_name: str
-        ) -> str:
-            """Read the full SOP (SKILL.md) of a specific skill before executing it."""
-            kernel = ctx.deps
-            return kernel.read_skill_sop(skill_name)
-
-        # -- Tool: run_skill -----------------------------------------------
-        @agent.tool
-        async def run_skill(
-            ctx: RunContext["FerrymanKernel"],
-            skill_name: str,
-            instruction: str,
-            session_id: str,
-        ) -> str:
-            """
-            Execute a specialized Skill (App).
-            Skills are independent; if you need to track this as a task, 
-            create the task separately using `create_task`.
-            """
-            kernel = ctx.deps
-            if skill_name not in kernel.skills:
-                return f"Error: Skill '{skill_name}' not found."
-
-            workspace = kernel.ensure_session_workspace(session_id)
-            sop = kernel.read_skill_sop(skill_name)
-            
-            logger.info(f"Executing skill '{skill_name}' in {workspace}")
-            
-            skill_context = f"You are executing the specialized Skill '{skill_name}'.\n\nSOP (Standard Operating Procedure):\n{sop}\n"
-            executor = kernel._build_agent(session_id, skill_context)
-            
-            try:
-                result = await executor.run(instruction, deps=kernel)
-                result_data = getattr(result, 'data', getattr(result, 'output', str(result)))
-                return f"Skill '{skill_name}' execution completed. Result: {str(result_data)}"
-            except Exception as e:
-                return f"Error executing Skill '{skill_name}': {e}"
-
-        def _normalize_workspace_path(file_path: str) -> str:
-            """Strip leading 'artifacts/' from agent-supplied paths to avoid double nesting."""
-            for prefix in ("artifacts/", "./artifacts/", "./"):
-                if file_path.startswith(prefix):
-                    file_path = file_path[len(prefix):]
-            return file_path
-
-        # -- Tool: read_file -----------------------------------------------
-        @agent.tool
-        async def read_file(
-            ctx: RunContext["FerrymanKernel"], file_path: str
-        ) -> str:
-            """Read a file from the session workspace."""
-            base_dir = ctx.deps.ensure_session_workspace(session_id)
-            p = base_dir / _normalize_workspace_path(file_path)
-            if not p.exists():
-                return f"Error: File not found: {file_path}"
-            return p.read_text(encoding="utf-8")
-
-        # -- Tool: write_file ----------------------------------------------
-        @agent.tool
-        async def write_file(
-            ctx: RunContext["FerrymanKernel"],
-            file_path: str,
-            content: str,
-        ) -> str:
-            """Write content to a file in the session workspace."""
-            base_dir = ctx.deps.ensure_session_workspace(session_id)
-            normalized = _normalize_workspace_path(file_path)
-            full_path = base_dir / normalized
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-            full_path.write_text(content, encoding="utf-8")
-            return f"Successfully wrote {len(content)} characters to {normalized}"
-
-        # -- Tool: list_files ----------------------------------------------
-        @agent.tool
-        async def list_files(
-            ctx: RunContext["FerrymanKernel"], directory: str = "."
-        ) -> str:
-            """List files and directories in the session workspace."""
-            base_dir = ctx.deps.ensure_session_workspace(session_id)
-            p = base_dir / _normalize_workspace_path(directory)
-            if not p.exists():
-                return f"Error: Directory not found: {directory}"
-            entries = sorted(p.iterdir())
-            return "\n".join(
-                f"{'[DIR] ' if e.is_dir() else ''}{e.name}" for e in entries
-            )
-
-        # -- RISC Web Actions ----------------------------------------------
-        
-        @agent.tool
-        async def browser_navigate(ctx: RunContext["FerrymanKernel"], url: str) -> str:
-            """Navigate to a website url (e.g. 'https://bing.com') using the stealth browser."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.navigate(url)
-
-        @agent.tool
-        async def browser_get_distilled_dom(ctx: RunContext["FerrymanKernel"]) -> str:
-            """Extract pure, hyper-clean text/markdown content from the current page. Best for reading articles."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.get_distilled_dom()
-
-        @agent.tool
-        async def browser_aria_snapshot(ctx: RunContext["FerrymanKernel"]) -> str:
-            """
-            Get a high-density 'Accessibility Tree' snapshot. 
-            Lists UI elements by Role and Name. Use this to 'see' the UI 
-            layout efficiently for automation.
-            """
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.get_aria_snapshot()
-
-        @agent.tool
-        async def browser_click(ctx: RunContext["FerrymanKernel"], selector: str) -> str:
-            """Click on an element on the parsed DOM using a CSS selector."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.click(selector)
-
-        @agent.tool
-        async def browser_click_id(ctx: RunContext["FerrymanKernel"], element_id: str) -> str:
-            """Click on an element using its numeric ID (e.g. '12') from the aria_snapshot."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.click_id(element_id)
-
-        @agent.tool
-        async def browser_type_id(ctx: RunContext["FerrymanKernel"], element_id: str, text: str) -> str:
-            """Type text into an input field using its numeric ID (e.g. '5') from the aria_snapshot."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.type_id(element_id, text)
-
-        @agent.tool
-        async def browser_hover(ctx: RunContext["FerrymanKernel"], selector: str) -> str:
-            """Hover the mouse over an element on the current page."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.hover(selector)
-
-        @agent.tool
-        async def browser_scroll(ctx: RunContext["FerrymanKernel"], selector: str = None) -> str:
-            """Scroll the page or a specific element into view."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.scroll(selector)
-
-        @agent.tool
-        async def browser_wait(ctx: RunContext["FerrymanKernel"], timeout_ms: int = 2000, selector: str = None) -> str:
-            """Wait for a certain amount of time or for an element to appear."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.wait(timeout_ms, selector)
-
-        @agent.tool
-        async def browser_screenshot(ctx: RunContext["FerrymanKernel"], selector: str = None) -> str:
-            """Take a screenshot of the page or a specific element."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.screenshot(selector)
-
-        @agent.tool
-        async def browser_type(ctx: RunContext["FerrymanKernel"], selector: str, text: str) -> str:
-            """Type text into an input field on the current page."""
-            browser = await ctx.deps.get_browser(session_id)
-            return await browser.type(selector, text)
-
-        # -- Task Management ----------------------------------------------
-        @agent.tool
-        async def create_task(
-            ctx: RunContext["FerrymanKernel"], session_id: str, title: str, instruction: str
-        ) -> str:
-            """
-            Register a persistent Task record to track the lifecycle of a work unit.
-            Returns a task_id which can be used to update status or metadata.
-            """
-            kernel = ctx.deps
-            task = kernel._persist_task(session_id=session_id, title=title, args={"instruction": instruction})
-            return task.id
-
-        @agent.tool
-        async def update_task(
-            ctx: RunContext["FerrymanKernel"], task_id: str, status: str, progress_note: Optional[str] = None
-        ) -> str:
-            """
-            Update the state of an existing Task record.
-            Status values: 'pending', 'running', 'success', 'failed', 'canceled'.
-            """
-            kernel = ctx.deps
-            meta = {"progress_note": progress_note} if progress_note else None
-            kernel._persist_task_update(task_id, status=status, metadata=meta)
-            return f"Task {task_id} updated to {status}"
-
-        @agent.tool
-        async def list_tasks(ctx: RunContext["FerrymanKernel"], session_id: str) -> str:
-            """List all orchestration tasks for a session to query status or find IDs."""
-            kernel = ctx.deps
-            relevant = [t for t in kernel.tasks.values() if t.session_id == session_id]
-            if not relevant:
-                return "No tasks found for this session."
-            
-            lines = ["Current Orchestration Tasks:"]
-            for t in relevant:
-                lines.append(f"- ID: {t.id} | Title: {t.title} | Status: {t.status}")
-            return "\n".join(lines)
-
-        # -- Scheduling Tools ---------------------------------------------
-        @agent.tool
-        async def create_schedule(
-            ctx: RunContext["FerrymanKernel"], name: str, cron_expression: str, instruction: str
-        ) -> str:
-            """
-            Register a persistent Schedule record for automated/recurring execution.
-            - cron_expression: standard cron string (e.g., '0 9 * * *').
-            - instruction: the goal Ferryman should achieve when triggered.
-            """
-            kernel = ctx.deps
-            new_schedule = Schedule(
-                name=name,
-                cron_expression=cron_expression,
-                args={"instruction": instruction}
-            )
-            with get_session() as session:
-                session.add(new_schedule)
-                session.commit()
-                session.refresh(new_schedule)
-            return f"Schedule '{name}' created with ID: {new_schedule.id}"
-
-        @agent.tool
-        async def list_schedules(ctx: RunContext["FerrymanKernel"]) -> str:
-            """List all automated routines and their status."""
-            with get_session() as session:
-                from sqlmodel import select
-                schedules = session.exec(select(Schedule)).all()
-                if not schedules:
-                    return "No schedules registered."
-                lines = ["Registered Automated Routines:"]
-                for s in schedules:
-                    status = "Enabled" if s.enabled else "Disabled"
-                    lines.append(f"- [{status}] ID: {s.id} | Name: {s.name} | Cron: {s.cron_expression}")
-                return "\n".join(lines)
-
-        @agent.tool
-        async def update_schedule(
-            ctx: RunContext["FerrymanKernel"], 
-            schedule_id: str, 
-            enabled: Optional[bool] = None, 
-            cron_expression: Optional[str] = None
-        ) -> str:
-            """Toggle or modify an automated routine."""
-            with get_session() as session:
-                from sqlmodel import select
-                statement = select(Schedule).where(Schedule.id == schedule_id)
-                s = session.exec(statement).first()
-                if not s:
-                    return "Schedule not found."
-                if enabled is not None:
-                    s.enabled = enabled
-                if cron_expression:
-                    s.cron_expression = cron_expression
-                s.updated_at = datetime.now()
-                session.add(s)
-                session.commit()
-                return f"Schedule {schedule_id} updated."
-
-        @agent.tool
-        async def delete_schedule(ctx: RunContext["FerrymanKernel"], schedule_id: str) -> str:
-            """Remove an automated routine entry."""
-            with get_session() as session:
-                from sqlmodel import select
-                statement = select(Schedule).where(Schedule.id == schedule_id)
-                s = session.exec(statement).first()
-                if s:
-                    session.delete(s)
-                    session.commit()
-                    return f"Schedule {schedule_id} deleted."
-                return "Schedule not found."
-
-        # -- MCP Tool Bridge ----------------------------------------------
-        @agent.tool
-        async def call_mcp_tool(
-            ctx: RunContext["FerrymanKernel"], tool_name: str, arguments: dict
-        ) -> dict:
-            """Call an external MCP tool."""
-            kernel = ctx.deps
-            if not kernel.mcp_client:
-                return {"status": "error", "message": "MCP Client not initialized"}
-            return await kernel.mcp_client.call_tool(tool_name, arguments)
-
+        # Register Toolkits
+        self._register_toolkit(agent, SkillToolkit)
+        self._register_toolkit(agent, FileToolkit)
+        self._register_toolkit(agent, WebToolkit)
+        self._register_toolkit(agent, TaskToolkit)
         return agent
 
+    @staticmethod
+    def _register_toolkit(agent: Agent, toolkit_class: Any) -> None:
+        """Register all tools from a toolkit class using its get_tools() method."""
+        if hasattr(toolkit_class, "get_tools"):
+            for tool_func in toolkit_class.get_tools():
+                agent.tool(tool_func)
+
     def _get_master_agent(self, session_id: str) -> Agent:
-        return self._build_agent(session_id, self._build_system_prompt(session_id))
+        return self.build_agent(self._build_system_prompt(session_id))
+
+    def _get_session_messages(self, session_id: str) -> list[ModelMessage]:
+        """Load and convert history from database into PydanticAI messages."""
+        # Get configurable limit, default to 30 messages (~15 rounds)
+        limit = self._settings.get("system.llm.history_limit", 30)
+
+        with get_session() as db_session:
+            from sqlalchemy import desc
+            # Query the LATEST messages first
+            statement = (
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(desc(Message.created_at))  # type:ignore
+                .limit(limit)
+            )
+            db_messages = list(db_session.exec(statement).all())
+
+            # Reverse back so the chronological order is [Old -> New]
+            db_messages.reverse()
+
+            history: list[ModelMessage] = []
+            for msg in db_messages:
+                if msg.role == "user":
+                    history.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
+                elif msg.role == "assistant":
+                    history.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+            return history
 
     async def run_master_agent(self, instruction: str, session_id: str) -> Dict:
         """
@@ -522,7 +369,7 @@ class FerrymanKernel:
                     db_session.add(session_obj)
                     db_session.commit()
                     db_session.refresh(session_obj)
-                
+
                 # Save user message
                 user_msg = Message(
                     session_id=session_id,
@@ -532,31 +379,44 @@ class FerrymanKernel:
                 )
                 db_session.add(user_msg)
                 db_session.commit()
-                
+
             # 2. Execute agent
             agent = self._get_master_agent(session_id)
-            result = await agent.run(instruction, deps=self)
-            result_data = getattr(result, 'data', getattr(result, 'output', str(result)))
-            
-            # 3. Extract usage stats
-            input_tokens = 0
-            output_tokens = 0
-            usage_metadata = {}
-            try:
-                usage = result.usage()
-                input_tokens = usage.input_tokens
-                output_tokens = usage.output_tokens
-                usage_metadata = {
-                    "usage": {
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "total_tokens": usage.total_tokens,
-                    }
-                }
-            except (AttributeError, Exception):
-                logger.debug("Usage stats not available for this run.")
+            deps = AgentDeps(kernel=self, session_id=session_id)
 
-            # 4. Save response message and Update Session
+            # Load existing thread history
+            history = self._get_session_messages(session_id)
+
+            # Use configurable request limit, defaults to 30
+            request_limit = self._settings.get("system.llm.request_limit", 30)
+
+            result = await agent.run(
+                instruction,
+                deps=deps,
+                message_history=history,
+                usage_limits=UsageLimits(request_limit=request_limit)
+            )
+            result_data = result.output
+
+            # 3. Handle Usage and Persistence in one transaction
+            usage = result.usage()
+            usage_metadata = {
+                "usage": {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "total_tokens": usage.total_tokens,
+                }
+            }
+            logger.info({
+                "message": {
+                    "session_id": session_id,
+                    "type": "master_usage",
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "total_tokens": usage.total_tokens
+                }
+            })
+
             with get_session() as db_session:
                 # Save assistant message
                 assistant_msg = Message(
@@ -567,33 +427,18 @@ class FerrymanKernel:
                     metadata_=usage_metadata
                 )
                 db_session.add(assistant_msg)
-                
-                # Update Session (Incremental token update)
+
+                # Update Session (Atomic incremental update)
                 session_obj = db_session.get(Session, session_id)
                 if session_obj:
-                    session_obj.input_tokens += input_tokens
-                    session_obj.output_tokens += output_tokens
+                    session_obj.input_tokens += usage.input_tokens
+                    session_obj.output_tokens += usage.output_tokens
                     session_obj.updated_at = datetime.now(timezone.utc)
-                    
-                    # 5. Auto-title generation for "New Chat" sessions
-                    if session_obj.title == "New Chat":
-                        try:
-                            # Minimal agent to summarize the first message into a title
-                            title_agent = Agent(
-                                model=agent.model,
-                                system_prompt="You are a session title generator. Generate a concise, clear title (max 5 words) for the conversation based on the user's message. Output ONLY the title, no quotes or meta-text. Use the same language as the user."
-                            )
-                            title_result = await title_agent.run(f"User message: {instruction}")
-                            new_title = str(title_result.data).strip()
-                            if new_title:
-                                # Clean up potential quotes
-                                new_title = new_title.strip('"').strip("'")
-                                session_obj.title = new_title
-                        except Exception as title_err:
-                            logger.error(f"Failed to auto-generate session title: {title_err}")
-                    
+
+                    # Auto-title generation removed as requested
+
                     db_session.add(session_obj)
-                
+
                 db_session.commit()
 
             return {
@@ -604,11 +449,9 @@ class FerrymanKernel:
             }
 
         except Exception as e:
-            logger.error(f"Master Agent failed: {e}", exc_info=True)
+            logger.exception(f"Master Agent failed for session {session_id}")
             return {
                 "status": "error",
                 "message": str(e),
             }
-        finally:
-            # Clean up browser session
-            await self.close_browser(session_id)
+        # FINALLY block browser closing removed to support persistent session states

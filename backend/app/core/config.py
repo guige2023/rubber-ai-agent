@@ -1,9 +1,11 @@
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 
-class SystemConfig(BaseSettings):
+
+class Settings(BaseSettings):
     """
     Immutable system-level configurations and path defaults.
     Values are loaded from environment variables or .env file.
@@ -34,6 +36,10 @@ class SystemConfig(BaseSettings):
         return self.user_dir / "logs"
 
     @property
+    def browser_dir(self) -> Path:
+        return self.user_dir / "browser"
+
+    @property
     def skills_dir(self) -> tuple[Path, Path]:
         # Returns a tuple of (internal, user) skill directories
         return (
@@ -44,28 +50,30 @@ class SystemConfig(BaseSettings):
     # --- Runtime Registry Methods (Database Persistent) ---
     # Note: Using local imports inside methods to avoid circular dependencies with db.py
 
-    def get(self, key: str, default: Any = None) -> Any:
+    @staticmethod
+    def get(key: str, default: Any = None) -> Any:
         """Retrieves a configuration value from the database."""
         from sqlmodel import select
         from app.models.database import AppConfig
         from app.core.db import get_session
-        
+
         with get_session() as session:
             statement = select(AppConfig).where(AppConfig.key == key)
             record = session.exec(statement).first()
             return record.value if record else default
 
-    def set(self, key: str, value: Any, category: str = "general", metadata: Optional[Dict] = None) -> Any:
+    @staticmethod
+    def set(key: str, value: Any, category: str = "general", metadata: Optional[Dict] = None) -> Any:
         """Sets a configuration value in the database."""
         from datetime import datetime, timezone
         from sqlmodel import select
         from app.models.database import AppConfig
         from app.core.db import get_session
-        
+
         with get_session() as session:
             statement = select(AppConfig).where(AppConfig.key == key)
             record = session.exec(statement).first()
-            
+
             if record:
                 record.value = value
                 record.category = category
@@ -81,7 +89,7 @@ class SystemConfig(BaseSettings):
                     updated_at=datetime.now(timezone.utc)
                 )
                 session.add(record)
-            
+
             session.commit()
             session.refresh(record)
             return record
@@ -90,10 +98,10 @@ class SystemConfig(BaseSettings):
         """Consolidated fetcher for provider-specific LLM settings."""
         # Database stores structure like {"api_key": "...", "base_url": "..."}
         raw = self.get(f"llm.{provider}", {})
-        
+
         # Explicitly filter for PydanticAI Provider supported keys
         valid_keys = {"api_key", "base_url"}
-        
+
         config = {}
         for k in valid_keys:
             val = raw.get(k)
@@ -101,24 +109,26 @@ class SystemConfig(BaseSettings):
             # This allows PydanticAI to use defaults if the field is empty in Ferryman
             if val and str(val).strip():
                 config[k] = val
-                
+
         return config
 
     def get_active_model_id(self) -> str:
         """Returns the globally active model identifier."""
         return self.get("system.llm.active_model", "gemini:gemini-3-flash-preview")
 
-    def list_by_category(self, category: str) -> List[Any]:
+    @staticmethod
+    def list_by_category(category: str) -> List[Any]:
         """Lists all configurations in a given category."""
         from sqlmodel import select
         from app.models.database import AppConfig
         from app.core.db import get_session
-        
+
         with get_session() as session:
             statement = select(AppConfig).where(AppConfig.category == category)
             return list(session.exec(statement).all())
 
-    def get_available_models(self) -> Dict[str, List[str]]:
+    @staticmethod
+    def get_available_models() -> Dict[str, List[str]]:
         """Returns a registry of modern LLM models by provider."""
         return {
             "gemini": [
@@ -144,21 +154,8 @@ class SystemConfig(BaseSettings):
             ]
         }
 
-# Global singleton for system-level settings
-config = SystemConfig()
 
-# --- Functional Aliases for convenience ---
-def get_runtime_config(key: str, default: Any = None) -> Any:
-    return config.get(key, default)
-
-def set_runtime_config(key: str, value: Any, category: str = "general", metadata: Optional[Dict] = None) -> Any:
-    return config.set(key, value, category, metadata)
-
-def get_provider_llm_config(provider: str) -> Dict[str, Any]:
-    return config.get_provider_llm_config(provider)
-
-def get_active_model_id() -> str:
-    return config.get_active_model_id()
-
-def list_configs_by_category(category: str) -> List[Any]:
-    return config.list_by_category(category)
+@lru_cache()
+def get_settings() -> Settings:
+    """获取应用配置实例（单例模式）"""
+    return Settings()

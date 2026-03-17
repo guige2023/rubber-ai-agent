@@ -1,32 +1,18 @@
-from pathlib import Path
-from typing import Generator
-from contextlib import contextmanager
 import logging
-from sqlmodel import SQLModel, create_engine, Session as DBSession, text
+from contextlib import contextmanager
+from typing import Generator
+
 from sqlalchemy import inspect
-from app.core.config import config
-# Import models to ensure they are registered with SQLModel.metadata
-from app.models import database 
-import os
+from sqlmodel import SQLModel, create_engine, Session as DBSession, text
+
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Initialize engine at module level with absolute path and shared access
-db_path = config.db_path.absolute()
+db_path = get_settings().db_path.absolute()
 db_path.parent.mkdir(parents=True, exist_ok=True)
 
-# Broaden permissions and remove macOS extended attributes before connecting
-import os
-import subprocess
-try:
-    if db_path.exists():
-            os.chmod(db_path, 0o666)
-            subprocess.run(["xattr", "-c", str(db_path)], capture_output=True)
-    os.chmod(db_path.parent, 0o777)
-except Exception:
-    pass
 
-# Use check_same_thread=False for FastAPI/WebSocket compatibility
 engine = create_engine(
     f"sqlite:///{db_path}",
     echo=False,
@@ -46,7 +32,7 @@ def auto_migrate_schema():
         try:
             existing_columns = {c['name'] for c in inspector.get_columns(table_name)}
         except Exception as e:
-            logger.warning(f"⚠️ Could not inspect table {table_name}: {e}")
+            logger.exception(f"⚠️ Could not inspect table {table_name}")
             continue
             
         # Check each column in our model
@@ -79,7 +65,7 @@ def auto_migrate_schema():
                         conn.execute(text(stmt))
                         conn.commit()
                 except Exception as e:
-                    logger.critical(f"❌ Critical: Migration failed for table {table_name}.{column.name}: {e}")
+                    logger.critical(f"❌ Critical: Migration failed for table {table_name}.{column.name}")
                     raise e
 
 def init_db():
@@ -88,7 +74,7 @@ def init_db():
     try:
         auto_migrate_schema()
     except Exception as e:
-        logger.error(f"🚨 DB Initialization Error: {e}")
+        logger.exception("🚨 DB Initialization Error")
         # Re-raise to prevent the app from starting in a broken state
         raise e
     logger.info(f"Database initialized and migrated at: {db_path}")

@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
-from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Column as SAColumn
+
 import shortuuid
+from sqlalchemy import Column as SAColumn
+from sqlmodel import SQLModel, Field, JSON
+
 
 class Session(SQLModel, table=True):
     __tablename__ = "sessions"

@@ -1,10 +1,15 @@
 import asyncio
 import logging
-from playwright.async_api import async_playwright, Page, BrowserContext
-from playwright_stealth import Stealth
+
 import trafilatura
+from playwright.async_api import async_playwright, ViewportSize
+from playwright_stealth import Stealth
 
 logger = logging.getLogger(__name__)
+
+# Modern Mac Desktop Chrome UA (Chrome 134)
+# Note: Using a Desktop UA with a mobile viewport (or vice versa) triggers bot detection.
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
 class BrowserController:
     """
@@ -12,47 +17,171 @@ class BrowserController:
     Encapsulates Playwright headless browsing with stealth capabilities 
     and exposes only 4 core atomic actions to the LLM agent.
     """
-    def __init__(self, headless: bool = True):
+
+    def __init__(self, headless: bool = True, user_data_dir: str = None):
         self._headless = headless
+        self._user_data_dir = user_data_dir
         self._playwright = None
-        self._browser = None
-        self._context: BrowserContext = None
-        self._page: Page = None
-        
+        self._browser_context = None
+        self._page = None
+        self._id_to_selector = {}
+        self._status_msg = "Ready"
+
     async def __aenter__(self):
         self._playwright = await async_playwright().start()
-        
+
         # OpenClaw-inspired Stealth args
         args = [
             "--disable-blink-features=AutomationControlled",
             "--no-first-run",
             "--no-default-browser-check",
             "--password-store=basic",
-            "--disable-sync"
+            "--disable-sync",
+            "--disable-infobars",  # Try to hide the warning bar
         ]
-        
-        self._browser = await self._playwright.chromium.launch(
-            headless=self._headless,
-            args=args
-        )
-        
-        self._context = await self._browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800}
-        )
-        self._page = await self._context.new_page()
-        
+
+        if self._user_data_dir:
+            # Persistent mode: browser and context are merged
+            self._browser_context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=self._user_data_dir,
+                headless=self._headless,
+                channel="chrome",  # Use real Google Chrome instead of bundled Chromium
+                args=args,
+                # Adding AutomationControlled to ignore list can sometimes silence the UI warning
+                ignore_default_args=["--enable-automation", "--no-sandbox", "--disable-blink-features=AutomationControlled"],
+                user_agent=DEFAULT_USER_AGENT,
+                viewport=ViewportSize(width=1280, height=800)
+            )
+            # Find or create a page
+            if self._browser_context.pages:
+                self._page = self._browser_context.pages[0]
+            else:
+                self._page = await self._browser_context.new_page()
+        else:
+            # Ephemeral mode
+            browser = await self._playwright.chromium.launch(
+                headless=self._headless,
+                channel="chrome",
+                args=args,
+                ignore_default_args=["--enable-automation", "--no-sandbox", "--disable-blink-features=AutomationControlled"]
+            )
+            self._browser_context = await browser.new_context(
+                user_agent=DEFAULT_USER_AGENT,
+                viewport=ViewportSize(width=1280, height=800)
+            )
+            self._page = await self._browser_context.new_page()
+
         # Apply Playwright-Stealth patch (v2.x API)
         await Stealth().apply_stealth_async(self._page)
+
+        if not self._headless:
+            await self._setup_visual_overlay()
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self._context:
-            await self._context.close()
-        if self._browser:
-            await self._browser.close()
+        if self._browser_context:
+            await self._browser_context.close()
         if self._playwright:
             await self._playwright.stop()
+
+    # -------------------------------------------------------------------------
+    # Internal Helpers
+    # -------------------------------------------------------------------------
+
+    def _normalize_selector(self, selector: str) -> str:
+        """
+        Normalizes selectors provided by the LLM. 
+        - Converts '[20]' -> '[data-ferryman-id="20"]'
+        - Converts '20'   -> '[data-ferryman-id="20"]'
+        """
+        if not selector:
+            return ""
+        
+        selector = str(selector)
+        
+        # Case 1: [20]
+        if selector.startswith("[") and selector.endswith("]") and selector[1:-1].isdigit():
+            return f'[data-ferryman-id="{selector[1:-1]}"]'
+        
+        # Case 2: 20 (Naked number)
+        if selector.isdigit():
+            return f'[data-ferryman-id="{selector}"]'
+            
+        return selector
+
+    async def _setup_visual_overlay(self):
+        """Injects a premium glassmorphic status bar into every page load."""
+        overlay_js = """
+        () => {
+            const createOverlay = () => {
+                if (document.getElementById('ferryman-status-overlay')) return;
+                
+                const container = document.createElement('div');
+                container.id = 'ferryman-status-overlay';
+                Object.assign(container.style, {
+                    position: 'fixed',
+                    top: '20px',
+                    right: '20px',
+                    padding: '12px 20px',
+                    background: 'rgba(15, 15, 15, 0.85)',
+                    backdropFilter: 'blur(10px)',
+                    color: '#fff',
+                    borderRadius: '12px',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    zIndex: '999999',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    transition: 'all 0.3s ease'
+                });
+
+                const pulse = document.createElement('div');
+                Object.assign(pulse.style, {
+                    width: '10px',
+                    height: '10px',
+                    background: '#00D1FF',
+                    borderRadius: '50%',
+                    boxShadow: '0 0 8px #00D1FF'
+                });
+                
+                // Simple animation
+                pulse.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 1000, iterations: Infinity, direction: 'alternate' });
+
+                const text = document.createElement('span');
+                text.id = 'ferryman-status-text';
+                text.innerText = 'Ferryman: Initializing...';
+
+                container.appendChild(pulse);
+                container.appendChild(text);
+                document.documentElement.appendChild(container);
+            };
+
+            // Run on load and observe DOM changes to ensure it stays on top
+            createOverlay();
+            const observer = new MutationObserver(createOverlay);
+            observer.observe(document.documentElement, { childList: true });
+        }
+        """
+        await self._browser_context.add_init_script(overlay_js)
+
+    async def _update_visual_status(self, message: str):
+        """Update the text on the overlay if in non-headless mode."""
+        if self._headless:
+            return
+        
+        # Log to Python console too
+        logger.info(f"UI Status: {message}")
+        
+        try:
+            # We use try/except because the page might be navigating
+            await self._page.evaluate(f"(msg) => {{ const el = document.getElementById('ferryman-status-text'); if(el) el.innerText = 'Ferryman: ' + msg; }}", message)
+        except:
+            pass
 
     # -------------------------------------------------------------------------
     # RISC Web Actions (Exposed to the Agent as Tools)
@@ -60,6 +189,7 @@ class BrowserController:
 
     async def navigate(self, url: str) -> str:
         """Navigates to the given URL and waits for it to load."""
+        await self._update_visual_status(f"Navigating to {url}...")
         logger.info(f"Navigating to {url}")
         try:
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -67,25 +197,28 @@ class BrowserController:
             await asyncio.sleep(2)
             return f"Successfully navigated to {self._page.url}"
         except Exception as e:
+            logger.exception(f"Failed to navigate to {url}")
             return f"Failed to navigate: {str(e)}"
 
     async def get_distilled_dom(self) -> str:
         """Distills the DOM to return pure text/markdown content, avoiding token waste."""
+        await self._update_visual_status("Analyzing page content...")
         logger.info("Distilling DOM content...")
         try:
             # 1. First, try to extract hyper-clean text using Trafilatura (ideal for articles)
             html = await self._page.content()
             distilled_text = trafilatura.extract(html, include_links=True, include_images=False)
-            
+
             if distilled_text and len(distilled_text) > 100:
                 return distilled_text
-            
+
             # 2. Fallback if trafilatura yields too little (e.g. dynamic UI apps): get innerText
             logger.info("Trafilatura yielded low content. Falling back to body innerText.")
             body_text = await self._page.evaluate("document.body.innerText")
             # Limit to 15k chars to prevent blowing up the LLM context anyway
             return body_text[:15000]
         except Exception as e:
+            logger.exception("Failed to distill DOM")
             return f"Failed to distill DOM: {str(e)}"
 
     async def get_aria_snapshot(self) -> str:
@@ -93,11 +226,12 @@ class BrowserController:
         Returns a high-density 'Accessibility Tree' snapshot with stable interaction IDs.
         Enables the LLM to click/type using simple numeric indices like [12].
         """
+        await self._update_visual_status("Mapping interactive elements...")
         logger.info("Generating ID-mapped ARIA snapshot...")
-        
+
         # Reset mapping for this snapshot
         self._id_to_selector = {}
-        
+
         js_script = """
         () => {
             let nextId = 1;
@@ -171,6 +305,7 @@ class BrowserController:
             self._id_to_selector = result['mapping']
             return result['snapshot'] if result['snapshot'] else "(No semantic elements found)"
         except Exception as e:
+            logger.exception("Failed to generate ARIA snapshot")
             return f"Failed to generate ARIA snapshot: {str(e)}"
 
     async def click_id(self, element_id: str) -> str:
@@ -188,27 +323,45 @@ class BrowserController:
         return await self.type(selector, text)
 
     async def click(self, selector: str) -> str:
-        """Clicks an element defined by the selector."""
+        """Clicks an element defined by the selector. Falls back to forced click if blocked."""
+        selector = self._normalize_selector(selector)
+        await self._update_visual_status(f"Clicking: {selector}")
         logger.info(f"Clicking on {selector}")
         try:
-            await self._page.wait_for_selector(selector, state="visible", timeout=5000)
-            await self._page.click(selector, timeout=5000)
-            return f"Successfully clicked '{selector}'"
+            # 1. Wait for visibility with a more generous timeout
+            try:
+                await self._page.wait_for_selector(selector, state="visible", timeout=10000)
+            except Exception:
+                logger.warning(f"Wait for visibility timed out for '{selector}', proceeding to click anyway.")
+            
+            # 2. Try standard click first
+            try:
+                await self._page.click(selector, timeout=5000)
+                return f"Successfully clicked '{selector}'"
+            except Exception as e:
+                logger.warning(f"Standard click failed for {selector}, retrying with force=True: {e}")
+                # 3. Final attempt with force
+                await self._page.click(selector, timeout=5000, force=True)
+                return f"Successfully clicked '{selector}' (forced)"
         except Exception as e:
+            logger.exception(f"Failed to click '{selector}'")
             return f"Failed to click '{selector}': {str(e)}"
 
     async def hover(self, selector: str) -> str:
         """Hovers over an element defined by the selector."""
+        selector = self._normalize_selector(selector)
         logger.info(f"Hovering over {selector}")
         try:
             await self._page.wait_for_selector(selector, state="visible", timeout=5000)
             await self._page.hover(selector, timeout=5000)
             return f"Successfully hovered over '{selector}'"
         except Exception as e:
+            logger.exception(f"Failed to hover over '{selector}'")
             return f"Failed to hover over '{selector}': {str(e)}"
 
     async def scroll(self, selector: str = None) -> str:
         """Scrolls the page or a specific element into view."""
+        selector = self._normalize_selector(selector)
         logger.info(f"Scrolling {selector if selector else 'page'}")
         try:
             if selector:
@@ -219,10 +372,12 @@ class BrowserController:
                 await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 return "Successfully scrolled to bottom of page"
         except Exception as e:
+            logger.exception(f"Failed to scroll {selector if selector else 'page'}")
             return f"Failed to scroll: {str(e)}"
 
     async def wait(self, timeout_ms: int = 2000, selector: str = None) -> str:
         """Waits for a specified time or for a selector to become visible."""
+        selector = self._normalize_selector(selector)
         try:
             if selector:
                 logger.info(f"Waiting for {selector} for {timeout_ms}ms")
@@ -233,16 +388,15 @@ class BrowserController:
                 await asyncio.sleep(timeout_ms / 1000)
                 return f"Waited for {timeout_ms}ms."
         except Exception as e:
+            logger.exception(f"Wait failed for {selector if selector else 'timeout'}")
             return f"Wait failed: {str(e)}"
 
     async def screenshot(self, selector: str = None) -> str:
         """Takes a screenshot of the page or a specific element. Returns the path to the screenshot."""
         import uuid
         from pathlib import Path
+        selector = self._normalize_selector(selector)
         filename = f"screenshot_{uuid.uuid4().hex[:8]}.png"
-        # Note: In a real scenario, we'd save this in the session's workspace.
-        # For now, we'll use a predictable artifacts path if we can find it.
-        # But this is just a tool, so we return the descriptive path.
         logger.info(f"Taking screenshot of {selector if selector else 'page'}")
         p = Path("/tmp") / filename
         try:
@@ -252,15 +406,20 @@ class BrowserController:
                 await self._page.screenshot(path=str(p), full_page=True)
             return f"Screenshot saved to {p}"
         except Exception as e:
+            logger.exception(f"Failed to take screenshot of {selector if selector else 'page'}")
             return f"Failed to take screenshot: {str(e)}"
 
     async def type(self, selector: str, text: str) -> str:
         """Types text into an input field defined by the selector."""
+        selector = self._normalize_selector(selector)
+        await self._update_visual_status(f"Typing into {selector}...")
         logger.info(f"Typing into {selector}")
         try:
             await self._page.wait_for_selector(selector, state="visible", timeout=5000)
             # Clear first, then type
+            # Using fill for cleaner interaction in automated contexts
             await self._page.fill(selector, text)
             return f"Successfully typed '{text}' into '{selector}'"
         except Exception as e:
+            logger.exception(f"Failed to type in '{selector}'")
             return f"Failed to type in '{selector}': {str(e)}"

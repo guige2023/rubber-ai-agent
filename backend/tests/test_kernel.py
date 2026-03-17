@@ -87,15 +87,6 @@ def test_read_skill_sop():
     error_sop = kernel.read_skill_sop("non_existent")
     assert "Error: Skill 'non_existent' not found" in error_sop
 
-def test_ensure_session_workspace():
-    kernel = FerrymanKernel()
-    session_id = "test-session-XYZ"
-    workspace = kernel.ensure_session_workspace(session_id)
-    
-    assert workspace.exists()
-    assert workspace.is_dir()
-    assert "artifacts" in str(workspace)
-
 @pytest.mark.asyncio
 async def test_run_master_agent_mocked(monkeypatch):
     """

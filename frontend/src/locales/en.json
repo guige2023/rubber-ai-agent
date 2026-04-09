@@ -2,28 +2,38 @@
   "app": {
     "title": "Ferryman",
     "subtitle": "Tasks done before the coffee cools.",
-    "ready": "system ready",
-    "reconnecting": "reconnecting...",
-    "active_environment": "Active Environment",
-    "realtime_intelligence": "Real-time Intelligence",
-    "system_configuration": "System Configuration",
-    "kernel_stable": "RISC KERNEL STABLE",
-    "byok_enabled": "Byok enabled",
-    "deterministic_kernel": "Deterministic Kernel"
+    "byok_enabled": "Bring Your Own Key",
+    "deterministic_kernel": "Reliable Execution"
+  },
+  "common": {
+    "error_prefix": "Error"
   },
   "nav": {
     "chat": "Chat",
     "sessions": "Sessions",
     "tasks": "Tasks",
-    "settings": "Settings"
+    "settings": "Settings",
+    "skills": "Skills",
+    "new_chat": "New Chat",
+    "recent_sessions": "Recent Sessions"
   },
-  "sessions": {
-    "subtitle": "Manage your conversation history and context"
+  "skills": {
+    "title": "Skills",
+    "subtitle": "Browse the available skills and see what each one is best suited for.",
+    "refresh": "Refresh Skills",
+    "loading": "Loading Skills",
+    "empty": "No skills are available right now.",
+    "version": "Version",
+    "author": "Author",
+    "unknown_author": "Unknown"
   },
   "chat": {
-    "welcome_title": "Ferryman OS",
-    "welcome_subtitle": "\"Bridging intent to action through deterministic web control.\"",
+    "welcome_title": "Ferryman",
+    "welcome_subtitle": "\"Turn intent into results.\"",
     "placeholder": "Issue an instruction to Ferryman...",
+    "untitled": "New Chat",
+    "header_title": "Chat",
+    "run_failed": "Request failed. Please try again.",
     "quick_actions": {
       "web_research": "Web Research",
       "repo_analysis": "Repo Analysis",
@@ -32,19 +42,42 @@
     }
   },
   "settings": {
+    "subtitle": "Manage model access and runtime settings in one place.",
+    "tabs": {
+      "models": "Model Settings",
+      "logs": "Runtime Logs"
+    },
     "providers_title": "LLM Providers",
-    "providers_subtitle": "Configure your own API keys for logical isolation and maximum control.",
-    "infra_title": "System Master Model",
+    "providers_subtitle": "Configure provider endpoints and API credentials.",
     "active_model_label": "Active Model",
-    "master_model_title": "Global Master Model",
+    "logs_title": "Runtime Logs",
+    "logs_subtitle": "Inspect backend service activity and startup details.",
+    "logs_refresh": "Refresh Logs",
+    "logs_app_tab": "Service Logs",
+    "logs_sidecar_tab": "Startup Diagnostics",
+    "logs_app_path": "Service log file",
+    "logs_sidecar_path": "Startup diagnostic file",
+    "logs_empty": "No log output available yet.",
+    "logs_unavailable": "Unavailable",
+    "logs_load_failed": "Failed to load logs.",
     "api_key": "API Key",
     "base_url": "Base URL",
-    "save": "Save Configuration",
+    "api_key_placeholder": "Enter API key",
+    "save": "Save",
     "linked": "Linked",
     "missing": "Missing"
   },
   "tasks": {
     "monitor_title": "Task Monitor",
+    "subtitle": "Track running tasks and their latest progress.",
+    "active_count": "Active Tasks",
+    "empty": "There are no running tasks right now.",
+    "initializing": "Initializing...",
+    "identifier": "ID",
+    "tokens_unit": "Tokens",
+    "input_tokens": "Input",
+    "output_tokens": "Output",
+    "total_tokens": "Total Tokens",
     "status": {
       "running": "running",
       "success": "success",

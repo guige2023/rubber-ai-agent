@@ -1,8 +1,17 @@
 import asyncio
 import logging
+import os
+import shutil
+from pathlib import Path
 
 import trafilatura
-from playwright.async_api import async_playwright, ViewportSize
+from pydantic_ai.messages import BinaryImage
+from playwright.async_api import (
+    Error as PlaywrightError,
+    TimeoutError as PlaywrightTimeoutError,
+    ViewportSize,
+    async_playwright,
+)
 from playwright_stealth import Stealth
 
 logger = logging.getLogger(__name__)
@@ -10,6 +19,13 @@ logger = logging.getLogger(__name__)
 # Modern Mac Desktop Chrome UA (Chrome 134)
 # Note: Using a Desktop UA with a mobile viewport (or vice versa) triggers bot detection.
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+
+SYSTEM_CHROME_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+]
+
 
 class BrowserController:
     """
@@ -26,6 +42,7 @@ class BrowserController:
         self._page = None
         self._id_to_selector = {}
         self._status_msg = "Ready"
+        self._browser_runtime = "uninitialized"
 
     async def __aenter__(self):
         self._playwright = await async_playwright().start()
@@ -40,36 +57,21 @@ class BrowserController:
             "--disable-infobars",  # Try to hide the warning bar
         ]
 
-        if self._user_data_dir:
-            # Persistent mode: browser and context are merged
-            self._browser_context = await self._playwright.chromium.launch_persistent_context(
-                user_data_dir=self._user_data_dir,
-                headless=self._headless,
-                channel="chrome",  # Use real Google Chrome instead of bundled Chromium
-                args=args,
-                # Adding AutomationControlled to ignore list can sometimes silence the UI warning
-                ignore_default_args=["--enable-automation", "--no-sandbox", "--disable-blink-features=AutomationControlled"],
-                user_agent=DEFAULT_USER_AGENT,
-                viewport=ViewportSize(width=1280, height=800)
-            )
-            # Find or create a page
-            if self._browser_context.pages:
-                self._page = self._browser_context.pages[0]
-            else:
-                self._page = await self._browser_context.new_page()
-        else:
-            # Ephemeral mode
-            browser = await self._playwright.chromium.launch(
-                headless=self._headless,
-                channel="chrome",
-                args=args,
-                ignore_default_args=["--enable-automation", "--no-sandbox", "--disable-blink-features=AutomationControlled"]
-            )
-            self._browser_context = await browser.new_context(
-                user_agent=DEFAULT_USER_AGENT,
-                viewport=ViewportSize(width=1280, height=800)
-            )
-            self._page = await self._browser_context.new_page()
+        launch_plans = self._build_launch_plans()
+        last_error = None
+
+        for plan in launch_plans:
+            try:
+                self._browser_context, self._page = await self._launch_browser(plan, args)
+                self._browser_runtime = plan["label"]
+                logger.info(f"Browser launched via {self._browser_runtime}")
+                break
+            except PlaywrightError as e:
+                last_error = e
+                logger.warning(f"Failed to launch browser via {plan['label']}: {e}")
+
+        if not self._browser_context or not self._page:
+            raise RuntimeError(f"Unable to launch browser with any runtime: {last_error}") from last_error
 
         # Apply Playwright-Stealth patch (v2.x API)
         await Stealth().apply_stealth_async(self._page)
@@ -89,7 +91,87 @@ class BrowserController:
     # Internal Helpers
     # -------------------------------------------------------------------------
 
-    def _normalize_selector(self, selector: str) -> str:
+    @staticmethod
+    def _resolve_system_browser_path() -> Path | None:
+        env_path = os.environ.get("FERRYMAN_BROWSER_PATH")
+        if env_path:
+            candidate = Path(env_path).expanduser()
+            if candidate.exists():
+                return candidate
+            logger.warning(f"FERRYMAN_BROWSER_PATH does not exist: {candidate}")
+
+        for candidate in SYSTEM_CHROME_CANDIDATES:
+            path = Path(candidate)
+            if path.exists():
+                return path
+
+        executable_names: tuple[str, ...] = ("google-chrome", "chrome", "chromium", "chromium-browser")
+        # PyCharm may misfire here with a pre-3.12 Windows PathLike compatibility warning.
+        # noinspection PyCompatibility
+        for executable_name in executable_names:
+            found = shutil.which(executable_name)
+            if found:
+                return Path(found)
+
+        return None
+
+    def _build_launch_plans(self) -> list[dict]:
+        plans: list[dict] = []
+        system_browser_path = self._resolve_system_browser_path()
+        if system_browser_path:
+            plans.append(
+                {
+                    "label": f"system Chrome at {system_browser_path}",
+                    "launch_kwargs": {"executable_path": str(system_browser_path)},
+                }
+            )
+
+        bundled_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+        bundled_label = (
+            f"bundled Chromium via PLAYWRIGHT_BROWSERS_PATH={bundled_path}"
+            if bundled_path
+            else "bundled Chromium"
+        )
+        plans.append({"label": bundled_label, "launch_kwargs": {}})
+        return plans
+
+    async def _launch_browser(self, plan: dict, args: list[str]):
+        launch_kwargs = {
+            "headless": self._headless,
+            "args": args,
+            "ignore_default_args": [
+                "--enable-automation",
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+            ],
+            **plan["launch_kwargs"],
+        }
+
+        if self._user_data_dir:
+            # Persistent mode: browser and context are merged
+            browser_context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=self._user_data_dir,
+                user_agent=DEFAULT_USER_AGENT,
+                viewport=ViewportSize(width=1280, height=800),
+                **launch_kwargs,
+            )
+            if browser_context.pages:
+                page = browser_context.pages[0]
+            else:
+                page = await browser_context.new_page()
+            return browser_context, page
+
+        # Ephemeral mode
+        browser = await self._playwright.chromium.launch(**launch_kwargs)
+        browser_context = await browser.new_context(
+            user_agent=DEFAULT_USER_AGENT,
+            viewport=ViewportSize(width=1280, height=800),
+        )
+        page = await browser_context.new_page()
+        return browser_context, page
+
+    @staticmethod
+    def _normalize_selector(selector: str | None) -> str:
         """
         Normalizes selectors provided by the LLM. 
         - Converts '[20]' -> '[data-ferryman-id="20"]'
@@ -97,17 +179,17 @@ class BrowserController:
         """
         if not selector:
             return ""
-        
+
         selector = str(selector)
-        
+
         # Case 1: [20]
         if selector.startswith("[") and selector.endswith("]") and selector[1:-1].isdigit():
             return f'[data-ferryman-id="{selector[1:-1]}"]'
-        
+
         # Case 2: 20 (Naked number)
         if selector.isdigit():
             return f'[data-ferryman-id="{selector}"]'
-            
+
         return selector
 
     async def _setup_visual_overlay(self):
@@ -173,14 +255,16 @@ class BrowserController:
         """Update the text on the overlay if in non-headless mode."""
         if self._headless:
             return
-        
+
         # Log to Python console too
         logger.info(f"UI Status: {message}")
-        
+
         try:
             # We use try/except because the page might be navigating
-            await self._page.evaluate(f"(msg) => {{ const el = document.getElementById('ferryman-status-text'); if(el) el.innerText = 'Ferryman: ' + msg; }}", message)
-        except:
+            await self._page.evaluate(
+                f"(msg) => {{ const el = document.getElementById('ferryman-status-text'); if(el) el.innerText = 'Ferryman: ' + msg; }}",
+                message)
+        except PlaywrightError:
             pass
 
     # -------------------------------------------------------------------------
@@ -196,7 +280,7 @@ class BrowserController:
             # Add a small semantic wait for frameworks to catch up
             await asyncio.sleep(2)
             return f"Successfully navigated to {self._page.url}"
-        except Exception as e:
+        except PlaywrightError as e:
             logger.exception(f"Failed to navigate to {url}")
             return f"Failed to navigate: {str(e)}"
 
@@ -217,7 +301,7 @@ class BrowserController:
             body_text = await self._page.evaluate("document.body.innerText")
             # Limit to 15k chars to prevent blowing up the LLM context anyway
             return body_text[:15000]
-        except Exception as e:
+        except (PlaywrightError, TypeError, ValueError) as e:
             logger.exception("Failed to distill DOM")
             return f"Failed to distill DOM: {str(e)}"
 
@@ -304,7 +388,7 @@ class BrowserController:
             result = await self._page.evaluate(js_script)
             self._id_to_selector = result['mapping']
             return result['snapshot'] if result['snapshot'] else "(No semantic elements found)"
-        except Exception as e:
+        except PlaywrightError as e:
             logger.exception("Failed to generate ARIA snapshot")
             return f"Failed to generate ARIA snapshot: {str(e)}"
 
@@ -331,19 +415,19 @@ class BrowserController:
             # 1. Wait for visibility with a more generous timeout
             try:
                 await self._page.wait_for_selector(selector, state="visible", timeout=10000)
-            except Exception:
+            except PlaywrightTimeoutError:
                 logger.warning(f"Wait for visibility timed out for '{selector}', proceeding to click anyway.")
-            
+
             # 2. Try standard click first
             try:
                 await self._page.click(selector, timeout=5000)
                 return f"Successfully clicked '{selector}'"
-            except Exception as e:
+            except PlaywrightError as e:
                 logger.warning(f"Standard click failed for {selector}, retrying with force=True: {e}")
                 # 3. Final attempt with force
                 await self._page.click(selector, timeout=5000, force=True)
                 return f"Successfully clicked '{selector}' (forced)"
-        except Exception as e:
+        except PlaywrightError as e:
             logger.exception(f"Failed to click '{selector}'")
             return f"Failed to click '{selector}': {str(e)}"
 
@@ -355,7 +439,7 @@ class BrowserController:
             await self._page.wait_for_selector(selector, state="visible", timeout=5000)
             await self._page.hover(selector, timeout=5000)
             return f"Successfully hovered over '{selector}'"
-        except Exception as e:
+        except PlaywrightError as e:
             logger.exception(f"Failed to hover over '{selector}'")
             return f"Failed to hover over '{selector}': {str(e)}"
 
@@ -371,7 +455,7 @@ class BrowserController:
             else:
                 await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 return "Successfully scrolled to bottom of page"
-        except Exception as e:
+        except PlaywrightError as e:
             logger.exception(f"Failed to scroll {selector if selector else 'page'}")
             return f"Failed to scroll: {str(e)}"
 
@@ -387,27 +471,30 @@ class BrowserController:
                 logger.info(f"Waiting for {timeout_ms}ms")
                 await asyncio.sleep(timeout_ms / 1000)
                 return f"Waited for {timeout_ms}ms."
-        except Exception as e:
+        except PlaywrightError as e:
             logger.exception(f"Wait failed for {selector if selector else 'timeout'}")
             return f"Wait failed: {str(e)}"
 
-    async def screenshot(self, selector: str = None) -> str:
-        """Takes a screenshot of the page or a specific element. Returns the path to the screenshot."""
+    async def screenshot(self, selector: str = None, output_dir: str | Path | None = None) -> BinaryImage:
+        """Takes a screenshot of the page or a specific element and returns it as a model-consumable image."""
         import uuid
-        from pathlib import Path
         selector = self._normalize_selector(selector)
         filename = f"screenshot_{uuid.uuid4().hex[:8]}.png"
         logger.info(f"Taking screenshot of {selector if selector else 'page'}")
-        p = Path("/tmp") / filename
+        target_dir = Path(output_dir) if output_dir is not None else Path("/tmp")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        p = target_dir / filename
         try:
             if selector:
                 await self._page.locator(selector).screenshot(path=str(p))
             else:
                 await self._page.screenshot(path=str(p), full_page=True)
-            return f"Screenshot saved to {p}"
-        except Exception as e:
+            # PyCharm mis-infers the inherited classmethod on pydantic dataclasses here.
+            # noinspection PyUnresolvedReferences,PyTypeChecker
+            return BinaryImage.from_path(str(p))
+        except (OSError, PlaywrightError) as e:
             logger.exception(f"Failed to take screenshot of {selector if selector else 'page'}")
-            return f"Failed to take screenshot: {str(e)}"
+            raise RuntimeError(f"Failed to take screenshot: {str(e)}") from e
 
     async def type(self, selector: str, text: str) -> str:
         """Types text into an input field defined by the selector."""
@@ -420,6 +507,6 @@ class BrowserController:
             # Using fill for cleaner interaction in automated contexts
             await self._page.fill(selector, text)
             return f"Successfully typed '{text}' into '{selector}'"
-        except Exception as e:
+        except PlaywrightError as e:
             logger.exception(f"Failed to type in '{selector}'")
             return f"Failed to type in '{selector}': {str(e)}"

@@ -35,7 +35,6 @@ class Task(SQLModel, table=True):
     parent_id: Optional[str] = None
     title: str
     args: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn(JSON))
-    kwargs: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn(JSON))
     status: str = Field(default="pending")  # pending, running, success, failed, canceled
     metadata_: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn("metadata", JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -47,7 +46,6 @@ class Schedule(SQLModel, table=True):
     id: str = Field(default_factory=shortuuid.uuid, primary_key=True)
     name: str
     args: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn(JSON))
-    kwargs: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn(JSON))
     cron_expression: str
     enabled: bool = Field(default=True)
     last_run_at: Optional[datetime] = None

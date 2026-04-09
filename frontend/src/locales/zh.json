@@ -2,28 +2,38 @@
   "app": {
     "title": "Ferryman",
     "subtitle": "杯中咖啡尚温，繁杂琐事已了。",
-    "ready": "系统就绪",
-    "reconnecting": "正在重新连接...",
-    "active_environment": "运行环境",
-    "realtime_intelligence": "实时语义分析",
-    "system_configuration": "系统内核配置",
-    "kernel_stable": "RISC内核稳定",
-    "byok_enabled": "自有密钥环境",
-    "deterministic_kernel": "确定性执行内核"
+    "byok_enabled": "使用自有密钥",
+    "deterministic_kernel": "稳定执行"
+  },
+  "common": {
+    "error_prefix": "错误"
   },
   "nav": {
     "chat": "对话",
     "sessions": "会话历史",
     "tasks": "任务队列",
-    "settings": "系统设置"
+    "settings": "系统设置",
+    "skills": "技能中心",
+    "new_chat": "开启新对话",
+    "recent_sessions": "最近对话"
   },
-  "sessions": {
-    "subtitle": "管理您的历史对话与上下文"
+  "skills": {
+    "title": "技能中心",
+    "subtitle": "查看当前可用的技能，了解它们分别适合处理什么任务。",
+    "refresh": "刷新技能",
+    "loading": "正在加载技能",
+    "empty": "暂时没有可用技能。",
+    "version": "版本",
+    "author": "作者",
+    "unknown_author": "未知"
   },
   "chat": {
-    "welcome_title": "Ferryman OS",
-    "welcome_subtitle": "“通过确定性的网页控制，将意图转化为行动。”",
+    "welcome_title": "Ferryman",
+    "welcome_subtitle": "“把想法转化为可执行的结果。”",
     "placeholder": "向Ferryman下达指令...",
+    "untitled": "新对话",
+    "header_title": "对话",
+    "run_failed": "处理失败，请重试。",
     "quick_actions": {
       "web_research": "网页调研",
       "repo_analysis": "仓库分析代办",
@@ -32,19 +42,42 @@
     }
   },
   "settings": {
-    "providers_title": "LLM模型供应商",
-    "providers_subtitle": "配置您自己的API密钥，实现数据逻辑隔离与最大化可控性。",
-    "infra_title": "系统主模型",
+    "subtitle": "在这里调整模型接入与系统运行相关配置。",
+    "tabs": {
+      "models": "模型设置",
+      "logs": "运行日志"
+    },
+    "providers_title": "模型服务商",
+    "providers_subtitle": "配置模型供应商的接口信息与API密钥。",
     "active_model_label": "当前使用模型",
-    "master_model_title": "全局主模型",
+    "logs_title": "运行日志",
+    "logs_subtitle": "查看后台服务的运行记录与启动信息。",
+    "logs_refresh": "刷新日志",
+    "logs_app_tab": "服务运行日志",
+    "logs_sidecar_tab": "启动诊断日志",
+    "logs_app_path": "服务运行日志文件",
+    "logs_sidecar_path": "启动诊断日志文件",
+    "logs_empty": "暂无可显示的日志内容。",
+    "logs_unavailable": "暂无",
+    "logs_load_failed": "加载日志失败。",
     "api_key": "API密钥",
     "base_url": "代理/接口地址",
+    "api_key_placeholder": "请输入 API 密钥",
     "save": "保存配置",
     "linked": "已连接",
     "missing": "待配置"
   },
   "tasks": {
     "monitor_title": "任务监控",
+    "subtitle": "查看当前任务状态与执行进展。",
+    "active_count": "活跃任务",
+    "empty": "当前没有正在运行的任务。",
+    "initializing": "正在初始化...",
+    "identifier": "ID",
+    "tokens_unit": "Token",
+    "input_tokens": "输入",
+    "output_tokens": "输出",
+    "total_tokens": "总用量",
     "status": {
       "running": "运行中",
       "success": "成功",

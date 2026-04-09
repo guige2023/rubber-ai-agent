@@ -1,5 +1,7 @@
 import React, { useState, useEffect, ReactNode } from 'react';
-import { useWebSocket } from './hooks/useWebSocket';
+import { invoke } from '@tauri-apps/api/core';
+import { useBackendConnection } from './hooks/useBackendConnection';
+import { useSessions } from './hooks/useSessions';
 import { useI18n } from './hooks/useI18n';
 import { 
   Settings, 
@@ -12,7 +14,8 @@ import {
   Globe,
   Key,
   Plus,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -23,18 +26,113 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function buildWebSocketUrl(baseUrl: string, token?: string) {
+  if (!token) {
+    return baseUrl;
+  }
+
+  const url = new URL(baseUrl);
+  url.searchParams.set('access_token', token);
+  return url.toString();
+}
+
+function getDefaultWebSocketUrl() {
+  const baseUrl = import.meta.env.VITE_FERRYMAN_WS_URL || 'ws://127.0.0.1:8000/ws';
+  const token = import.meta.env.VITE_FERRYMAN_BEARER_TOKEN;
+  return buildWebSocketUrl(baseUrl, token);
+}
+
+function isTauriRuntime() {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
 export default function App() {
-  const { 
-    messages, isConnected, execute, call, tasks,
-    sessions, currentSessionId, currentUsage,
-    refreshSessions, switchSession, createNewSession, deleteSession 
-  } = useWebSocket('ws://localhost:8000/ws');
+  const [wsUrl, setWsUrl] = useState<string | null>(null);
+  const connection = useBackendConnection(wsUrl);
+  const { call, execute: executeInstruction, isConnected, tasks } = connection;
   const { t, locale, changeLanguage } = useI18n();
+  const {
+    messages,
+    execute,
+    isExecuting,
+    sessions,
+    currentSessionId,
+    currentUsage,
+    refreshSessions,
+    switchSession,
+    createNewSession,
+    deleteSession,
+  } = useSessions({
+    call,
+    executeInstruction,
+    newSessionTitle: t('chat.untitled'),
+  });
   const [input, setInput] = useState('');
-  const [currentView, setCurrentView] = useState<'chat' | 'tasks' | 'settings'>('chat');
+  const [currentView, setCurrentView] = useState<'chat' | 'tasks' | 'skills' | 'settings'>('chat');
+  const [settingsTab, setSettingsTab] = useState<'models' | 'logs'>('models');
   const [activeModel, setActiveModel] = useState<string>('gemini:gemini-3-flash-preview');
   const [llmConfigs, setLlmConfigs] = useState<any[]>([]);
   const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
+  const [skills, setSkills] = useState<Array<{ name: string; description: string; version: string; author: string }>>([]);
+  const [isLoadingSkills, setIsLoadingSkills] = useState(false);
+  const [backendLogInfo, setBackendLogInfo] = useState<{ paths: Record<string, string>; active_log: string } | null>(null);
+  const [backendLogContent, setBackendLogContent] = useState('');
+  const [backendLogSource, setBackendLogSource] = useState<'app' | 'sidecar'>('app');
+  const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveConnection = async () => {
+      if (!isTauriRuntime()) {
+        setWsUrl(getDefaultWebSocketUrl());
+        return;
+      }
+
+      try {
+        const connection = await invoke<{ wsUrl: string; accessToken: string }>('get_backend_connection');
+        if (!cancelled) {
+          setWsUrl(buildWebSocketUrl(connection.wsUrl, connection.accessToken));
+        }
+      } catch (error) {
+        console.error('Failed to initialize Ferryman backend connection:', error);
+        if (!cancelled) {
+          setWsUrl(getDefaultWebSocketUrl());
+        }
+      }
+    };
+
+    resolveConnection();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const normalizeSkillsPayload = (payload: any) => {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+    if (Array.isArray(payload?.skills)) {
+      return payload.skills;
+    }
+    return [];
+  };
+
+  const refreshSkills = async () => {
+    if (!isConnected) return;
+
+    setIsLoadingSkills(true);
+    try {
+      const result = await call('list_skills');
+      setSkills(normalizeSkillsPayload(result) as Array<{ name: string; description: string; version: string; author: string }>);
+    } catch (error) {
+      console.error('Failed to load skills:', error);
+      setSkills([]);
+    } finally {
+      setIsLoadingSkills(false);
+    }
+  };
 
   // Fetch initial config
   useEffect(() => {
@@ -42,9 +140,42 @@ export default function App() {
       call('get_active_model').then((res: any) => setActiveModel(res));
       call('get_llm_configs').then((res: any) => setLlmConfigs(res));
       call('get_available_models').then((res: any) => setAvailableModels(res));
+      refreshSkills();
       refreshSessions();
     }
   }, [isConnected, call, refreshSessions]);
+
+  useEffect(() => {
+    if (currentView === 'skills' && isConnected) {
+      refreshSkills();
+    }
+  }, [currentView, isConnected]);
+
+  const refreshBackendLogs = async (source: 'app' | 'sidecar' = backendLogSource) => {
+    if (!isConnected) return;
+
+    setIsRefreshingLogs(true);
+    try {
+      const [info, logs] = await Promise.all([
+        call('get_backend_log_info'),
+        call('read_backend_logs', { source, lines: 160 }),
+      ]);
+      setBackendLogInfo(info as { paths: Record<string, string>; active_log: string });
+      setBackendLogContent((logs as { content: string }).content || '');
+      setBackendLogSource(source);
+    } catch (error) {
+      console.error('Failed to load backend logs:', error);
+      setBackendLogContent(t('settings.logs_load_failed'));
+    } finally {
+      setIsRefreshingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isConnected) {
+      refreshBackendLogs('app');
+    }
+  }, [isConnected]);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -52,8 +183,13 @@ export default function App() {
     setInput('');
   };
 
-  const handleSaveConfig = async (provider: string, apiKey: string, baseUrl: string) => {
-    await call('set_llm_config', { provider, api_key: apiKey, base_url: baseUrl });
+  const handleSaveConfig = async (provider: string, apiKey: string | undefined, baseUrl: string) => {
+    const params: Record<string, string> = { provider, base_url: baseUrl };
+    if (apiKey !== undefined) {
+      params.api_key = apiKey;
+    }
+
+    await call('set_llm_config', params);
     // Refresh
     const newConfigs = await call('get_llm_configs');
     setLlmConfigs(newConfigs as any[]);
@@ -88,13 +224,13 @@ export default function App() {
             <div className="w-8 h-8 rounded-lg bg-blue-600/10 flex items-center justify-center text-blue-500 group-hover:bg-blue-600 group-hover:text-white transition-all">
               <Plus size={18} />
             </div>
-            <span className="text-sm font-bold text-white/60 group-hover:text-white transition-colors">开启新对话</span>
+            <span className="text-sm font-bold text-white/60 group-hover:text-white transition-colors">{t('nav.new_chat')}</span>
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
           <div className="px-2 mb-4 flex items-center justify-between">
-            <h3 className="text-[11px] font-black text-white/50 uppercase tracking-[0.2em]">最近对话</h3>
+            <h3 className="text-[11px] font-black text-white/50 uppercase tracking-[0.2em]">{t('nav.recent_sessions')}</h3>
             <div className="h-[1px] flex-1 ml-4 bg-white/5" />
           </div>
           
@@ -115,7 +251,7 @@ export default function App() {
                   "text-sm font-bold truncate flex-1 tracking-tight",
                   currentSessionId === s.id ? "text-white" : "text-white/50 group-hover:text-white/80"
                 )}>
-                  {s.title || '新对话'}
+                  {s.title || t('chat.untitled')}
                 </span>
                 <button 
                   onClick={(e) => {
@@ -129,7 +265,7 @@ export default function App() {
               </div>
               <div className="flex items-center gap-2">
                  <div className="text-[9px] font-black text-white/40 px-2 py-0.5 rounded-md bg-white/5 border border-white/5 group-hover:text-white/60 group-hover:border-white/10 transition-all uppercase tracking-wider">
-                    {(s.input_tokens + s.output_tokens).toLocaleString()} Tokens
+                    {(s.input_tokens + s.output_tokens).toLocaleString()} {t('tasks.tokens_unit')}
                  </div>
               </div>
             </div>
@@ -143,11 +279,20 @@ export default function App() {
             active={currentView === 'tasks'}
             onClick={() => setCurrentView('tasks')}
           />
+          <NavItem
+            icon={<Cpu size={18}/>}
+            label={t('nav.skills')}
+            active={currentView === 'skills'}
+            onClick={() => setCurrentView('skills')}
+          />
           <NavItem 
             icon={<Settings size={18}/>} 
             label={t('nav.settings')} 
             active={currentView === 'settings'}
-            onClick={() => setCurrentView('settings')}
+            onClick={() => {
+              setSettingsTab('models');
+              setCurrentView('settings');
+            }}
           />
           
           <div className="flex items-center gap-2 pt-4 px-2">
@@ -178,8 +323,9 @@ export default function App() {
         <header className="h-20 border-b border-white/5 flex items-center justify-between px-10 z-10 backdrop-blur-xl bg-[#0a0a0a]/40">
           <div className="flex items-center gap-4">
             <span className="text-sm font-bold tracking-tight">
-              {currentView === 'chat' ? (sessions.find(s => s.id === currentSessionId)?.title || '对话') : 
+              {currentView === 'chat' ? (sessions.find(s => s.id === currentSessionId)?.title || t('chat.header_title')) : 
                currentView === 'tasks' ? t('nav.tasks') : 
+               currentView === 'skills' ? t('nav.skills') :
                t('nav.settings')}
             </span>
             <div className="h-4 w-[1px] bg-white/10" />
@@ -204,20 +350,20 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-8">
-            <div className="flex items-center gap-8">
-              <div className="flex flex-col items-end gap-0.5">
-                <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em]">Input</span>
-                <span className="text-blue-400 font-mono text-xs font-bold">{currentUsage.input_tokens.toLocaleString()}</span>
+              <div className="flex items-center gap-8">
+                <div className="flex flex-col items-end gap-0.5">
+                  <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em]">{t('tasks.input_tokens')}</span>
+                  <span className="text-blue-400 font-mono text-xs font-bold">{currentUsage.input_tokens.toLocaleString()}</span>
+                </div>
+                <div className="flex flex-col items-end gap-0.5">
+                  <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em]">{t('tasks.output_tokens')}</span>
+                  <span className="text-indigo-400 font-mono text-xs font-bold">{currentUsage.output_tokens.toLocaleString()}</span>
+                </div>
+                <div className="flex flex-col items-end gap-0.5 rounded-xl bg-white/5 px-4 py-1.5 border border-white/5">
+                  <span className="text-[9px] font-black text-white/60 uppercase tracking-[0.2em]">{t('tasks.total_tokens')}</span>
+                  <span className="text-white font-mono text-xs font-bold">{currentUsage.total_tokens.toLocaleString()}</span>
+                </div>
               </div>
-              <div className="flex flex-col items-end gap-0.5">
-                <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em]">Output</span>
-                <span className="text-indigo-400 font-mono text-xs font-bold">{currentUsage.output_tokens.toLocaleString()}</span>
-              </div>
-              <div className="flex flex-col items-end gap-0.5 rounded-xl bg-white/5 px-4 py-1.5 border border-white/5">
-                <span className="text-[9px] font-black text-white/60 uppercase tracking-[0.2em]">Total Tokens</span>
-                <span className="text-white font-mono text-xs font-bold">{currentUsage.total_tokens.toLocaleString()}</span>
-              </div>
-            </div>
           </div>
         </header>
 
@@ -250,17 +396,23 @@ export default function App() {
                 ) : (
                   messages.map((msg, i) => (
                     <motion.div
-                      key={i}
+                      key={msg.id || i}
                       initial={{ opacity: 0, x: msg.role === 'user' ? 20 : -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       className={cn(
                         "max-w-[85%] rounded-2xl px-5 py-3 text-[13px] leading-relaxed shadow-lg font-medium",
                         msg.role === 'user' 
-                          ? "ml-auto bg-blue-600 text-white shadow-blue-500/20 ring-1 ring-white/10" 
-                          : "mr-auto bg-white/[0.03] border border-white/10 text-white/80 backdrop-blur-md"
+                          ? "ml-auto bg-blue-600 text-white shadow-blue-500/20 ring-1 ring-white/10"
+                          : msg.metadata?.state === 'failed'
+                            ? "mr-auto bg-red-500/[0.08] border border-red-500/20 text-red-100 backdrop-blur-md"
+                            : "mr-auto bg-white/[0.03] border border-white/10 text-white/80 backdrop-blur-md"
                       )}
                     >
-                      <Markdown content={msg.content} />
+                      {msg.metadata?.state === 'pending' ? (
+                        <ThinkingIndicator />
+                      ) : (
+                        <Markdown content={msg.content} />
+                      )}
                     </motion.div>
                   ))
                 )}
@@ -281,9 +433,10 @@ export default function App() {
                     />
                     <button 
                       onClick={handleSend}
+                      disabled={isExecuting}
                       className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/30 active:scale-90 transform group/btn overflow-hidden relative"
                     >
-                      <Send size={20} className="relative z-10" />
+                      {isExecuting ? <ThinkingIndicator compact /> : <Send size={20} className="relative z-10" />}
                       <div className="absolute inset-0 bg-gradient-to-tr from-white/20 to-transparent opacity-0 group-hover/btn:opacity-100 transition-opacity" />
                     </button>
                   </div>
@@ -307,12 +460,12 @@ export default function App() {
                 <header className="flex items-end justify-between">
                   <div>
                     <h2 className="text-4xl font-black tracking-tight mb-2">{t('nav.tasks')}</h2>
-                    <p className="text-sm text-white/30 font-medium">全系统异步任务生命周期管理</p>
+                    <p className="text-sm text-white/30 font-medium">{t('tasks.subtitle')}</p>
                   </div>
                   <div className="flex items-center gap-3">
                      <div className="px-4 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center gap-2">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                        <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">{tasks.length} 活跃任务</span>
+                        <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">{tasks.length} {t('tasks.active_count')}</span>
                      </div>
                   </div>
                 </header>
@@ -321,7 +474,7 @@ export default function App() {
                   {tasks.length === 0 ? (
                     <div className="p-32 text-center glass rounded-[3rem] border border-white/5">
                       <Activity size={48} className="mx-auto text-white/5 mb-6" />
-                      <p className="text-white/20 font-bold uppercase tracking-widest text-sm">当前没有正在运行的任务</p>
+                      <p className="text-white/20 font-bold uppercase tracking-widest text-sm">{t('tasks.empty')}</p>
                     </div>
                   ) : (
                     tasks.map(task => (
@@ -351,9 +504,9 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-4 text-xs font-medium text-white/30 italic">
-                             <span>ID: {task.id}</span>
+                             <span>{t('tasks.identifier')}: {task.id}</span>
                              <span>•</span>
-                             <span>{task.progress || '正在初始化...'}</span>
+                             <span>{task.progress || t('tasks.initializing')}</span>
                           </div>
 
                           {task.status === 'running' && (
@@ -375,6 +528,59 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
+          ) : currentView === 'skills' ? (
+            <motion.div
+              key="skills"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="flex-1 overflow-y-auto p-12 custom-scrollbar"
+            >
+              <div className="max-w-5xl mx-auto space-y-12 pb-20">
+                <header className="flex items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-4xl font-black tracking-tight mb-2">{t('skills.title')}</h2>
+                    <p className="text-sm text-white/30 font-medium">{t('skills.subtitle')}</p>
+                  </div>
+                  <button
+                    onClick={() => refreshSkills()}
+                    className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-colors flex items-center gap-2"
+                  >
+                    <RefreshCw size={14} className={cn(isLoadingSkills && 'animate-spin')} />
+                    {t('skills.refresh')}
+                  </button>
+                </header>
+
+                <div className="space-y-4">
+                  {isLoadingSkills && skills.length === 0 ? (
+                    <div className="p-20 text-center glass rounded-[3rem] border border-white/5">
+                      <RefreshCw size={48} className="mx-auto text-white/10 mb-6 animate-spin" />
+                      <p className="text-white/30 font-bold uppercase tracking-widest text-sm">{t('skills.loading')}</p>
+                    </div>
+                  ) : skills.length === 0 ? (
+                    <div className="p-20 text-center glass rounded-[3rem] border border-white/5">
+                      <Cpu size={48} className="mx-auto text-white/5 mb-6" />
+                      <p className="text-white/20 font-bold uppercase tracking-widest text-sm">{t('skills.empty')}</p>
+                    </div>
+                  ) : (
+                    skills.map((skill) => (
+                      <div key={skill.name} className="glass rounded-[2rem] p-8 border border-white/10 space-y-4">
+                        <div className="flex items-start justify-between gap-6">
+                          <div className="space-y-2">
+                            <h3 className="text-xl font-bold tracking-tight">{skill.name}</h3>
+                            <p className="text-sm text-white/60 leading-relaxed">{skill.description}</p>
+                          </div>
+                          <div className="shrink-0 text-right text-xs text-white/35 space-y-1 font-medium">
+                            <div>{t('skills.version')}: {skill.version || '0.1.0'}</div>
+                            <div>{t('skills.author')}: {skill.author || t('skills.unknown_author')}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
           ) : (
             <motion.div 
               key="settings"
@@ -384,51 +590,132 @@ export default function App() {
               className="flex-1 overflow-y-auto p-12 custom-scrollbar"
             >
               <div className="max-w-5xl mx-auto space-y-12 pb-20">
-                {/* Master Model Selection (Simplified & Moved to Top) */}
-                <section className="flex items-center justify-between glass rounded-3xl p-6 border border-white/10 shadow-xl mb-12">
-                   <div className="flex items-center gap-4">
-                     <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                       <Cpu className="text-blue-400" size={20} />
-                     </div>
-                     <span className="text-sm font-bold tracking-tight text-white/70">{t('settings.active_model_label')}</span>
-                   </div>
-                   <select 
-                     value={activeModel}
-                     onChange={(e) => handleSetActiveModel(e.target.value)}
-                     className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none font-bold hover:bg-white/10 transition-colors cursor-pointer ring-1 ring-white/5"
-                   >
-                      {Object.entries(availableModels).map(([provider, models]) => (
-                        <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
-                          {models.map(m => (
-                            <option key={`${provider}:${m}`} value={`${provider}:${m}`}>
-                              {m}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                   </select>
-                </section>
-
-                <section className="space-y-6">
-                  <header>
-                    <h2 className="text-2xl font-bold tracking-tight mb-2">{t('settings.providers_title')}</h2>
-                    <p className="text-sm text-white/30 font-medium">{t('settings.providers_subtitle')}</p>
-                  </header>
-                  
-                  <div className="grid grid-cols-1 gap-6">
-                     {llmConfigs.map(config => (
-                       <ProviderCard 
-                         key={config.provider}
-                         config={config} 
-                         t={t}
-                         onSave={(apiKey, baseUrl) => handleSaveConfig(config.provider, apiKey, baseUrl)}
-                       />
-                     ))}
+                <header className="flex items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-4xl font-black tracking-tight mb-2">{t('nav.settings')}</h2>
+                    <p className="text-sm text-white/30 font-medium">{t('settings.subtitle')}</p>
                   </div>
-                </section>
+                  <div className="flex items-center gap-3 rounded-2xl bg-white/5 border border-white/10 p-1">
+                    <button
+                      onClick={() => setSettingsTab('models')}
+                      className={cn(
+                        'px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors',
+                        settingsTab === 'models' ? 'bg-blue-600 text-white' : 'text-white/50 hover:bg-white/10'
+                      )}
+                    >
+                      {t('settings.tabs.models')}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSettingsTab('logs');
+                        refreshBackendLogs(backendLogSource);
+                      }}
+                      className={cn(
+                        'px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors',
+                        settingsTab === 'logs' ? 'bg-blue-600 text-white' : 'text-white/50 hover:bg-white/10'
+                      )}
+                    >
+                      {t('settings.tabs.logs')}
+                    </button>
+                  </div>
+                </header>
 
-              </div>
-            </motion.div>
+                {settingsTab === 'models' ? (
+                  <div className="space-y-12">
+                    <section className="flex items-center justify-between glass rounded-3xl p-6 border border-white/10 shadow-xl">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                          <Cpu className="text-blue-400" size={20} />
+                        </div>
+                        <span className="text-sm font-bold tracking-tight text-white/70">{t('settings.active_model_label')}</span>
+                      </div>
+                      <select
+                        value={activeModel}
+                        onChange={(e) => handleSetActiveModel(e.target.value)}
+                        className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none font-bold hover:bg-white/10 transition-colors cursor-pointer ring-1 ring-white/5"
+                      >
+                        {Object.entries(availableModels).map(([provider, models]) => (
+                          <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
+                            {models.map(m => (
+                              <option key={`${provider}:${m}`} value={`${provider}:${m}`}>
+                                {m}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </section>
+
+                    <section className="space-y-6">
+                      <header>
+                        <h2 className="text-2xl font-bold tracking-tight mb-2">{t('settings.providers_title')}</h2>
+                        <p className="text-sm text-white/30 font-medium">{t('settings.providers_subtitle')}</p>
+                      </header>
+
+                      <div className="grid grid-cols-1 gap-6">
+                        {llmConfigs.map(config => (
+                          <ProviderCard
+                            key={config.provider}
+                            config={config}
+                            t={t}
+                            onSave={(apiKey, baseUrl) => handleSaveConfig(config.provider, apiKey, baseUrl)}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+                ) : (
+                  <section className="space-y-6">
+                    <header className="flex items-center justify-between gap-4">
+                      <div>
+                        <h2 className="text-2xl font-bold tracking-tight mb-2">{t('settings.logs_title')}</h2>
+                        <p className="text-sm text-white/30 font-medium">{t('settings.logs_subtitle')}</p>
+                      </div>
+                      <button
+                        onClick={() => refreshBackendLogs(backendLogSource)}
+                        className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-colors flex items-center gap-2"
+                      >
+                        <RefreshCw size={14} className={cn(isRefreshingLogs && 'animate-spin')} />
+                        {t('settings.logs_refresh')}
+                      </button>
+                    </header>
+
+                    <div className="glass rounded-3xl p-6 border border-white/10 shadow-xl space-y-4">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => refreshBackendLogs('app')}
+                          className={cn(
+                            'px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors',
+                            backendLogSource === 'app' ? 'bg-blue-600 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'
+                          )}
+                        >
+                          {t('settings.logs_app_tab')}
+                        </button>
+                        <button
+                          onClick={() => refreshBackendLogs('sidecar')}
+                          className={cn(
+                            'px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors',
+                            backendLogSource === 'sidecar' ? 'bg-blue-600 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'
+                          )}
+                        >
+                          {t('settings.logs_sidecar_tab')}
+                        </button>
+                      </div>
+
+                      <div className="space-y-1 text-xs font-mono text-white/40">
+                        <div>{t('settings.logs_app_path')}：{backendLogInfo?.paths?.app || t('settings.logs_unavailable')}</div>
+                        <div>{t('settings.logs_sidecar_path')}：{backendLogInfo?.paths?.sidecar || t('settings.logs_unavailable')}</div>
+                      </div>
+
+                      <pre className="min-h-[280px] max-h-[420px] overflow-auto rounded-2xl bg-black/30 border border-white/5 p-4 text-xs leading-6 text-white/75 whitespace-pre-wrap break-words">
+                        {backendLogContent || t('settings.logs_empty')}
+                      </pre>
+                    </div>
+                  </section>
+                )}
+
+	              </div>
+	            </motion.div>
           )}
         </AnimatePresence>
       </main>
@@ -480,6 +767,19 @@ export default function App() {
   );
 }
 
+function ThinkingIndicator({ compact = false }: { compact?: boolean }) {
+  const size = compact ? 'w-2.5 h-2.5' : 'w-3 h-3';
+  return (
+    <div className={cn('flex items-center py-1', compact ? 'justify-center' : 'justify-start')}>
+      <motion.div
+        animate={{ scale: [0.9, 1.25, 0.9], opacity: [0.45, 1, 0.45] }}
+        transition={{ duration: 1.1, repeat: Infinity, ease: 'easeInOut' }}
+        className={cn(size, 'rounded-full bg-white/85')}
+      />
+    </div>
+  );
+}
+
 function NavItem({ icon, label, active = false, onClick }: { icon: React.ReactNode, label: string, active?: boolean, onClick?: () => void }) {
   return (
     <div 
@@ -513,10 +813,18 @@ function QuickAction({ children, onClick }: { children: ReactNode, onClick: () =
   );
 }
 
-function ProviderCard({ config, onSave, t }: { config: any, onSave: (apiKey: string, baseUrl: string) => void, t: any }) {
+function ProviderCard({ config, onSave, t }: { config: any, onSave: (apiKey: string | undefined, baseUrl: string) => void, t: any }) {
   const [apiKey, setApiKey] = useState(config.api_key || '');
   const [baseUrl, setBaseUrl] = useState(config.base_url || config.metadata.placeholder_base_url || '');
   const [isEditing, setIsEditing] = useState(false);
+  const [apiKeyDirty, setApiKeyDirty] = useState(false);
+
+  useEffect(() => {
+    setApiKey(config.api_key || '');
+    setBaseUrl(config.base_url || config.metadata.placeholder_base_url || '');
+    setIsEditing(false);
+    setApiKeyDirty(false);
+  }, [config]);
 
   return (
     <div className="glass rounded-[2.5rem] p-6 border border-white/5 space-y-6 relative overflow-hidden group min-h-[280px] flex flex-col">
@@ -540,13 +848,14 @@ function ProviderCard({ config, onSave, t }: { config: any, onSave: (apiKey: str
              <input 
                type="password" 
                value={apiKey}
-               onChange={(e) => {
-                  setApiKey(e.target.value);
-                  setIsEditing(true);
-               }}
-               placeholder="sk-••••••••••••••••"
-               className="w-full bg-white/[0.03] border border-white/5 rounded-xl py-3 pl-11 pr-4 text-xs font-mono outline-none focus:border-blue-500/30 transition-colors"
-             />
+	               onChange={(e) => {
+	                  setApiKey(e.target.value);
+	                  setApiKeyDirty(true);
+	                  setIsEditing(true);
+	               }}
+	               placeholder={t('settings.api_key_placeholder')}
+	               className="w-full bg-white/[0.03] border border-white/5 rounded-xl py-3 pl-11 pr-4 text-xs font-mono outline-none focus:border-blue-500/30 transition-colors"
+	             />
           </div>
         </div>
 
@@ -571,13 +880,14 @@ function ProviderCard({ config, onSave, t }: { config: any, onSave: (apiKey: str
       <div className="mt-auto pt-4 relative z-10">
         <button
           onClick={() => {
-            onSave(apiKey, baseUrl);
+            onSave(apiKeyDirty ? apiKey : undefined, baseUrl);
             setIsEditing(false);
+            setApiKeyDirty(false);
           }}
-          disabled={!isEditing && config.api_key === apiKey && config.base_url === baseUrl}
+          disabled={!isEditing && !apiKeyDirty && config.api_key === apiKey && config.base_url === baseUrl}
           className={cn(
             "w-full py-4 rounded-2xl text-[11px] font-bold uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 group/save transition-all active:scale-[0.98]",
-            isEditing || config.api_key !== apiKey || config.base_url !== baseUrl
+            isEditing || apiKeyDirty || config.api_key !== apiKey || config.base_url !== baseUrl
               ? "bg-blue-600 text-white shadow-blue-500/20 hover:bg-blue-500" 
               : "bg-white/5 text-white/20 cursor-not-allowed"
           )}

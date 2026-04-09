@@ -1,11 +1,15 @@
+import json
 import logging
 import os
+import secrets
+from collections import deque
 from contextlib import asynccontextmanager
 from logging.config import dictConfig
+from pathlib import Path
 from typing import Optional
 
 from asgi_correlation_id import CorrelationIdMiddleware
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from jsonrpcserver import async_dispatch, method, Success
 from sqlmodel import select, desc, text
 
@@ -13,8 +17,17 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.kernel import FerrymanKernel
 from app.models.database import Session, Message, Task
+from app.models.schemas import JsonRpcError, JsonRpcErrorCode, JsonRpcErrorResponse
 
 logger = logging.getLogger(__name__)
+
+
+def is_websocket_authorized(websocket: WebSocket) -> bool:
+    presented_token = websocket.query_params.get("access_token")
+    expected_token = getattr(websocket.app.state, "bearer_token", None)
+    if not presented_token or not expected_token:
+        return False
+    return secrets.compare_digest(presented_token, expected_token)
 
 
 def configure_logging(log_level: Optional[str] = None) -> None:
@@ -93,24 +106,37 @@ def configure_logging(log_level: Optional[str] = None) -> None:
     })
 
 
+def get_backend_log_paths() -> dict[str, str]:
+    settings = get_settings()
+    log_dir = settings.log_dir
+    return {
+        "app": str(log_dir / "ferryman.log"),
+        "sidecar": str(log_dir / "ferryman-tauri.log"),
+    }
+
+
+def tail_lines(path: Path, lines: int = 200) -> str:
+    if not path.exists():
+        return ""
+
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        return "".join(deque(handle, maxlen=lines))
+
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     # Initialize logging
     configure_logging()
     logger.info("🚀 Ferryman Sidecar starting...")
 
-    # Initialize Core Components
-    # app.state.mcp_client = MCPClient()
-    # app.state.mcp_client.load_config()
-    # await fastapi_app.state.mcp_client.connect_all()
-
     fastapi_app.state.kernel = FerrymanKernel(get_settings())
-    fastapi_app.state.kernel.mcp_client = fastapi_app.state.mcp_client  # Bridge them
+    fastapi_app.state.bearer_token = os.environ.get("FERRYMAN_BEARER_TOKEN") or secrets.token_urlsafe(32)
 
     # Pre-scan skills
     fastapi_app.state.kernel.scan_skills()
 
     yield
+    await fastapi_app.state.kernel.shutdown()
     logger.info("🛑 Ferryman Sidecar shutting down...")
 
 
@@ -200,6 +226,44 @@ async def get_available_models(context):
 
 
 @method
+async def list_skills(context):
+    if context and hasattr(context, "kernel"):
+        skills = sorted(context.kernel.skills.values(), key=lambda skill: skill.name.lower())
+        return Success([
+            {
+                "name": skill.name,
+                "description": skill.description,
+                "version": skill.version,
+                "author": skill.author,
+            }
+            for skill in skills
+        ])
+
+    return Success([])
+
+
+@method
+async def get_backend_log_info(context):
+    paths = get_backend_log_paths()
+    return Success({
+        "paths": paths,
+        "active_log": paths["app"],
+    })
+
+
+@method
+async def read_backend_logs(context, source: str = "app", lines: int = 200):
+    paths = get_backend_log_paths()
+    target = Path(paths.get(source, paths["app"]))
+    requested_lines = max(20, min(lines, 1000))
+    return Success({
+        "source": source if source in paths else "app",
+        "path": str(target),
+        "content": tail_lines(target, requested_lines),
+    })
+
+
+@method
 async def execute(context, instruction: str, session_id: str = "default"):
     """
     Ferryman OS 核心指令入口：接收自然语言指令并调度 Master Agent。
@@ -213,7 +277,7 @@ async def execute(context, instruction: str, session_id: str = "default"):
             instruction=instruction,
             session_id=session_id
         )
-        return Success(result)
+        return Success(result.model_dump(mode="json"))
 
     return Success({"status": "error", "message": "Kernel not initialized"})
 
@@ -407,25 +471,56 @@ async def list_schedules(context):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    if not is_websocket_authorized(websocket):
+        logger.warning("Unauthorized WebSocket connection rejected")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized")
+        return
+
     await websocket.accept()
     logger.info("🔌 WebSocket connection established")
 
     try:
         while True:
-            data = await websocket.receive_text()
-            # 处理 JSON-RPC 请求，通过 context 传递 app.state
-            response = await async_dispatch(data, context=websocket.app.state)
-            if response:
-                await websocket.send_text(str(response))
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                logger.info("❌ WebSocket disconnected")
+                break
+
+            try:
+                # Process one JSON-RPC request at a time and keep the socket alive on request errors.
+                response = await async_dispatch(data, context=websocket.app.state)
+                if response:
+                    await websocket.send_text(str(response))
+            except Exception:
+                logger.exception("⚠️ JSON-RPC dispatch failed")
+                request_id = None
+                try:
+                    parsed = json.loads(data)
+                    if isinstance(parsed, dict):
+                        candidate_id = parsed.get("id")
+                        if isinstance(candidate_id, (str, int)):
+                            request_id = candidate_id
+                except Exception:
+                    request_id = None
+
+                error_payload = JsonRpcErrorResponse(
+                    error=JsonRpcError(
+                        code=JsonRpcErrorCode.INTERNAL_ERROR,
+                        message="Internal server error",
+                    ),
+                    id=request_id,
+                )
+                await websocket.send_text(error_payload.model_dump_json())
     except WebSocketDisconnect:
         logger.info("❌ WebSocket disconnected")
-    except Exception as e:
-        logger.error(f"⚠️ Error: {e}")
-        if not websocket.client_state.name == "DISCONNECTED":
+    except Exception:
+        logger.exception("⚠️ WebSocket connection-level error")
+        if websocket.client_state.name != "DISCONNECTED":
             await websocket.close()
 
 
 if __name__ == "__main__":
-    import uvicorn
+    from app.sidecar import main
 
-    uvicorn.run(app, host="127.0.0.1", port=get_settings().port)
+    main()

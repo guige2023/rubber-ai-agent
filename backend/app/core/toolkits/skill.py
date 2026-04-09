@@ -1,7 +1,13 @@
+import json
 import logging
-from pydantic_ai import RunContext
+import shutil
+from pathlib import Path
+
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import UsageLimits
+
 from app.core.deps import AgentDeps
-from app.core.prompts import SKILL_SYSTEM_PROMPT
+from app.core.utils import load_skill_from_directory
 
 logger = logging.getLogger(__name__)
 
@@ -10,13 +16,7 @@ class SkillToolkit:
 
     @staticmethod
     def get_tools():
-        return [SkillToolkit.run_skill]
-
-    @staticmethod
-
-    async def read_skill_sop(ctx: RunContext[AgentDeps], skill_name: str) -> str:
-        """Read the full SOP (SKILL.md) of a specific skill before executing it."""
-        return ctx.deps.kernel.read_skill_sop(skill_name)
+        return [SkillToolkit.run_skill, SkillToolkit.publish_skill]
 
     @staticmethod
     async def run_skill(
@@ -28,53 +28,109 @@ class SkillToolkit:
         Delegate a task to a specialized Skill agent.
         Use this when a skill in <Available Skills> matches the user's intent.
         The skill agent has its own expert-level SOP and will use Browser/File tools autonomously.
-        Pass the user's original instruction (or a refined version) as `instruction`.
         """
         kernel = ctx.deps.kernel
         session_id = ctx.deps.session_id
         
         if skill_name not in kernel.skills:
-            return f"Error: Skill '{skill_name}' not found."
+            raise ValueError(f"Skill '{skill_name}' not found.")
 
         workspace = kernel.get_session_workspace(session_id)
-        sop = kernel.read_skill_sop(skill_name)
 
         logger.info(f"Executing skill '{skill_name}' in {workspace}")
-
-        import platform
-        from datetime import datetime
-        
-        # Determine browser visibility
-        is_headless = kernel._session_headless.get(session_id, True)
-        visibility = "Visible (headless=False). You can ask the user to help." if not is_headless else "Headless (Invisible). Manual intervention is NOT possible."
-
-        skill_context = SKILL_SYSTEM_PROMPT.format(
-            skill_name=skill_name,
-            sop=sop,
-            root_dir=str(kernel._settings.root_dir),
-            browser_visibility=visibility,
-            os_name=platform.system(),
-            current_time=datetime.now().astimezone().isoformat()
-        )
-        
-        # Build a temporary agent for the skill
-        executor = kernel.build_agent(skill_context)
+        skill_agent = kernel.build_skill_agent(skill_name)
 
         try:
-            # IMPORTANT: Pass ctx.usage to sub-agent to aggregate token costs automatically
-            result = await executor.run(instruction, deps=ctx.deps, usage=ctx.usage)
+            # IMPORTANT: Pass ctx.usage to sub-agent so request/token accounting
+            # and request budgeting are shared across the master agent and delegated skills.
+            request_limit = kernel.get_setting("system.llm.request_limit", 100)
+            augmented_instruction = kernel.build_runtime_augmented_instruction(instruction, session_id)
+            skill_deps = AgentDeps(kernel=kernel, session_id=session_id, skill_name=skill_name)
+            result = await skill_agent.run(
+                augmented_instruction,
+                deps=skill_deps,
+                usage=ctx.usage,
+                usage_limits=UsageLimits(request_limit=request_limit),
+            )
             usage = result.usage()
+            usage_data = {
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "total_tokens": usage.total_tokens,
+            }
             logger.info({
                 "message": {
                     "session_id": session_id,
-                    "skill_name": skill_name,
-                    "type": "skill_usage",
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "total_tokens": usage.total_tokens
+                    "event": "agent_run",
+                    "scope": "skill",
+                    "status": "success",
+                    "skill": skill_name,
+                    "input": instruction,
+                    "output": str(result.output),
+                    "usage": usage_data,
                 }
             })
-            return f"Skill '{skill_name}' execution completed. Result: {str(result.output)}"
+            return str(result.output)
         except Exception as e:
-            logger.exception(f"Error executing skill {skill_name}")
-            return f"Error executing Skill '{skill_name}': {e}"
+            logger.exception({
+                "message": {
+                    "session_id": session_id,
+                    "event": "agent_run",
+                    "scope": "skill",
+                    "status": "failed",
+                    "skill": skill_name,
+                    "input": instruction,
+                    "error": str(e),
+                }
+            })
+            raise RuntimeError(f"Skill '{skill_name}' failed: {e}") from e
+
+    @staticmethod
+    async def publish_skill(
+        ctx: RunContext[AgentDeps],
+        draft_path: str,
+    ) -> str:
+        """
+        Publish a draft skill directory from the current session workspace into the user skills directory.
+        The draft must stay inside the current session workspace and include a valid SKILL.md.
+        """
+        kernel = ctx.deps.kernel
+        workspace_dir = kernel.get_session_workspace(ctx.deps.session_id).resolve()
+        normalized = draft_path.strip()
+        if not normalized:
+            raise RuntimeError("draft_path cannot be empty.")
+
+        source_path = (workspace_dir / normalized).resolve() if not Path(normalized).is_absolute() else Path(normalized).resolve()
+        try:
+            source_path.relative_to(workspace_dir)
+        except ValueError as exc:
+            raise RuntimeError("draft_path must be inside the current session workspace.") from exc
+
+        if not source_path.exists():
+            raise RuntimeError(f"Draft skill directory not found: {draft_path}")
+        if not source_path.is_dir():
+            raise RuntimeError(f"Draft path is not a directory: {draft_path}")
+
+        skill = load_skill_from_directory(source_path)
+        if not skill:
+            raise RuntimeError(f"Draft directory is not a valid skill: {draft_path}")
+
+        destination_dir = kernel._settings.user_skills_dir.resolve()
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        destination_path = destination_dir / skill.name
+        if destination_path.exists():
+            raise RuntimeError(f"Skill '{skill.name}' already exists in user skills.")
+
+        shutil.move(str(source_path), str(destination_path))
+        kernel.scan_skills()
+
+        return json.dumps(
+            {
+                "ok": True,
+                "skill_name": skill.name,
+                "source_path": str(source_path),
+                "destination_path": str(destination_path),
+                "registered": skill.name in kernel.skills,
+            },
+            ensure_ascii=False,
+        )

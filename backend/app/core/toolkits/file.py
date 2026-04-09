@@ -1,4 +1,4 @@
-from pydantic_ai import RunContext
+from pydantic_ai.tools import RunContext
 from app.core.deps import AgentDeps
 
 class FileToolkit:
@@ -10,8 +10,8 @@ class FileToolkit:
 
     @staticmethod
     def _normalize_workspace_path(file_path: str) -> str:
-        """Strip leading 'artifacts/' from agent-supplied paths to avoid double nesting."""
-        for prefix in ("artifacts/", "./artifacts/", "./"):
+        """Normalize agent-supplied paths so they stay rooted in the session workspace."""
+        for prefix in ("./",):
             file_path = file_path.removeprefix(prefix)
         return file_path
 

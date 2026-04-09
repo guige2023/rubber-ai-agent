@@ -7,6 +7,8 @@ description: >
   (2) a URL to analyze, or (3) a local project/codebase directory path to extract topics from.
   Outputs a structured keyword analysis report with search intent classification, trend data,
   competition scoring, and strategic recommendations.
+version: 1.0.0
+author: Ferryman
 ---
 
 # SEO Keyword Research — Expert-Level Skill

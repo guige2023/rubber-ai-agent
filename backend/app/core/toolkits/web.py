@@ -1,4 +1,5 @@
-from pydantic_ai import RunContext
+from pydantic_ai.messages import BinaryImage
+from pydantic_ai.tools import RunContext
 from app.core.deps import AgentDeps
 from typing import Optional
 
@@ -18,7 +19,7 @@ class WebToolkit:
         ]
 
     @staticmethod
-    async def browser_navigate(ctx: RunContext[AgentDeps], url: str, headless: bool = True) -> str:
+    async def browser_navigate(ctx: RunContext[AgentDeps], url: str, headless: Optional[bool] = None) -> str:
         """Navigate to a website url (e.g. 'https://bing.com') using the stealth browser.
         Set headless=False if you encounter CAPTCHAs or want to show the browser to the user.
         """
@@ -33,13 +34,13 @@ class WebToolkit:
 
     @staticmethod
     async def browser_click(ctx: RunContext[AgentDeps], selector: str) -> str:
-        """Click on an element using a numeric ID (e.g. '12') or CSS selector."""
+        """Click on an element using an ID from the latest browser_aria_snapshot (e.g. '12' or '[12]')."""
         browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
         return await browser.click(selector)
 
     @staticmethod
     async def browser_type(ctx: RunContext[AgentDeps], selector: str, text: str) -> str:
-        """Type text into an input field using numeric ID (e.g. '12') or CSS selector."""
+        """Type text into an input field using an ID from the latest browser_aria_snapshot (e.g. '12' or '[12]')."""
         browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
         return await browser.type(selector, text)
 
@@ -53,13 +54,14 @@ class WebToolkit:
         return await browser.get_aria_snapshot()
         
     @staticmethod
-    async def browser_wait(ctx: RunContext[AgentDeps], timeout_ms: int = 2000, selector: Optional[str] = None) -> str:
-        """Wait for a certain amount of time or for an element to appear."""
+    async def browser_wait(ctx: RunContext[AgentDeps], timeout_ms: int = 2000) -> str:
+        """Wait for a certain amount of time before continuing."""
         browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
-        return await browser.wait(timeout_ms, selector)
+        return await browser.wait(timeout_ms)
 
     @staticmethod
-    async def browser_screenshot(ctx: RunContext[AgentDeps], selector: Optional[str] = None) -> str:
-        """Take a screenshot of the page or a specific element."""
+    async def browser_screenshot(ctx: RunContext[AgentDeps], selector: Optional[str] = None) -> BinaryImage:
+        """Take a screenshot of the page, or of a specific element identified by the latest browser_aria_snapshot."""
         browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
-        return await browser.screenshot(selector)
+        screenshot_dir = ctx.deps.kernel.get_session_workspace(ctx.deps.session_id) / "screenshots"
+        return await browser.screenshot(selector, output_dir=screenshot_dir)

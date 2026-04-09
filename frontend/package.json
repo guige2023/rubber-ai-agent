@@ -1,9 +1,12 @@
 {
-  "name": "frontend",
+  "name": "ferryman-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "build-backend-sidecar": "python3 scripts/stage_backend_bundle.py",
+    "stage-backend": "npm run build-backend-sidecar",
+    "dist:mac": "npm run stage-backend && tauri build --bundles app && ./scripts/build_macos_dmg.sh",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

@@ -1,39 +1,39 @@
 import pytest
 import shutil
 from pathlib import Path
-from app.core.config import config
+
+from app.core.config import Settings
 from app.core.kernel import FerrymanKernel
 from app.models.schemas import TaskStatus
-from app.core.utils import load_skill_from_directory
 
 # Define test paths
 TEST_ROOT = Path("/tmp/ferryman_test")
 TEST_USER_SKILLS = TEST_ROOT / "user" / "skills"
-TEST_OFFICIAL_SKILLS = TEST_ROOT / "official" / "skills"
+TEST_BUNDLED_SKILLS = TEST_ROOT / "bundled" / "skills"
 TEST_WORKSPACES = TEST_ROOT / "workspaces"
 
 @pytest.fixture(autouse=True)
 def setup_test_environment(monkeypatch):
-    """Override config paths for testing."""
-    monkeypatch.setattr(config, "root_dir", TEST_ROOT)
-    
     # Clean up before test
     if TEST_ROOT.exists():
         shutil.rmtree(TEST_ROOT)
-        
+
     TEST_ROOT.mkdir(parents=True, exist_ok=True)
     TEST_USER_SKILLS.mkdir(parents=True, exist_ok=True)
-    TEST_OFFICIAL_SKILLS.mkdir(parents=True, exist_ok=True)
+    TEST_BUNDLED_SKILLS.mkdir(parents=True, exist_ok=True)
     TEST_WORKSPACES.mkdir(parents=True, exist_ok=True)
-    
-    from app.core.bootstrap import init_env
-    init_env(config)
-    
+
+    monkeypatch.setenv("FERRYMAN_BUNDLED_SKILLS_DIR", str(TEST_BUNDLED_SKILLS))
+
     yield
-    
+
     # Clean up after test
     if TEST_ROOT.exists():
         shutil.rmtree(TEST_ROOT)
+
+
+def create_test_settings() -> Settings:
+    return Settings(FERRYMAN_ROOT_DIR=TEST_ROOT)
 
 def create_mock_skill(name: str, desc: str, directory: Path):
     """Utility to create a mock skill directory."""
@@ -50,7 +50,7 @@ version: 1.0.0
     skill_md.write_text(content, encoding="utf-8")
 
 def test_ferryman_kernel_tasks(session):
-    kernel = FerrymanKernel()
+    kernel = FerrymanKernel(create_test_settings())
     
     # Test task creation
     task = kernel.create_task("session-123", "Test Task")
@@ -63,22 +63,22 @@ def test_ferryman_kernel_tasks(session):
     
 def test_scan_skills_and_xml_index():
     create_mock_skill("user_skill", "User skill desc", TEST_USER_SKILLS)
-    create_mock_skill("official_skill", "Official skill desc", TEST_OFFICIAL_SKILLS)
-    
-    kernel = FerrymanKernel()
+    create_mock_skill("internal_skill", "Internal skill desc", TEST_BUNDLED_SKILLS)
+
+    kernel = FerrymanKernel(create_test_settings())
     kernel.scan_skills()
     assert "user_skill" in kernel.skills
-    assert "official_skill" in kernel.skills
+    assert "internal_skill" in kernel.skills
     
     # Test XML generation (OS Prompt formatting)
     xml = kernel.get_skill_index_xml()
     assert "<available_skills>" in xml
     assert "<name>user_skill</name>" in xml
-    assert "<description>Official skill desc</description>" in xml
+    assert "<description>Internal skill desc</description>" in xml
 
 def test_read_skill_sop():
     create_mock_skill("target_skill", "Test", TEST_USER_SKILLS)
-    kernel = FerrymanKernel()
+    kernel = FerrymanKernel(create_test_settings())
     kernel.scan_skills()
     
     sop = kernel.read_skill_sop("target_skill")
@@ -104,7 +104,7 @@ async def test_run_master_agent_mocked(monkeypatch):
     def mock_get_master_agent(session_id: str):
         return MockAgent()
 
-    kernel = FerrymanKernel()
+    kernel = FerrymanKernel(create_test_settings())
     # Mock the internal agent factory
     monkeypatch.setattr(kernel, "_get_master_agent", mock_get_master_agent)
     

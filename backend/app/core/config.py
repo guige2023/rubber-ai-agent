@@ -1,8 +1,11 @@
+import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import os
 
 
 class Settings(BaseSettings):
@@ -17,7 +20,7 @@ class Settings(BaseSettings):
     )
 
     # Base directory for all Ferryman persistence
-    root_dir: Path = Path.home() / ".ferryman"
+    root_dir: Path = Field(default=Path.home() / ".ferryman", validation_alias="FERRYMAN_ROOT_DIR")
     port: int = 8000
     log_level: str = "INFO"
 
@@ -40,11 +43,37 @@ class Settings(BaseSettings):
         return self.user_dir / "browser"
 
     @property
+    def user_skills_dir(self) -> Path:
+        return self.user_dir / "skills"
+
+    @property
+    def bundled_skills_dir(self) -> Path:
+        """Return the built-in skills directory for the current runtime."""
+        env_override = os.environ.get("FERRYMAN_BUNDLED_SKILLS_DIR")
+        if env_override:
+            return Path(env_override).expanduser()
+
+        repo_skills_dir = Path(__file__).resolve().parents[3] / "skills"
+        if repo_skills_dir.exists():
+            return repo_skills_dir
+
+        meipass_dir = getattr(sys, "_MEIPASS", None)
+        if meipass_dir:
+            return Path(meipass_dir) / "skills"
+
+        executable_path = Path(sys.executable).resolve()
+        app_bundle_resources_dir = executable_path.parents[1] / "Resources" / "skills"
+        if app_bundle_resources_dir.exists():
+            return app_bundle_resources_dir
+
+        return repo_skills_dir
+
+    @property
     def skills_dir(self) -> tuple[Path, Path]:
-        # Returns a tuple of (internal, user) skill directories
+        # Returns a tuple of (bundled, user) skill directories
         return (
-            self.root_dir / "internal" / "skills",
-            self.user_dir / "skills"
+            self.bundled_skills_dir,
+            self.user_skills_dir,
         )
 
     # --- Runtime Registry Methods (Database Persistent) ---

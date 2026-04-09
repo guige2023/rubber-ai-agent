@@ -1,6 +1,7 @@
 from datetime import datetime
+from enum import IntEnum
 from pathlib import Path
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -50,7 +51,6 @@ class TaskModel(BaseModel):
     title: str
     status: str = TaskStatus.PENDING
     args: Dict[str, Any] = Field(default_factory=dict)
-    kwargs: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     parent_id: Optional[str] = None
     project_id: Optional[str] = None
@@ -63,9 +63,42 @@ class ScheduleModel(BaseModel):
     name: str
     cron_expression: str
     args: Dict[str, Any] = Field(default_factory=dict)
-    kwargs: Dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     last_run_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+
+class Usage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class AgentRunResult(BaseModel):
+    status: Literal["success", "error"]
+    session_id: str
+    response: Optional[Any] = None
+    message: Optional[str] = None
+    usage: Usage = Field(default_factory=Usage)
+
+
+class JsonRpcErrorCode(IntEnum):
+    PARSE_ERROR = -32700
+    INVALID_REQUEST = -32600
+    METHOD_NOT_FOUND = -32601
+    INVALID_PARAMS = -32602
+    INTERNAL_ERROR = -32603
+    SERVER_ERROR = -32000
+
+
+class JsonRpcError(BaseModel):
+    code: int
+    message: str
+
+
+class JsonRpcErrorResponse(BaseModel):
+    jsonrpc: Literal["2.0"] = "2.0"
+    error: JsonRpcError
+    id: Optional[int | str] = None

@@ -1,0 +1,116 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+export interface Task {
+  id: string;
+  title: string;
+  status: 'pending' | 'running' | 'success' | 'failed';
+  progress?: number;
+}
+
+export interface Usage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export function useBackendConnection(url: string | null) {
+  const [isConnected, setIsConnected] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>([]);
+
+  const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const pendingCalls = useRef<Map<number, { resolve: (val: any) => void; reject: (reason: any) => void }>>(new Map());
+
+  useEffect(() => {
+    if (!url) {
+      setIsConnected(false);
+      return;
+    }
+
+    const connect = () => {
+      const socket = new WebSocket(url);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        setIsConnected(true);
+      };
+
+      socket.onclose = () => {
+        setIsConnected(false);
+        pendingCalls.current.forEach(({ reject }) => reject(new Error('WebSocket disconnected')));
+        pendingCalls.current.clear();
+        reconnectTimeoutRef.current = window.setTimeout(connect, 2000);
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.id && pendingCalls.current.has(data.id)) {
+          const { resolve, reject } = pendingCalls.current.get(data.id)!;
+          pendingCalls.current.delete(data.id);
+          if (data.error) reject(data.error);
+          else resolve(data.result);
+          return;
+        }
+
+        if (data.method === 'task_update') {
+          const update = data.params;
+          setTasks((prev) => {
+            const exists = prev.find((task) => task.id === update.id);
+            if (exists) {
+              return prev.map((task) => (task.id === update.id ? { ...task, ...update } : task));
+            }
+            return [...prev, update];
+          });
+          return;
+        }
+      };
+
+      socket.onerror = () => {
+        socket.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
+      if (reconnectTimeoutRef.current !== null) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      pendingCalls.current.forEach(({ reject }) => reject(new Error('WebSocket disconnected')));
+      pendingCalls.current.clear();
+    };
+  }, [url]);
+
+  const call = useCallback((method: string, params: any = {}) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket not connected'));
+        return;
+      }
+
+      const id = Date.now() + Math.floor(Math.random() * 1000);
+      pendingCalls.current.set(id, { resolve, reject });
+      socketRef.current.send(JSON.stringify({
+        jsonrpc: '2.0',
+        method,
+        params,
+        id,
+      }));
+    });
+  }, []);
+
+  const execute = useCallback((instruction: string, sessionId: string) => {
+    return call('execute', { instruction, session_id: sessionId });
+  }, [call]);
+
+  return {
+    call,
+    execute,
+    isConnected,
+    tasks,
+  };
+}

@@ -3,24 +3,35 @@ import platform
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Any, Dict
+from uuid import uuid4
 
-from pydantic_ai import Agent, UsageLimits
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
+from asgi_correlation_id import correlation_id
+from pydantic_ai.agent import Agent
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+from pydantic_ai.usage import UsageLimits
 from sqlmodel import select
 
 from app.core.config import Settings
 from app.core.db import get_session, init_db
 # Refactored Imports
 from app.core.deps import AgentDeps
-from app.core.prompts import OS_PROMPT
+from app.core.prompts import MASTER_SYSTEM_PROMPT, SKILL_SYSTEM_PROMPT
+from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.file import FileToolkit
 from app.core.toolkits.skill import SkillToolkit
 from app.core.toolkits.task import TaskToolkit
 from app.core.toolkits.web import WebToolkit
 from app.core.utils import load_skill_from_directory
 from app.models.database import Session, Message, Task
-from app.models.schemas import SkillModel, TaskStatus
+from app.models.schemas import SkillModel, TaskStatus, AgentRunResult, Usage
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +53,21 @@ class FerrymanKernel:
         self._init_directories(settings)
         init_db()
 
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """Public access to persisted runtime settings."""
+        return self._settings.get(key, default)
+
     # ---- Skill management ------------------------------------------------
 
     @staticmethod
     def _init_directories(settings: Settings) -> None:
         sub_dirs = [
-            *settings.skills_dir,
             settings.user_dir / "reports",
             settings.user_dir / "tasks",
             settings.user_dir / "logs",
             settings.user_dir / "workspaces",
             settings.browser_dir,
+            settings.user_skills_dir,
         ]
 
         for sd in sub_dirs:
@@ -96,9 +111,42 @@ class FerrymanKernel:
     # ---- Workspace & task management -------------------------------------
 
     def get_session_workspace(self, session_id: str) -> Path:
-        session_dir = self.workspace_root / session_id / "artifacts"
+        session_dir = self.workspace_root / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
         return session_dir
+
+    @staticmethod
+    def _find_duplicate_task(title: str) -> Optional[Task]:
+        """Search for an existing active task using order-agnostic word similarity."""
+        import difflib
+
+        def normalize(text: str) -> str:
+            # Lowercase, alphanumeric only, split, sort, and re-join
+            # This makes it order-insensitive: "A to B" == "B to A"
+            cleaned = "".join(c if c.isalnum() else " " for c in (text or "").lower())
+            return " ".join(sorted(cleaned.split()))
+
+        norm_title = normalize(title)
+        if not norm_title:
+            return None
+
+        with get_session() as session:
+            from sqlmodel import select
+
+            # 1. Fetch all candidate active tasks (pending or running)
+            # noinspection PyUnresolvedReferences
+            statement = select(Task).where(Task.status.in_(["pending", "running"]))
+            candidates = session.exec(statement).all()
+
+            # 2. Fuzzy Match on Normalized Titles (Sorted Words)
+            for cand in candidates:
+                norm_cand = normalize(cand.title)
+                ratio = difflib.SequenceMatcher(None, norm_title, norm_cand).ratio()
+                if ratio > 0.85:
+                    logger.info(f"Task deduplication: '{title}' matched '{cand.title}' (normalized ratio {ratio:.2f})")
+                    return cand
+
+        return None
 
     def persist_task(
             self,
@@ -107,6 +155,14 @@ class FerrymanKernel:
             parent_id: Optional[str] = None,
             args: Optional[Dict] = None,
     ) -> Task:
+        """Global Task Persistence: Prevents duplicates using string similarity."""
+        existing = self._find_duplicate_task(title)
+        if existing:
+            if existing.id not in self.tasks:
+                self.tasks[existing.id] = existing
+            return existing
+
+        # Create new if no duplicate
         logger.debug(f"Creating task: {title} (session_id: {session_id}, parent_id: {parent_id})")
         task = Task(
             session_id=session_id,
@@ -116,7 +172,6 @@ class FerrymanKernel:
         )
         self.tasks[task.id] = task
 
-        # Persist to DB
         with get_session() as session:
             session.add(task)
             session.commit()
@@ -179,6 +234,8 @@ class FerrymanKernel:
         await self.cleanup_stale_browsers()
 
         requested_headless = headless if headless is not None else True
+        if headless is not None:
+            self._session_headless[session_id] = headless
 
         # 1. Check if we need to switch mode
         if session_id in self._browsers:
@@ -186,9 +243,11 @@ class FerrymanKernel:
             existing_browser = entry["instance"]
 
             # Only trigger mode change if explicitly requested AND differing
+            # noinspection PyProtectedMember
             if headless is not None and existing_browser._headless != headless:
-                logger.info(
-                    f"🔄 Browser mode change detected ({existing_browser._headless} -> {headless}). Restarting...")
+                # noinspection PyProtectedMember
+                logger.info(f"🔄Browser mode change detected ({existing_browser._headless} -> {headless}). "
+                            f"Restarting...")
                 await self.close_browser(session_id)
             else:
                 # Update last active timestamp
@@ -196,7 +255,7 @@ class FerrymanKernel:
                 return existing_browser
 
         # 1.5 Enforce Max Instances Limit (LRU Eviction)
-        max_instances = self._settings.get("system.browser.max_instances", 3)
+        max_instances = self.get_setting("system.browser.max_instances", 3)
         if session_id not in self._browsers and len(self._browsers) >= max_instances:
             oldest_sid = min(self._browsers.keys(), key=lambda sid: self._browsers[sid]["last_active"])
             logger.info(f"🚀 Max browser instances ({max_instances}) reached. Evicting oldest: {oldest_sid}")
@@ -231,7 +290,7 @@ class FerrymanKernel:
 
     async def cleanup_stale_browsers(self):
         """Close browsers that have been inactive for longer than the configured TTL."""
-        ttl = self._settings.get("system.browser.ttl", 1800)  # Default 30 minutes
+        ttl = self.get_setting("system.browser.ttl", 1800)  # Default 30 minutes
         now = time.time()
         stale_sids = [
             sid for sid, entry in self._browsers.items()
@@ -242,23 +301,37 @@ class FerrymanKernel:
             logger.info(f"🧹 Cleaning up stale browser for session: {sid}")
             await self.close_browser(sid)
 
+    async def shutdown(self) -> None:
+        """Release runtime resources before process exit."""
+        for sid in list(self._browsers.keys()):
+            await self.close_browser(sid)
+
     def _build_system_prompt(self, session_id: str) -> str:
-        """Render the OS Prompt with runtime context."""
+        """Render the stable master system prompt."""
         self.get_session_workspace(session_id)
-        
-        # Determine browser visibility
-        is_headless = self._session_headless.get(session_id, True)
-        visibility = "Visible (headless=False). You can ask the user to help." if not is_headless else "Headless (Invisible). Manual intervention is NOT possible."
-        
-        system_prompt = OS_PROMPT.format(
-            os_name=platform.system(),
-            current_time=datetime.now().astimezone().isoformat(),
-            root_dir=str(self._settings.root_dir),
+
+        system_prompt = MASTER_SYSTEM_PROMPT.format(
             skill_list=self.get_skill_index_xml(),
-            browser_visibility=visibility,
             session_id=session_id
         )
         return system_prompt
+
+    def build_runtime_augmented_instruction(self, instruction: str, session_id: str) -> str:
+        """Attach per-run runtime context to the current request."""
+        now = datetime.now().astimezone()
+        timezone_name = now.tzname() or str(now.tzinfo) or "Unknown"
+        current_date = now.date().isoformat()
+        workspace_dir = self.get_session_workspace(session_id)
+        return (
+            "Runtime Context:\n"
+            f"- Host OS: {platform.system()}\n"
+            f"- Root Dir: {self._settings.root_dir}\n"
+            f"- Session Workspace: {workspace_dir}\n"
+            f"- Current Date: {current_date}\n"
+            f"- Time Zone: {timezone_name}\n\n"
+            "Current Request:\n"
+            f"{instruction}"
+        )
 
     def _init_llm_model(self) -> Any:
         """Initialize the LLM model based on current settings."""
@@ -314,7 +387,17 @@ class FerrymanKernel:
         self._register_toolkit(agent, FileToolkit)
         self._register_toolkit(agent, WebToolkit)
         self._register_toolkit(agent, TaskToolkit)
+        self._register_toolkit(agent, CommandToolkit)
         return agent
+
+    def build_skill_agent(self, skill_name: str) -> Agent:
+        """Create a skill-scoped agent with the skill instructions injected into its system prompt."""
+        skill_context = SKILL_SYSTEM_PROMPT.format(
+            skill_name=skill_name,
+            sop=self.read_skill_sop(skill_name),
+            skill_list=self.get_skill_index_xml(),
+        )
+        return self.build_agent(skill_context)
 
     @staticmethod
     def _register_toolkit(agent: Agent, toolkit_class: Any) -> None:
@@ -329,7 +412,7 @@ class FerrymanKernel:
     def _get_session_messages(self, session_id: str) -> list[ModelMessage]:
         """Load and convert history from database into PydanticAI messages."""
         # Get configurable limit, default to 30 messages (~15 rounds)
-        limit = self._settings.get("system.llm.history_limit", 30)
+        limit = self.get_setting("system.llm.history_limit", 30)
 
         with get_session() as db_session:
             from sqlalchemy import desc
@@ -353,11 +436,14 @@ class FerrymanKernel:
                     history.append(ModelResponse(parts=[TextPart(content=msg.content)]))
             return history
 
-    async def run_master_agent(self, instruction: str, session_id: str) -> Dict:
+    async def run_master_agent(self, instruction: str, session_id: str) -> AgentRunResult:
         """
         The single entry-point called by the JSON-RPC `execute` method.
         """
         logger.info(f"Master Agent processing session {session_id}: {instruction}")
+
+        request_id = correlation_id.get() or uuid4().hex
+        user_message_id: Optional[str] = None
 
         try:
             # 1. Ensure Session exists in DB
@@ -370,61 +456,107 @@ class FerrymanKernel:
                     db_session.commit()
                     db_session.refresh(session_obj)
 
-                # Save user message
+            # Load existing thread history before persisting the current turn,
+            # so the new user message does not get duplicated into message_history.
+            history = self._get_session_messages(session_id)
+
+            # Persist the incoming user turn immediately for auditability.
+            with get_session() as db_session:
+                # Persist the incoming user turn immediately for auditability.
                 user_msg = Message(
                     session_id=session_id,
                     role="user",
                     content=instruction,
-                    type="text"
+                    type="text",
+                    metadata_={
+                        "run": {
+                            "id": request_id,
+                            "status": "pending",
+                            "scope": "master",
+                        }
+                    }
                 )
                 db_session.add(user_msg)
                 db_session.commit()
+                db_session.refresh(user_msg)
+                user_message_id = user_msg.id
 
             # 2. Execute agent
-            agent = self._get_master_agent(session_id)
+            master_agent = self._get_master_agent(session_id)
             deps = AgentDeps(kernel=self, session_id=session_id)
 
-            # Load existing thread history
-            history = self._get_session_messages(session_id)
+            # Use configurable shared request limit, defaults to 100
+            request_limit = self.get_setting("system.llm.request_limit", 100)
+            augmented_instruction = self.build_runtime_augmented_instruction(instruction, session_id)
 
-            # Use configurable request limit, defaults to 30
-            request_limit = self._settings.get("system.llm.request_limit", 30)
-
-            result = await agent.run(
-                instruction,
+            result = await master_agent.run(
+                augmented_instruction,
                 deps=deps,
                 message_history=history,
                 usage_limits=UsageLimits(request_limit=request_limit)
             )
             result_data = result.output
+            response_messages = [msg for msg in result.new_messages() if isinstance(msg, ModelResponse)]
+            latest_response = response_messages[-1] if response_messages else None
+            serialized_response = (
+                ModelMessagesTypeAdapter.dump_python([latest_response], mode="json")[0]
+                if latest_response is not None
+                else None
+            )
 
             # 3. Handle Usage and Persistence in one transaction
             usage = result.usage()
-            usage_metadata = {
-                "usage": {
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "total_tokens": usage.total_tokens,
-                }
+            usage_data = {
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "total_tokens": usage.total_tokens,
             }
             logger.info({
                 "message": {
                     "session_id": session_id,
-                    "type": "master_usage",
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "total_tokens": usage.total_tokens
+                    "request_id": request_id,
+                    "event": "agent_run",
+                    "scope": "master",
+                    "status": "success",
+                    "input": instruction,
+                    "output": str(result_data),
+                    "usage": usage_data,
                 }
             })
 
             with get_session() as db_session:
+                # Mark the persisted user turn as completed for this run.
+                if user_message_id:
+                    user_msg = db_session.get(Message, user_message_id)
+                    if user_msg:
+                        user_meta = dict(user_msg.metadata_ or {})
+                        user_meta["run"] = {
+                            "id": request_id,
+                            "status": "success",
+                            "scope": "master",
+                        }
+                        user_msg.metadata_ = user_meta
+                        db_session.add(user_msg)
+
                 # Save assistant message
                 assistant_msg = Message(
                     session_id=session_id,
                     role="assistant",
                     content=str(result_data),
                     type="text",
-                    metadata_=usage_metadata
+                    parts=serialized_response.get("parts", []) if serialized_response else [],
+                    metadata_={
+                        "usage": usage_data,
+                        "model": {
+                            "name": serialized_response.get("model_name") if serialized_response else None,
+                            "provider": serialized_response.get("provider_name") if serialized_response else None,
+                        },
+                        "run": {
+                            "id": request_id,
+                            "status": "success",
+                            "scope": "master",
+                        }
+                    }
                 )
                 db_session.add(assistant_msg)
 
@@ -441,17 +573,57 @@ class FerrymanKernel:
 
                 db_session.commit()
 
-            return {
-                "status": "success",
-                "response": result_data,
-                "session_id": session_id,
-                "usage": usage_metadata.get("usage", {})
-            }
+            return AgentRunResult(
+                status="success",
+                response=result_data,
+                session_id=session_id,
+                usage=Usage(**usage_data)
+            )
 
         except Exception as e:
             logger.exception(f"Master Agent failed for session {session_id}")
-            return {
-                "status": "error",
-                "message": str(e),
-            }
+            error_message = str(e)
+
+            with get_session() as db_session:
+                if user_message_id:
+                    user_msg = db_session.get(Message, user_message_id)
+                    if user_msg:
+                        user_meta = dict(user_msg.metadata_ or {})
+                        user_meta["run"] = {
+                            "id": request_id,
+                            "status": "failed",
+                            "scope": "master",
+                            "error": error_message,
+                        }
+                        user_msg.metadata_ = user_meta
+                        db_session.add(user_msg)
+
+                failure_msg = Message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=f"Run failed: {error_message}",
+                    type="text",
+                    metadata_={
+                        "run": {
+                            "id": request_id,
+                            "status": "failed",
+                            "scope": "master",
+                            "error": error_message,
+                        }
+                    }
+                )
+                db_session.add(failure_msg)
+
+                session_obj = db_session.get(Session, session_id)
+                if session_obj:
+                    session_obj.updated_at = datetime.now(timezone.utc)
+                    db_session.add(session_obj)
+
+                db_session.commit()
+
+            return AgentRunResult(
+                status="error",
+                message=error_message,
+                session_id=session_id,
+            )
         # FINALLY block browser closing removed to support persistent session states

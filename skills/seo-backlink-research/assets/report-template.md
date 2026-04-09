@@ -1,61 +1,37 @@
 # Backlink Research Report: [Domain]
 **Date**: [YYYY-MM-DD]
-**Target URL**: [Target URL]
+**Target**: [Domain or URL]
 
-## 1. Executive Summary
-[3-5 bullet points summarizing the link profile health, major gaps, and top 3 high-impact opportunities.]
+## 1. Target Summary
 
----
+- [What the target site does]
+- [What backlink pattern we are pursuing]
+- [Short conclusion]
 
-## 2. Link Profile Comparison
+## 2. Competitors Observed
 
-| Metric | Target | Competitor 1 | Competitor 2 | Competitor 3 |
-|---|---|---|---|---|
-| Domain Rating (DR/DA) | | | | |
-| Referring Domains | | | | |
-| Total Backlinks | | | | |
-| Link Velocity (30d) | | | | |
+| Competitor | Why It Matters | Notes |
+|---|---|---|
+| | | |
 
----
+## 3. High-Value Free Submission Targets
 
-## 3. Top Link Opportunities (The "Gold Mine")
+| URL | Type | accessible | submit_signal_found | submit_signal_snippet | Notes |
+|---|---|---|---|---|---|
+| | | | | | |
 
-These domains link to multiple competitors but not to the target.
+## 4. Worth Reviewing But Verification Failed
 
-| Domain | Category | Authority (est) | Competitor Backlinks | outreach Strategy |
-|---|---|---|---|---|
-| | | | | |
+| URL | Why It Still Looks Valuable | failure_reason |
+|---|---|---|
+| | | |
 
----
+## 5. Query Patterns That Worked
 
-## 4. Opportunity Breakdown by Type
+- [Query 1]
+- [Query 2]
+- [Query 3]
 
-### 4.1 Tier 1: High-Authority Editorial
-[List blogs/news sites with editorial potential]
+## 6. Recommended Next Step
 
-### 4.2 Tier 2: Resource & "Best Of" Listicles
-[List pages where target should be added as a tool/resource]
-
-### 4.3 Tier 3: Niche Directories & Community
-[List relevant directories, subreddits, Quora threads]
-
----
-
-## 5. Actionable Outreach Templates
-
-### Campaign A: [Strategy Name, e.g., Skyscraper]
-**Target Site**: [Site Name]
-**Subject**: [Subject Line]
-**Body**:
-```text
-[Email body...]
-```
-
----
-
-## 6. Next Steps Checklist
-
-- [ ] Outreach to Top 5 Tier 1 opportunities
-- [ ] Claim listing on [Specific Directory]
-- [ ] Draft guest post for [Specific Blog]
-- [ ] Monitor new link acquisition in 30 days
+- [What should happen next]

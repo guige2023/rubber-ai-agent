@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from pydantic_ai.models.test import TestModel
+from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, create_engine, Session
 
 from app.main import app
@@ -10,12 +11,21 @@ TEST_DATABASE_URL = "sqlite:///:memory:"
 
 @pytest.fixture(name="session", autouse=True)
 def session_fixture(monkeypatch, request):
-    # Skip in-memory DB for live tests to allow debugging/persistence
+    monkeypatch.setenv("FERRYMAN_BEARER_TOKEN", "test-bearer-token")
+
+    # Use real DB for live tests to allow debugging/persistence
     if "test_live" in request.node.name:
-        yield None
+        from app.core.db import get_session
+        # get_session is a generator, we need to enter its context
+        with get_session() as real_session:
+            yield real_session
         return
 
-    engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+    engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     # Patch the real engine in app.core.db
     import app.core.db
     monkeypatch.setattr(app.core.db, "engine", engine)

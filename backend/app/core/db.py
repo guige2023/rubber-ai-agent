@@ -32,7 +32,7 @@ def auto_migrate_schema():
         try:
             existing_columns = {c['name'] for c in inspector.get_columns(table_name)}
         except Exception as e:
-            logger.exception(f"⚠️ Could not inspect table {table_name}")
+            logger.exception(f"⚠️ Could not inspect table {table_name} with exception: {e}")
             continue
             
         # Check each column in our model

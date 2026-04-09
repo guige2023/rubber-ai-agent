@@ -264,9 +264,12 @@ class FerrymanKernel:
         # 2. Create if missing (or just deleted above)
         if session_id not in self._browsers:
             from app.core.browser import BrowserController
+            workspace_dir = self.get_session_workspace(session_id)
+            browser_profile_dir = workspace_dir / ".browser"
+            
             browser = BrowserController(
                 headless=requested_headless,
-                user_data_dir=str(self._settings.browser_dir)
+                user_data_dir=str(browser_profile_dir)
             )
             await browser.__aenter__()
             self._browsers[session_id] = {

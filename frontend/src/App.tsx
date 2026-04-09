@@ -21,8 +21,7 @@ import {
   Flame,
   Radar,
   Target,
-  Link,
-  PlusCircle
+  Link
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -462,11 +461,6 @@ export default function App() {
                            icon={<Link size={20} className="text-purple-400" />}
                            title={t('chat.quick_actions.backlink_title')}
                            onClick={() => setInput(t('chat.quick_actions.backlink_prompt'))}
-                         />
-                         <QuickAction 
-                           icon={<PlusCircle size={20} className="text-pink-400" />}
-                           title={t('chat.quick_actions.creator_title')}
-                           onClick={() => setInput(t('chat.quick_actions.creator_prompt'))}
                          />
                       </div>
                     </div>

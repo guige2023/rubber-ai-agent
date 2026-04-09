@@ -61,11 +61,9 @@
       "scout_title": "Product Scout",
       "scout_prompt": "Identify high-potential AI products and business models from various directories.",
       "keyword_title": "Keyword Research",
-      "keyword_prompt": "Perform deep SEO keyword research for [target site/keyword], analyze competitors, and provide an action plan.",
+      "keyword_prompt": "Perform deep SEO keyword research for geosolver.app, analyze competitors, and provide an action plan.",
       "backlink_title": "Backlink Research",
-      "backlink_prompt": "Discover free, replicable, and high-value backlink submission opportunities for [target site].",
-      "creator_title": "Skill Creator",
-      "creator_prompt": "Help me build a new skill: [describe the workflow, inputs, and outputs]"
+      "backlink_prompt": "Discover free, replicable, and high-value backlink submission opportunities for geosolver.app."
     }
   },
   "settings": {

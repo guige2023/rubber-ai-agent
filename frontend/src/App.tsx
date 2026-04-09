@@ -498,7 +498,12 @@ export default function App() {
                                    {activity.input && activity.input.url && <span className="ml-2 text-white/30 truncate font-normal">{activity.input.url}</span>}
                                    {activity.input && activity.input.skill_name && <span className="ml-2 text-blue-400 font-bold truncate">[{activity.input.skill_name}]</span>}
                                    {activity.input && activity.input.command && <span className="ml-2 text-orange-400 truncate font-normal">`{activity.input.command}`</span>}
-                                   {activity.input && activity.input.path && <span className="ml-2 text-green-400 truncate font-normal">{activity.input.path}</span>}
+                                   {activity.input && (activity.input.path || activity.input.directory || activity.input.file_path) && (
+                                       <span className="ml-2 text-green-400 truncate font-normal">
+                                           {activity.input.path || activity.input.directory || activity.input.file_path}
+                                       </span>
+                                   )}
+                                   {activity.input && activity.input.title && <span className="ml-2 text-white/40 italic truncate">"{activity.input.title}"</span>}
                                 </span>
                                 {activity.duration_ms !== undefined && <span className="text-white/20 shrink-0">{activity.duration_ms}ms</span>}
                              </div>

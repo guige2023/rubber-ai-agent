@@ -12,7 +12,7 @@ export const ToolLabels: Record<string, string> = {
     // File Actions
     read_file: "reading_file",
     write_file: "writing_file",
-    read_directory: "reading_directory",
+    list_files: "reading_directory",
     search_files: "searching_files",
 
     // Session Actions

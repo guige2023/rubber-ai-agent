@@ -72,40 +72,78 @@ def test_websocket_dispatch_exception_returns_error_and_keeps_connection(client,
 
 
 def test_websocket_llm_and_model_config_flow(client):
+    from app.core.config import Settings
+
+    original_fetcher = Settings._fetch_provider_models
+
+    def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
+        if provider == "openai":
+            return ["gpt-4o"]
+        if provider == "custom":
+            return ["custom-chat-model"]
+        return []
+
+    Settings._fetch_provider_models = staticmethod(fake_fetcher)
+
     with client.websocket_connect(websocket_path()) as websocket:
-        response = send_rpc(
-            websocket,
-            "set_llm_config",
-            {
-                "provider": "openai",
-                "api_key": "sk-test-key",
-                "base_url": "https://test.api",
-            },
-            request_id=2,
-        )
-        assert response["result"] == {"status": "success"}
+        try:
+            response = send_rpc(
+                websocket,
+                "set_llm_config",
+                {
+                    "provider": "openai",
+                    "api_key": "sk-test-key",
+                    "base_url": "https://test.api",
+                },
+                request_id=2,
+            )
+            assert response["result"] == {"status": "success"}
 
-        response = send_rpc(websocket, "get_llm_configs", request_id=3)
-        openai_config = next((c for c in response["result"] if c["provider"] == "openai"), None)
-        assert openai_config is not None
-        assert openai_config["api_key"] == "sk-test-key"
-        assert openai_config["base_url"] == "https://test.api"
+            response = send_rpc(websocket, "get_llm_configs", request_id=3)
+            openai_config = next((c for c in response["result"] if c["provider"] == "openai"), None)
+            assert openai_config is not None
+            assert openai_config["api_key"] == "sk-test-key"
+            assert openai_config["base_url"] == "https://test.api"
 
-        response = send_rpc(
-            websocket,
-            "set_active_model",
-            {"model": "openai:gpt-4o"},
-            request_id=4,
-        )
-        assert response["result"] == {"status": "success"}
+            response = send_rpc(
+                websocket,
+                "set_active_model",
+                {"model": "openai:gpt-4o"},
+                request_id=4,
+            )
+            assert response["result"] == {"status": "success"}
 
-        response = send_rpc(websocket, "get_active_model", request_id=5)
-        assert response["result"] == "openai:gpt-4o"
+            response = send_rpc(websocket, "get_active_model", request_id=5)
+            assert response["result"] == "openai:gpt-4o"
 
-        response = send_rpc(websocket, "get_available_models", request_id=6)
-        assert "openai" in response["result"]
-        assert "anthropic" in response["result"]
-        assert "gemini" in response["result"]
+            response = send_rpc(websocket, "get_available_models", request_id=6)
+            assert "openai" in response["result"]
+            assert "anthropic" not in response["result"]
+            assert "gemini" not in response["result"]
+            assert "qwen" not in response["result"]
+
+            response = send_rpc(
+                websocket,
+                "set_llm_config",
+                {
+                    "provider": "custom",
+                    "api_key": "custom-key",
+                    "base_url": "https://custom.example.com/v1",
+                    "model": "custom-chat-model",
+                },
+                request_id=7,
+            )
+            assert response["result"] == {"status": "success"}
+
+            response = send_rpc(websocket, "get_llm_configs", request_id=8)
+            custom_config = next((c for c in response["result"] if c["provider"] == "custom"), None)
+            assert custom_config is not None
+            assert custom_config["model"] == "custom-chat-model"
+
+            response = send_rpc(websocket, "get_available_models", request_id=9)
+            assert response["result"]["custom"] == ["custom-chat-model"]
+        finally:
+            Settings._fetch_provider_models = original_fetcher
 
 
 def test_websocket_list_skills(client, monkeypatch):

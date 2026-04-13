@@ -21,7 +21,8 @@ import {
   Flame,
   Radar,
   Target,
-  Link
+  Link,
+  TrendingUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -64,6 +65,25 @@ function getPathBasename(value?: string) {
   return parts[parts.length - 1] || value;
 }
 
+type ProviderMetadata = {
+  label: string;
+  placeholder_base_url?: string;
+  placeholder_model?: string;
+  supports_model?: boolean;
+};
+
+type LlmProviderConfig = {
+  provider: string;
+  api_key: string;
+  base_url: string;
+  model?: string;
+  metadata: ProviderMetadata;
+};
+
+function buildModelOptionValue(provider: string, model: string) {
+  return `${provider}:${model}`;
+}
+
 export default function App() {
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const connection = useBackendConnection(wsUrl);
@@ -89,11 +109,12 @@ export default function App() {
   const [currentView, setCurrentView] = useState<'chat' | 'tasks' | 'skills' | 'settings'>('chat');
   const [settingsTab, setSettingsTab] = useState<'models' | 'logs'>('models');
   const [activeModel, setActiveModel] = useState<string>('gemini:gemini-3-flash-preview');
-  const [llmConfigs, setLlmConfigs] = useState<any[]>([]);
+  const [llmConfigs, setLlmConfigs] = useState<LlmProviderConfig[]>([]);
   const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
   const [skills, setSkills] = useState<Array<{ name: string; description: string; version: string; author: string }>>([]);
   const [isLoadingSkills, setIsLoadingSkills] = useState(false);
   const [isRefreshingTasks, setIsRefreshingTasks] = useState(false);
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   const [backendLogInfo, setBackendLogInfo] = useState<{ paths: Record<string, string>; active_log: string } | null>(null);
   const [backendLogContent, setBackendLogContent] = useState('');
   const [backendLogSource, setBackendLogSource] = useState<'app' | 'sidecar'>('app');
@@ -221,12 +242,30 @@ export default function App() {
     }
   };
 
+  const refreshModelSettings = async () => {
+    if (!isConnected) return;
+
+    setIsRefreshingModels(true);
+    try {
+      const [model, configs, models] = await Promise.all([
+        call('get_active_model'),
+        call('get_llm_configs'),
+        call('get_available_models'),
+      ]);
+      setActiveModel(model as string);
+      setLlmConfigs(configs as LlmProviderConfig[]);
+      setAvailableModels(models as Record<string, string[]>);
+    } catch (error) {
+      console.error('Failed to refresh model settings:', error);
+    } finally {
+      setIsRefreshingModels(false);
+    }
+  };
+
   // Fetch initial config
   useEffect(() => {
     if (isConnected) {
-      call('get_active_model').then((res: any) => setActiveModel(res));
-      call('get_llm_configs').then((res: any) => setLlmConfigs(res));
-      call('get_available_models').then((res: any) => setAvailableModels(res));
+      refreshModelSettings();
       refreshSkills();
       refreshSessions();
     }
@@ -296,22 +335,36 @@ export default function App() {
     setInput('');
   };
 
-  const handleSaveConfig = async (provider: string, apiKey: string | undefined, baseUrl: string) => {
+  const handleSaveConfig = async (
+    provider: string,
+    apiKey: string | undefined,
+    baseUrl: string,
+    model?: string
+  ) => {
     const params: Record<string, string> = { provider, base_url: baseUrl };
     if (apiKey !== undefined) {
       params.api_key = apiKey;
     }
+    if (model !== undefined) {
+      params.model = model;
+    }
 
     await call('set_llm_config', params);
-    // Refresh
-    const newConfigs = await call('get_llm_configs');
-    setLlmConfigs(newConfigs as any[]);
+    await refreshModelSettings();
   };
 
   const handleSetActiveModel = async (model: string) => {
     await call('set_active_model', { model });
     setActiveModel(model);
   };
+
+  const providerLabels = Object.fromEntries(
+    llmConfigs.map((config) => [config.provider, config.metadata?.label || config.provider])
+  );
+  const availableModelValues = Object.entries(availableModels).flatMap(([provider, models]) =>
+    models.map((model) => buildModelOptionValue(provider, model))
+  );
+  const selectedModelValue = availableModelValues.includes(activeModel) ? activeModel : '';
 
   return (
     <div className="flex w-full h-full bg-transparent text-white selection:bg-white/20 selection:text-white font-sans">
@@ -444,14 +497,17 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <Cpu size={14} className="text-white/30" />
                   <select 
-                    value={activeModel}
+                    value={selectedModelValue}
                     onChange={(e) => handleSetActiveModel(e.target.value)}
                     className="text-xs font-medium text-white/60 bg-white/5 px-2 py-1 rounded-md border border-white/10 outline-none cursor-pointer hover:bg-white/10 transition-colors appearance-none"
                   >
+                    <option value="" disabled>
+                      {t('settings.no_models')}
+                    </option>
                     {Object.entries(availableModels).map(([provider, models]) => (
-                      <optgroup key={provider} label={provider.toUpperCase()}>
+                      <optgroup key={provider} label={providerLabels[provider] || provider.toUpperCase()}>
                         {models.map(m => (
-                          <option key={`${provider}:${m}`} value={`${provider}:${m}`} className="bg-[#0a0a0a] text-white">
+                          <option key={buildModelOptionValue(provider, m)} value={buildModelOptionValue(provider, m)} className="bg-[#0a0a0a] text-white">
                             {m}
                           </option>
                         ))}
@@ -527,6 +583,11 @@ export default function App() {
                            icon={<Link size={20} className="text-purple-400" />}
                            title={t('chat.quick_actions.backlink_title')}
                            onClick={() => setInput(t('chat.quick_actions.backlink_prompt'))}
+                         />
+                         <QuickAction 
+                           icon={<TrendingUp size={20} className="text-rose-400" />}
+                           title={t('chat.quick_actions.stock_title')}
+                           onClick={() => setInput(t('chat.quick_actions.stock_prompt'))}
                          />
                       </div>
                     </div>
@@ -843,14 +904,17 @@ export default function App() {
                         <span className="text-sm font-bold tracking-tight text-white/70">{t('settings.active_model_label')}</span>
                       </div>
                       <select
-                        value={activeModel}
+                        value={selectedModelValue}
                         onChange={(e) => handleSetActiveModel(e.target.value)}
                         className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none font-bold hover:bg-white/10 transition-colors cursor-pointer ring-1 ring-white/5"
                       >
+                        <option value="" disabled>
+                          {t('settings.no_models')}
+                        </option>
                         {Object.entries(availableModels).map(([provider, models]) => (
-                          <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
+                          <optgroup key={provider} label={providerLabels[provider] || provider.charAt(0).toUpperCase() + provider.slice(1)}>
                             {models.map(m => (
-                              <option key={`${provider}:${m}`} value={`${provider}:${m}`}>
+                              <option key={buildModelOptionValue(provider, m)} value={buildModelOptionValue(provider, m)}>
                                 {m}
                               </option>
                             ))}
@@ -860,9 +924,24 @@ export default function App() {
                     </section>
 
                     <section className="space-y-6">
-                      <header>
-                        <h2 className="text-2xl font-bold tracking-tight mb-2">{t('settings.providers_title')}</h2>
-                        <p className="text-sm text-white/30 font-medium">{t('settings.providers_subtitle')}</p>
+                      <header className="flex items-center justify-between gap-4">
+                        <div>
+                          <h2 className="text-2xl font-bold tracking-tight mb-2">{t('settings.providers_title')}</h2>
+                          <p className="text-sm text-white/30 font-medium">{t('settings.providers_subtitle')}</p>
+                        </div>
+                        <button
+                          onClick={() => refreshModelSettings()}
+                          disabled={!isConnected || isRefreshingModels}
+                          className={cn(
+                            "px-4 py-2 rounded-xl border text-xs font-bold uppercase tracking-widest transition-colors flex items-center gap-2",
+                            !isConnected || isRefreshingModels
+                              ? "bg-white/5 border-white/5 text-white/25 cursor-not-allowed"
+                              : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"
+                          )}
+                        >
+                          <RefreshCw size={14} className={cn(isRefreshingModels && 'animate-spin')} />
+                          {t('settings.models_refresh')}
+                        </button>
                       </header>
 
                       <div className="grid grid-cols-1 gap-6">
@@ -871,7 +950,7 @@ export default function App() {
                             key={config.provider}
                             config={config}
                             t={t}
-                            onSave={(apiKey, baseUrl) => handleSaveConfig(config.provider, apiKey, baseUrl)}
+                            onSave={(apiKey, baseUrl, model) => handleSaveConfig(config.provider, apiKey, baseUrl, model)}
                           />
                         ))}
                       </div>
@@ -991,18 +1070,32 @@ function QuickAction({ icon, title, onClick }: { icon: ReactNode, title: string,
   );
 }
 
-function ProviderCard({ config, onSave, t }: { config: any, onSave: (apiKey: string | undefined, baseUrl: string) => void, t: any }) {
+function ProviderCard({
+  config,
+  onSave,
+  t,
+}: {
+  config: LlmProviderConfig;
+  onSave: (apiKey: string | undefined, baseUrl: string, model?: string) => void;
+  t: any;
+}) {
   const [apiKey, setApiKey] = useState(config.api_key || '');
-  const [baseUrl, setBaseUrl] = useState(config.base_url || config.metadata.placeholder_base_url || '');
-  const [isEditing, setIsEditing] = useState(false);
+  const [baseUrl, setBaseUrl] = useState(config.base_url || '');
+  const [model, setModel] = useState(config.model || '');
   const [apiKeyDirty, setApiKeyDirty] = useState(false);
 
   useEffect(() => {
     setApiKey(config.api_key || '');
-    setBaseUrl(config.base_url || config.metadata.placeholder_base_url || '');
-    setIsEditing(false);
+    setBaseUrl(config.base_url || '');
+    setModel(config.model || '');
     setApiKeyDirty(false);
   }, [config]);
+
+  const supportsModel = Boolean(config.metadata.supports_model);
+  const apiKeyChanged = apiKeyDirty && apiKey !== (config.api_key || '');
+  const baseUrlChanged = baseUrl !== (config.base_url || '');
+  const modelChanged = supportsModel && model !== (config.model || '');
+  const hasChanges = apiKeyChanged || baseUrlChanged || modelChanged;
 
   return (
     <div className="glass rounded-[2.5rem] p-6 border border-white/5 space-y-6 relative overflow-hidden group min-h-[280px] flex flex-col">
@@ -1029,7 +1122,6 @@ function ProviderCard({ config, onSave, t }: { config: any, onSave: (apiKey: str
 	               onChange={(e) => {
 	                  setApiKey(e.target.value);
 	                  setApiKeyDirty(true);
-	                  setIsEditing(true);
 	               }}
 	               placeholder={t('settings.api_key_placeholder')}
 	               className="w-full bg-white/[0.03] border border-white/5 rounded-xl py-3 pl-11 pr-4 text-xs font-mono outline-none focus:border-white/30 transition-colors"
@@ -1046,26 +1138,42 @@ function ProviderCard({ config, onSave, t }: { config: any, onSave: (apiKey: str
                value={baseUrl}
                onChange={(e) => {
                   setBaseUrl(e.target.value);
-                  setIsEditing(true);
                }}
                placeholder={config.metadata.placeholder_base_url}
                className="w-full bg-white/[0.03] border border-white/5 rounded-xl py-3 pl-11 pr-4 text-xs font-mono outline-none focus:border-white/30 transition-colors"
              />
           </div>
         </div>
+
+        {supportsModel && (
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-white/20 uppercase tracking-widest ml-1">{t('settings.model')}</label>
+            <div className="relative">
+              <Cpu size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" />
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => {
+                  setModel(e.target.value);
+                }}
+                placeholder={config.metadata.placeholder_model || t('settings.model_placeholder')}
+                className="w-full bg-white/[0.03] border border-white/5 rounded-xl py-3 pl-11 pr-4 text-xs font-mono outline-none focus:border-white/30 transition-colors"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="mt-auto pt-4 relative z-10">
         <button
           onClick={() => {
-            onSave(apiKeyDirty ? apiKey : undefined, baseUrl);
-            setIsEditing(false);
+            onSave(apiKeyDirty ? apiKey : undefined, baseUrl, modelChanged ? model : undefined);
             setApiKeyDirty(false);
           }}
-          disabled={!isEditing && !apiKeyDirty && config.api_key === apiKey && config.base_url === baseUrl}
+          disabled={!hasChanges}
           className={cn(
             "w-full py-4 rounded-2xl text-[11px] font-bold uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 group/save transition-all active:scale-[0.98]",
-            isEditing || apiKeyDirty || config.api_key !== apiKey || config.base_url !== baseUrl
+            hasChanges
               ? "bg-white text-[#080808] hover:bg-white/90" 
               : "bg-white/5 text-white/20 cursor-not-allowed"
           )}

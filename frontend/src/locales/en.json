@@ -63,7 +63,9 @@
       "keyword_title": "Keyword Research",
       "keyword_prompt": "Perform deep SEO keyword research for geosolver.app, analyze competitors, and provide an action plan.",
       "backlink_title": "Backlink Research",
-      "backlink_prompt": "Discover free, replicable, and high-value backlink submission opportunities for geosolver.app."
+      "backlink_prompt": "Discover free, replicable, and high-value backlink submission opportunities for geosolver.app.",
+      "stock_title": "Multi-dimensional Stock Audit",
+      "stock_prompt": "Perform a value assessment for Tencent (0700.HK)."
     }
   },
   "settings": {
@@ -75,6 +77,7 @@
     "providers_title": "LLM Providers",
     "providers_subtitle": "Configure provider endpoints and API credentials.",
     "active_model_label": "Active Model",
+    "models_refresh": "Refresh Models",
     "logs_title": "Runtime Logs",
     "logs_subtitle": "Inspect backend service activity and startup details.",
     "logs_refresh": "Refresh Logs",
@@ -85,9 +88,12 @@
     "logs_empty": "No log output available yet.",
     "logs_unavailable": "Unavailable",
     "logs_load_failed": "Failed to load logs.",
+    "no_models": "Configure a provider to load models",
     "api_key": "API Key",
     "base_url": "Base URL",
+    "model": "Model",
     "api_key_placeholder": "Enter API key",
+    "model_placeholder": "Enter model name",
     "save": "Save",
     "linked": "Linked",
     "missing": "Missing"

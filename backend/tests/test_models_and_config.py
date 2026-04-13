@@ -145,3 +145,123 @@ def test_config_list_by_category():
     assert "cat.1" in keys
     assert "cat.2" in keys
     assert "cat.3" not in keys
+
+
+def test_available_models_include_qwen_and_dynamic_custom_model():
+    """Configured providers should be fetched online and custom models remain selectable."""
+    config.set("llm.openai", {"api_key": "sk-openai"}, category="llm")
+    config.set("llm.qwen", {"api_key": "sk-qwen"}, category="llm")
+    config.set(
+        "llm.custom",
+        {"api_key": "sk-custom", "base_url": "https://custom.example.com/v1", "model": "my-custom-model"},
+        category="llm",
+    )
+    config.set("system.llm.active_model", "qwen:qwen-plus", category="system")
+
+    original_fetcher = config._fetch_provider_models
+
+    def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
+        if provider == "openai":
+            return ["gpt-4o", "text-embedding-3-large"]
+        if provider == "qwen":
+            return []
+        if provider == "custom":
+            return ["server-model", "my-custom-model"]
+        return []
+
+    config._fetch_provider_models = staticmethod(fake_fetcher)
+    try:
+        models = config.get_available_models()
+    finally:
+        config._fetch_provider_models = original_fetcher
+
+    assert "openai" in models
+    assert "gemini" not in models
+    assert models["openai"] == ["gpt-4o", "text-embedding-3-large"]
+    assert "qwen" in models
+    assert "custom" in models
+    assert models["qwen"] == ["qwen-max", "qwen-plus", "qwen-omni-turbo"]
+    assert models["custom"] == ["server-model", "my-custom-model"]
+
+
+def test_filter_chat_model_ids_excludes_non_chat_entries():
+    filtered = config._filter_chat_model_ids([
+        "gpt-4o",
+        "text-embedding-3-large",
+        "whisper-1",
+        "claude-sonnet-4-5",
+    ])
+
+    assert filtered == ["claude-sonnet-4-5", "gpt-4o"]
+
+
+def test_filter_gemini_models_keeps_only_llm_entries():
+    filtered = config._filter_gemini_models([
+        {
+            "name": "models/gemini-2.0-flash-001",
+            "baseModelId": "gemini-2.0-flash",
+            "supportedGenerationMethods": ["generateContent"],
+        },
+        {
+            "name": "models/gemini-2.0-flash-lite-001",
+            "baseModelId": "",
+            "supportedGenerationMethods": ["generateContent"],
+        },
+        {
+            "name": "models/gemini-2.5-flash-native-audio-preview-09-2025",
+            "baseModelId": "gemini-2.5-flash-native-audio-preview-09-2025",
+            "supportedGenerationMethods": ["generateContent"],
+        },
+        {
+            "name": "models/gemini-3.1-pro-preview",
+            "baseModelId": "gemini-3.1-pro-preview",
+            "supportedGenerationMethods": ["generateContent"],
+        },
+        {
+            "name": "models/veo-3.1-fast-generate-preview",
+            "baseModelId": "veo-3.1-fast-generate-preview",
+            "supportedGenerationMethods": ["generateContent"],
+        },
+        {
+            "name": "models/text-embedding-004",
+            "baseModelId": "text-embedding-004",
+            "supportedGenerationMethods": ["embedContent"],
+        },
+        {
+            "name": "models/gemini-3.1-flash-live-preview",
+            "baseModelId": "gemini-3.1-flash-live-preview",
+            "supportedGenerationMethods": ["generateContent"],
+        },
+    ])
+
+    assert filtered == ["gemini-2.0-flash", "gemini-3.1-pro-preview"]
+
+
+def test_filter_qwen_models_keeps_only_qwen_family_entries():
+    filtered = config._filter_qwen_models([
+        "MiniMax-M2.1",
+        "deepseek-v3.1",
+        "glm-4.7",
+        "kimi-k2.5",
+        "qwen3.5-plus",
+        "qwen-plus",
+        "qwen-max",
+        "qwen-max-0107",
+        "qwen-max-0428",
+        "qwen-max-0919",
+        "qwen-max-1201",
+        "qwen-plus-2025-05-15",
+        "qwen-max-2025-01-25",
+        "qwen-vl-max",
+        "qwen-omni-turbo",
+        "qwen-omni-turbo-0119",
+        "qwen3-32b",
+        "qwen-coder-plus",
+    ])
+
+    assert filtered == sorted([
+        "qwen3.5-plus",
+        "qwen-max",
+        "qwen-plus",
+        "qwen-omni-turbo",
+    ])

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import secrets
+import asyncio
 from collections import deque
 from contextlib import asynccontextmanager
 from logging.config import dictConfig
@@ -153,29 +154,25 @@ async def ping(context):
 @method
 async def get_llm_configs(context):
     """
-    Returns consolidated API configurations for OpenAI, Anthropic, and Gemini.
+    Returns consolidated API configurations for supported providers.
     """
-    providers = ["gemini", "openai", "anthropic"]
-
-    # UI Placeholders (standard URLs)
-    placeholders = {
-        "openai": "https://api.openai.com/v1",
-        "anthropic": "https://api.anthropic.com/v1",
-        "gemini": "https://generativelanguage.googleapis.com"
-    }
+    providers = get_settings().get_llm_provider_catalog()
 
     results = []
-    for p in providers:
+    for provider, metadata in providers.items():
         # Each provider is stored in a single row with key "llm.{provider}"
-        stored_config = get_settings().get(f"llm.{p}", {})
+        stored_config = get_settings().get(f"llm.{provider}", {})
 
         results.append({
-            "provider": p,
+            "provider": provider,
             "api_key": stored_config.get("api_key", ""),
             "base_url": stored_config.get("base_url", ""),
+            "model": stored_config.get("model", ""),
             "metadata": {
-                "label": p.capitalize(),
-                "placeholder_base_url": placeholders.get(p, "")
+                "label": metadata.get("label", provider.capitalize()),
+                "placeholder_base_url": metadata.get("placeholder_base_url", ""),
+                "placeholder_model": metadata.get("placeholder_model", ""),
+                "supports_model": bool(metadata.get("supports_model", False)),
             }
         })
 
@@ -183,7 +180,13 @@ async def get_llm_configs(context):
 
 
 @method
-async def set_llm_config(context, provider: str, api_key: str = None, base_url: str = None):
+async def set_llm_config(
+    context,
+    provider: str,
+    api_key: str = None,
+    base_url: str = None,
+    model: str = None,
+):
     """
     Updates the consolidated config object for a provider.
     """
@@ -195,6 +198,8 @@ async def set_llm_config(context, provider: str, api_key: str = None, base_url: 
     if base_url is not None:
         # If empty string, we treat it as "use default"
         current_config["base_url"] = base_url.strip() if base_url.strip() else ""
+    if model is not None and provider == "custom":
+        current_config["model"] = model.strip() if model.strip() else ""
 
     get_settings().set(key, current_config, category="llm")
 
@@ -223,7 +228,7 @@ async def get_available_models(context):
     """
     Returns the mapped candidate models for the UI select.
     """
-    return Success(get_settings().get_available_models())
+    return Success(await asyncio.to_thread(get_settings().get_available_models))
 
 
 @method

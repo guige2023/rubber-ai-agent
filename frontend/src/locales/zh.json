@@ -63,7 +63,9 @@
       "keyword_title": "SEO关键词研究",
       "keyword_prompt": "为geosolver.app进行深度的SEO关键词研究，分析竞争对手并给出行动方案。",
       "backlink_title": "外链机会挖掘",
-      "backlink_prompt": "为geosolver.app寻找免费、可复刻的高价值外链提交机会。"
+      "backlink_prompt": "为geosolver.app寻找免费、可复刻的高价值外链提交机会。",
+      "stock_title": "股票多维审计",
+      "stock_prompt": "对腾讯(0700.HK)进行价值评估。"
     }
   },
   "settings": {
@@ -75,6 +77,7 @@
     "providers_title": "模型服务商",
     "providers_subtitle": "配置模型供应商的接口信息与API密钥。",
     "active_model_label": "当前使用模型",
+    "models_refresh": "刷新模型",
     "logs_title": "运行日志",
     "logs_subtitle": "查看后台服务的运行记录与启动信息。",
     "logs_refresh": "刷新日志",
@@ -85,9 +88,12 @@
     "logs_empty": "暂无可显示的日志内容。",
     "logs_unavailable": "暂无",
     "logs_load_failed": "加载日志失败。",
+    "no_models": "请先配置Provider并获取模型",
     "api_key": "API密钥",
     "base_url": "代理/接口地址",
+    "model": "模型名称",
     "api_key_placeholder": "请输入 API 密钥",
+    "model_placeholder": "请输入模型名称",
     "save": "保存配置",
     "linked": "已连接",
     "missing": "待配置"

@@ -1,13 +1,25 @@
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import Annotated, List
 
+from pydantic import BeforeValidator
 from pydantic_ai.tools import RunContext
 
 from app.core.deps import AgentDeps
+
+
+def _coerce_args(v: object) -> list[str] | None:
+    """Coerce stringified JSON arrays (a common LLM tool-call quirk) into List[str]."""
+    if v is None or isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except (json.JSONDecodeError, ValueError):
+            return v
+    return v
 
 
 class CommandToolkit:
@@ -52,32 +64,21 @@ class CommandToolkit:
     async def run_skill_script(
         ctx: RunContext[AgentDeps],
         script_name: str,
-        args: List[str] | None = None,
+        args: Annotated[List[str] | None, BeforeValidator(_coerce_args)] = None,
         timeout_ms: int = 10000,
     ) -> str:
         """
-        Run a script from the current skill's `scripts/` directory.
-        The script runs with cwd set to the current session workspace.
+        Run a script from the skill's scripts/ directory.
+        args: list of strings (e.g. ["--ticker", "AAPL"])
         """
         resolved_args = args or []
         script_path = CommandToolkit._resolve_script_path(ctx, script_name)
         workspace_dir = ctx.deps.kernel.get_session_workspace(ctx.deps.session_id)
         command = CommandToolkit._build_command(script_path, resolved_args)
 
-        env = os.environ.copy()
-        env.update(
-            {
-                "FERRYMAN_SESSION_ID": ctx.deps.session_id,
-                "FERRYMAN_WORKSPACE_DIR": str(workspace_dir),
-                "FERRYMAN_SKILL_NAME": ctx.deps.skill_name or "",
-                "FERRYMAN_SKILL_DIR": str(script_path.parent.parent),
-            }
-        )
-
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=str(workspace_dir),
-            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

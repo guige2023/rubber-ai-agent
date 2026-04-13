@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Usage } from './useBackendConnection';
+import type { FerrymanEvent, RefreshPayload, Usage } from './useBackendConnection';
 import { translateStatic } from './useI18n';
 
 export interface Message {
@@ -26,12 +26,14 @@ interface UseSessionsArgs {
   call: (method: string, params?: any) => Promise<any>;
   executeInstruction: (instruction: string, sessionId: string) => Promise<any>;
   clearToolActivities: () => void;
+  lastEvent: FerrymanEvent | null;
 }
 
 export function useSessions({
   call,
   executeInstruction,
   clearToolActivities,
+  lastEvent,
 }: UseSessionsArgs) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -57,7 +59,7 @@ export function useSessions({
   const switchSession = useCallback(async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     try {
-      const res: any = await call('get_messages', { session_id: sessionId, limit: 100 });
+      const res: any = await call('list_messages', { session_id: sessionId, limit: 100 });
       setMessages(res.messages || []);
 
       const sessionInfo = sessions.find((session) => session.id === sessionId);
@@ -74,6 +76,21 @@ export function useSessions({
       console.error('Failed to load session messages:', error);
     }
   }, [call, sessions]);
+
+  useEffect(() => {
+    if (!lastEvent || lastEvent.namespace !== 'data' || lastEvent.event !== 'refresh') {
+      return;
+    }
+
+    const payload = lastEvent.payload as RefreshPayload;
+    if (payload.entity !== 'session') {
+      return;
+    }
+
+    refreshSessions().catch((error) => {
+      console.error('Failed to refresh sessions after session event:', error);
+    });
+  }, [lastEvent, refreshSessions]);
 
   const createNewSession = useCallback(async () => {
     const newId = crypto.randomUUID();
@@ -131,14 +148,21 @@ export function useSessions({
 
       const usage = payload.usage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
       const responseMessages = payload.messages || [];
-      const latestAssistantResponse = responseMessages.reverse().find((m: any) => m.role === 'assistant')?.content || '';
+      const latestAssistantMessage = responseMessages.reverse().find((m: any) => m.role === 'assistant');
+      const latestAssistantResponse = latestAssistantMessage?.content || '';
+      const runMetadata = latestAssistantMessage?.metadata?.run || {};
+      const isFailed = runMetadata.status === 'failed' || latestAssistantResponse.startsWith('Run failed:');
 
       setMessages((prev) => prev.map((message) => (
         message.id === pendingMessageId
           ? {
               ...message,
               content: latestAssistantResponse,
-              metadata: { usage },
+              metadata: {
+                usage,
+                state: isFailed ? 'failed' : undefined,
+                error: runMetadata.error,
+              },
             }
           : message
       )));

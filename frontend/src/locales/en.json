@@ -8,6 +8,13 @@
   "common": {
     "error_prefix": "Error"
   },
+  "browser": {
+    "chrome_required": {
+      "title": "Chrome Required",
+      "description": "Web automation tasks require Google Chrome installed on this Mac.",
+      "download": "Download Chrome"
+    }
+  },
   "nav": {
     "chat": "Chat",
     "sessions": "Sessions",

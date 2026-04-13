@@ -284,7 +284,7 @@ class FerrymanKernel:
             from app.core.browser import BrowserController
             workspace_dir = self.get_session_workspace(session_id)
             browser_profile_dir = workspace_dir / ".browser"
-            
+
             browser = BrowserController(
                 headless=requested_headless,
                 user_data_dir=str(browser_profile_dir)
@@ -369,8 +369,9 @@ class FerrymanKernel:
             base_url = base_url.strip() or None
         if api_key and isinstance(api_key, str):
             api_key = api_key.strip()
-        if provider == "qwen" and not base_url:
-            base_url = self._settings.get_llm_provider_catalog()["qwen"]["placeholder_base_url"]
+        provider_catalog = self._settings.get_llm_provider_catalog()
+        if provider in {"qwen", "kimi"} and not base_url:
+            base_url = provider_catalog[provider]["placeholder_base_url"]
 
         p_kwargs = {k: v for k, v in {"api_key": api_key, "base_url": base_url}.items() if v is not None}
 
@@ -379,6 +380,16 @@ class FerrymanKernel:
                 from pydantic_ai.models.openai import OpenAIChatModel
                 from pydantic_ai.providers.openai import OpenAIProvider
                 return OpenAIChatModel(model_name, provider=OpenAIProvider(**p_kwargs))
+            elif provider == "kimi":
+                from openai import AsyncOpenAI
+                from pydantic_ai.models.openai import OpenAIChatModel
+                from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+
+                default_base_url = provider_catalog["kimi"]["placeholder_base_url"]
+                if base_url and base_url != default_base_url:
+                    openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+                    return OpenAIChatModel(model_name, provider=MoonshotAIProvider(openai_client=openai_client))
+                return OpenAIChatModel(model_name, provider=MoonshotAIProvider(api_key=api_key))
             elif provider == "anthropic":
                 from pydantic_ai.models.anthropic import AnthropicModel
                 from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -443,25 +454,45 @@ class FerrymanKernel:
 
                         input_summary = {}
                         try:
-                            param_names = [
-                                name for name in inspect.signature(bound_tool_func).parameters.keys() if name != "ctx"
-                            ]
-                            merged_args: Dict[str, Any] = {}
-                            for name, value in zip(param_names, args):
-                                merged_args[name] = value
-                            merged_args.update(kwargs)
+                            signature = inspect.signature(bound_tool_func)
+                            bound_args = signature.bind_partial(ctx, *args, **kwargs)
+                            bound_args.apply_defaults()
+                            merged_args = {
+                                name: value for name, value in bound_args.arguments.items() if name != "ctx"
+                            }
 
                             for k, v in merged_args.items():
                                 input_summary[k] = _summarize_tool_input_value(k, v)
+
+                            raw_path: Optional[str] = None
+                            if tool_name in {"read_file", "write_file"}:
+                                raw_path = merged_args.get("file_path")
+                            elif tool_name == "list_files":
+                                raw_path = merged_args.get("directory", ".")
+
+                            if isinstance(raw_path, str):
+                                try:
+                                    resolved_path = FileToolkit.resolve_session_path(
+                                        ctx.deps.kernel,
+                                        ctx.deps.session_id,
+                                        raw_path,
+                                    )
+                                    input_summary.pop("file_path", None)
+                                    input_summary.pop("directory", None)
+                                    input_summary["path"] = str(resolved_path)
+                                except Exception as e:
+                                    logger.exception(f"failed to resolve session path:{e}")
+
                             raw_input = json.dumps(input_summary, default=str)
                             if len(raw_input) > 2000:
-                                preserved_keys = ("url", "file_path", "path", "directory", "command", "title", "skill_name")
+                                preserved_keys = ("url", "path", "command", "title", "skill_name")
                                 input_summary = {
                                     k: v for k, v in input_summary.items() if k in preserved_keys
                                 }
                                 input_summary["_truncated"] = True
                                 input_summary["_size"] = len(raw_input)
-                        except Exception:
+                        except Exception as e:
+                            logger.exception(f"failed to build event json:{e}")
                             input_summary = {"_serialization_error": True}
 
                         await ctx.deps.emit_tool_event(
@@ -529,7 +560,7 @@ class FerrymanKernel:
         """
         The single entry-point called by the JSON-RPC `execute` method.
         """
-        logger.info(f"Master Agent processing session {session_id}: {instruction}")
+        logger.info(f"Master Agent processing session {session_id} (instruction_length={len(instruction)})")
 
         request_id = correlation_id.get() or uuid4().hex
         user_message_id: Optional[str] = None
@@ -580,6 +611,19 @@ class FerrymanKernel:
             # Use configurable shared request limit, defaults to 100
             request_limit = self.get_setting("system.llm.request_limit", 100)
             augmented_instruction = self.build_runtime_augmented_instruction(instruction, session_id)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug({
+                    "message": {
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "event": "llm_request",
+                        "scope": "master",
+                        "input": augmented_instruction,
+                        "message_history": ModelMessagesTypeAdapter.dump_python(history, mode="json"),
+                        "history_count": len(history),
+                        "request_limit": request_limit,
+                    }
+                })
 
             result = await master_agent.run(
                 augmented_instruction,
@@ -603,18 +647,18 @@ class FerrymanKernel:
                 "output_tokens": usage.output_tokens,
                 "total_tokens": usage.total_tokens,
             }
-            logger.info({
-                "message": {
-                    "session_id": session_id,
-                    "request_id": request_id,
-                    "event": "agent_run",
-                    "scope": "master",
-                    "status": "success",
-                    "input": instruction,
-                    "output": str(result_data),
-                    "usage": usage_data,
-                }
-            })
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug({
+                    "message": {
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "event": "llm_response",
+                        "scope": "master",
+                        "output": str(result_data),
+                        "new_messages": ModelMessagesTypeAdapter.dump_python(result.new_messages(), mode="json"),
+                        "usage": usage_data,
+                    }
+                })
 
             with get_session() as db_session:
                 # Mark the persisted user turn as completed for this run.
@@ -725,7 +769,20 @@ class FerrymanKernel:
             from app.models.events import FerrymanEventEnvelope, EventNamespace, ChatFinalPayload
             payload = ChatFinalPayload(
                 run_id=request_id,
-                messages=[{"role": "assistant", "content": f"Run failed: {error_message}"}],
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": f"Run failed: {error_message}",
+                        "metadata": {
+                            "run": {
+                                "id": request_id,
+                                "status": "failed",
+                                "scope": "master",
+                                "error": error_message,
+                            }
+                        },
+                    }
+                ],
                 usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             )
             final_res = FerrymanEventEnvelope(
@@ -735,4 +792,3 @@ class FerrymanKernel:
                 payload=payload
             )
             return final_res.model_dump(mode="json")
-        # FINALLY block browser closing removed to support persistent session states

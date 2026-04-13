@@ -22,18 +22,26 @@ export interface ToolActivityPayload {
   duration_ms?: number;
 }
 
+export interface RefreshPayload {
+  entity: 'task' | 'schedule' | 'skill' | 'session';
+  action: 'created' | 'updated' | 'deleted' | 'bulk';
+  entity_id?: string;
+  delta?: Record<string, any>;
+}
+
 export interface FerrymanEvent {
   namespace: string;
   event: string;
   session_id?: string;
   ts: string;
-  payload: any;
+  payload: ToolActivityPayload | RefreshPayload | any;
 }
 
 export function useBackendConnection(url: string | null) {
   const [isConnected, setIsConnected] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [toolActivities, setToolActivities] = useState<ToolActivityPayload[]>([]);
+  const [lastEvent, setLastEvent] = useState<FerrymanEvent | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -71,20 +79,9 @@ export function useBackendConnection(url: string | null) {
           return;
         }
 
-        if (data.method === 'task_update') {
-          const update = data.params;
-          setTasks((prev) => {
-            const exists = prev.find((task) => task.id === update.id);
-            if (exists) {
-              return prev.map((task) => (task.id === update.id ? { ...task, ...update } : task));
-            }
-            return [...prev, update];
-          });
-          return;
-        }
-
         if (data.method === 'ferryman_event') {
           const evt = data.params as FerrymanEvent;
+          setLastEvent(evt);
           if (evt.namespace === "agent" && evt.event === "tool_activity") {
             setToolActivities((prev) => {
                // Update phase manually for the same tool + run? 
@@ -152,8 +149,8 @@ export function useBackendConnection(url: string | null) {
   }, [call]);
 
   const refreshTasks = useCallback(async () => {
-    const result = await call('list_tasks');
-    setTasks(Array.isArray(result) ? result : []);
+    const result: any = await call('list_tasks');
+    setTasks(Array.isArray(result) ? result : (result?.tasks || []));
   }, [call]);
 
   const clearToolActivities = useCallback(() => setToolActivities([]), []);
@@ -164,6 +161,7 @@ export function useBackendConnection(url: string | null) {
     isConnected,
     tasks,
     toolActivities,
+    lastEvent,
     refreshTasks,
     clearToolActivities,
   };

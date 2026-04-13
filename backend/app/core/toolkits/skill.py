@@ -11,6 +11,7 @@ from app.core.utils import load_skill_from_directory
 
 logger = logging.getLogger(__name__)
 
+
 class SkillToolkit:
     """Tools for discovering and executing specialized Skills."""
 
@@ -51,6 +52,18 @@ class SkillToolkit:
                 skill_name=skill_name,
                 emit_event_cb=ctx.deps.emit_event_cb,
             )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug({
+                    "message": {
+                        "session_id": session_id,
+                        "event": "llm_request",
+                        "scope": "skill",
+                        "skill": skill_name,
+                        "input": augmented_instruction,
+                        "request_limit": request_limit,
+                    }
+                })
+
             result = await skill_agent.run(
                 augmented_instruction,
                 deps=skill_deps,
@@ -63,18 +76,18 @@ class SkillToolkit:
                 "output_tokens": usage.output_tokens,
                 "total_tokens": usage.total_tokens,
             }
-            logger.info({
-                "message": {
-                    "session_id": session_id,
-                    "event": "agent_run",
-                    "scope": "skill",
-                    "status": "success",
-                    "skill": skill_name,
-                    "input": instruction,
-                    "output": str(result.output),
-                    "usage": usage_data,
-                }
-            })
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug({
+                    "message": {
+                        "session_id": session_id,
+                        "event": "llm_response",
+                        "scope": "skill",
+                        "skill": skill_name,
+                        "output": str(result.output),
+                        "usage": usage_data,
+                    }
+                })
+
             return str(result.output)
         except Exception as e:
             logger.exception({

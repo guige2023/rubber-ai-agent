@@ -79,6 +79,8 @@ def test_websocket_llm_and_model_config_flow(client):
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         if provider == "openai":
             return ["gpt-4o"]
+        if provider == "kimi":
+            return ["kimi-k2.5"]
         if provider == "custom":
             return ["custom-chat-model"]
         return []
@@ -101,7 +103,11 @@ def test_websocket_llm_and_model_config_flow(client):
 
             response = send_rpc(websocket, "get_llm_configs", request_id=3)
             openai_config = next((c for c in response["result"] if c["provider"] == "openai"), None)
+            kimi_config = next((c for c in response["result"] if c["provider"] == "kimi"), None)
             assert openai_config is not None
+            assert kimi_config is not None
+            assert kimi_config["metadata"]["label"] == "Kimi"
+            assert kimi_config["metadata"]["placeholder_base_url"] == "https://api.moonshot.ai/v1"
             assert openai_config["api_key"] == "sk-test-key"
             assert openai_config["base_url"] == "https://test.api"
 
@@ -121,6 +127,21 @@ def test_websocket_llm_and_model_config_flow(client):
             assert "anthropic" not in response["result"]
             assert "gemini" not in response["result"]
             assert "qwen" not in response["result"]
+            assert "kimi" not in response["result"]
+
+            response = send_rpc(
+                websocket,
+                "set_llm_config",
+                {
+                    "provider": "kimi",
+                    "api_key": "sk-kimi",
+                },
+                request_id=7,
+            )
+            assert response["result"] == {"status": "success"}
+
+            response = send_rpc(websocket, "get_available_models", request_id=8)
+            assert response["result"]["kimi"] == ["kimi-k2.5"]
 
             response = send_rpc(
                 websocket,
@@ -131,16 +152,16 @@ def test_websocket_llm_and_model_config_flow(client):
                     "base_url": "https://custom.example.com/v1",
                     "model": "custom-chat-model",
                 },
-                request_id=7,
+                request_id=9,
             )
             assert response["result"] == {"status": "success"}
 
-            response = send_rpc(websocket, "get_llm_configs", request_id=8)
+            response = send_rpc(websocket, "get_llm_configs", request_id=10)
             custom_config = next((c for c in response["result"] if c["provider"] == "custom"), None)
             assert custom_config is not None
             assert custom_config["model"] == "custom-chat-model"
 
-            response = send_rpc(websocket, "get_available_models", request_id=9)
+            response = send_rpc(websocket, "get_available_models", request_id=11)
             assert response["result"]["custom"] == ["custom-chat-model"]
         finally:
             Settings._fetch_provider_models = original_fetcher
@@ -343,7 +364,7 @@ def test_websocket_session_message_and_task_flows(client, session):
 
         response = send_rpc(
             websocket,
-            "get_messages",
+            "list_messages",
             {"session_id": "session-1", "limit": 10},
             request_id=14,
         )
@@ -351,25 +372,32 @@ def test_websocket_session_message_and_task_flows(client, session):
         assert response["result"]["next_cursor"] is None
 
         response = send_rpc(websocket, "list_tasks", {"session_id": "session-1"}, request_id=15)
-        assert response["result"] == [
-            {
-                "id": task_1.id,
-                "title": "Task One",
-                "status": "running",
-                "progress": "step 1",
-                "updated_at": task_1.updated_at.isoformat(),
-            }
-        ]
+        assert response["result"] == {
+            "tasks": [
+                {
+                    "id": task_1.id,
+                    "title": "Task One",
+                    "status": "running",
+                    "progress": "step 1",
+                    "updated_at": task_1.updated_at.isoformat(),
+                }
+            ],
+            "next_cursor": None,
+        }
 
         response = send_rpc(websocket, "list_schedules", request_id=16)
-        assert response["result"] == [
-            {
-                "id": "schedule-1",
-                "name": "Nightly",
-                "cron": "0 0 * * *",
-                "enabled": True,
-            }
-        ]
+        assert response["result"] == {
+            "schedules": [
+                {
+                    "id": "schedule-1",
+                    "name": "Nightly",
+                    "cron": "0 0 * * *",
+                    "enabled": True,
+                    "updated_at": schedule.updated_at.isoformat(),
+                }
+            ],
+            "next_cursor": None,
+        }
 
         response = send_rpc(
             websocket,
@@ -386,6 +414,143 @@ def test_websocket_session_message_and_task_flows(client, session):
             request_id=18,
         )
         assert response["result"] == {"status": "error", "message": "Session not found"}
+
+
+def test_websocket_list_endpoints_use_cursor_pagination(client, session):
+    now = datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc)
+
+    session.add_all([
+        Session(id="session-b", title="Session B", updated_at=now),
+        Session(id="session-a", title="Session A", updated_at=now),
+        Session(id="session-old", title="Session Old", updated_at=now - timedelta(minutes=1)),
+        Message(
+            id="message-a",
+            session_id="session-b",
+            role="user",
+            content="first",
+            type="text",
+            created_at=now - timedelta(minutes=2),
+        ),
+        Message(
+            id="message-b",
+            session_id="session-b",
+            role="assistant",
+            content="second",
+            type="text",
+            created_at=now,
+        ),
+        Message(
+            id="message-c",
+            session_id="session-b",
+            role="assistant",
+            content="third",
+            type="text",
+            created_at=now,
+        ),
+        Task(
+            id="task-b",
+            session_id="session-b",
+            title="Task B",
+            status="running",
+            updated_at=now,
+        ),
+        Task(
+            id="task-a",
+            session_id="session-b",
+            title="Task A",
+            status="pending",
+            updated_at=now,
+        ),
+        Task(
+            id="task-old",
+            session_id="session-b",
+            title="Task Old",
+            status="success",
+            updated_at=now - timedelta(minutes=1),
+        ),
+        Schedule(
+            id="schedule-b",
+            name="Schedule B",
+            cron_expression="0 1 * * *",
+            updated_at=now,
+        ),
+        Schedule(
+            id="schedule-a",
+            name="Schedule A",
+            cron_expression="0 2 * * *",
+            updated_at=now,
+        ),
+        Schedule(
+            id="schedule-old",
+            name="Schedule Old",
+            cron_expression="0 3 * * *",
+            updated_at=now - timedelta(minutes=1),
+        ),
+    ])
+    session.commit()
+
+    with client.websocket_connect(websocket_path()) as websocket:
+        first_sessions = send_rpc(websocket, "list_sessions", {"limit": 1}, request_id=20)["result"]
+        assert [item["id"] for item in first_sessions["sessions"]] == ["session-b"]
+        assert first_sessions["next_cursor"] is not None
+
+        second_sessions = send_rpc(
+            websocket,
+            "list_sessions",
+            {"limit": 1, "cursor": first_sessions["next_cursor"]},
+            request_id=21,
+        )["result"]
+        assert [item["id"] for item in second_sessions["sessions"]] == ["session-a"]
+        assert second_sessions["next_cursor"] is not None
+
+        first_messages = send_rpc(
+            websocket,
+            "list_messages",
+            {"session_id": "session-b", "limit": 1},
+            request_id=22,
+        )["result"]
+        assert [item["content"] for item in first_messages["messages"]] == ["third"]
+        assert first_messages["next_cursor"] is not None
+
+        second_messages = send_rpc(
+            websocket,
+            "list_messages",
+            {"session_id": "session-b", "limit": 1, "cursor": first_messages["next_cursor"]},
+            request_id=23,
+        )["result"]
+        assert [item["content"] for item in second_messages["messages"]] == ["second"]
+        assert second_messages["next_cursor"] is not None
+
+        first_tasks = send_rpc(
+            websocket,
+            "list_tasks",
+            {"session_id": "session-b", "limit": 1},
+            request_id=24,
+        )["result"]
+        assert [item["id"] for item in first_tasks["tasks"]] == ["task-b"]
+        assert first_tasks["next_cursor"] is not None
+
+        second_tasks = send_rpc(
+            websocket,
+            "list_tasks",
+            {"session_id": "session-b", "limit": 1, "cursor": first_tasks["next_cursor"]},
+            request_id=25,
+        )["result"]
+        assert [item["id"] for item in second_tasks["tasks"]] == ["task-a"]
+        assert second_tasks["next_cursor"] is not None
+
+        first_schedules = send_rpc(websocket, "list_schedules", {"limit": 1}, request_id=26)["result"]
+        assert [item["id"] for item in first_schedules["schedules"]] == ["schedule-b"]
+        assert first_schedules["next_cursor"] is not None
+
+        second_schedules = send_rpc(
+            websocket,
+            "list_schedules",
+            {"limit": 1, "cursor": first_schedules["next_cursor"]},
+            request_id=27,
+        )["result"]
+        assert [item["id"] for item in second_schedules["schedules"]] == ["schedule-a"]
+        assert second_schedules["next_cursor"] is not None
 
         response = send_rpc(
             websocket,

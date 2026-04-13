@@ -59,6 +59,72 @@ version: 1.0.0
     skill_md.write_text(content, encoding="utf-8")
 
 
+def test_init_llm_model_uses_moonshot_provider_for_kimi(monkeypatch):
+    settings = create_test_settings()
+    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "kimi:kimi-k2.5")
+    monkeypatch.setattr(Settings, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
+
+    captured = {}
+
+    class FakeMoonshotProvider:
+        def __init__(self, **kwargs):
+            captured["provider_kwargs"] = kwargs
+
+    def fake_openai_chat_model(model_name, provider):
+        captured["model_name"] = model_name
+        captured["provider"] = provider
+        return "kimi-model"
+
+    monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
+    monkeypatch.setattr("pydantic_ai.providers.moonshotai.MoonshotAIProvider", FakeMoonshotProvider)
+
+    kernel = FerrymanKernel(settings=settings)
+
+    assert kernel._init_llm_model() == "kimi-model"
+    assert captured["model_name"] == "kimi-k2.5"
+    assert isinstance(captured["provider"], FakeMoonshotProvider)
+    assert captured["provider_kwargs"] == {"api_key": "sk-test"}
+
+
+def test_init_llm_model_supports_custom_kimi_base_url(monkeypatch):
+    settings = create_test_settings()
+    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "kimi:kimi-k2.5")
+    monkeypatch.setattr(
+        Settings,
+        "get_provider_llm_config",
+        lambda self, provider: {"api_key": "sk-test", "base_url": "https://proxy.example.com/v1"},
+    )
+
+    captured = {}
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+            captured["client_instance"] = self
+
+    class FakeMoonshotProvider:
+        def __init__(self, **kwargs):
+            captured["provider_kwargs"] = kwargs
+
+    def fake_openai_chat_model(model_name, provider):
+        captured["model_name"] = model_name
+        captured["provider"] = provider
+        return "kimi-model"
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
+    monkeypatch.setattr("pydantic_ai.providers.moonshotai.MoonshotAIProvider", FakeMoonshotProvider)
+
+    kernel = FerrymanKernel(settings=settings)
+
+    assert kernel._init_llm_model() == "kimi-model"
+    assert captured["client_kwargs"] == {
+        "api_key": "sk-test",
+        "base_url": "https://proxy.example.com/v1",
+    }
+    assert captured["provider_kwargs"] == {"openai_client": captured["client_instance"]}
+
+
 # --- test_agent_closure.py ---
 @pytest.mark.asyncio
 async def test_agent_execution_closure(monkeypatch):
@@ -114,13 +180,6 @@ async def test_run_master_agent_mocked(monkeypatch):
             self.output_tokens = 20
             self.total_tokens = 30
             
-    class MockMessage:
-        def __init__(self, content):
-            self.content = content
-            
-    class MockResponse(MockMessage):
-        pass
-
     class MockResult:
         def __init__(self, data):
             self.data = data
@@ -130,7 +189,7 @@ async def test_run_master_agent_mocked(monkeypatch):
             return MockUsage()
             
         def new_messages(self):
-            return [MockResponse(self.data)]
+            return [ModelResponse(parts=[TextPart(content=self.data)])]
 
     class MockAgent:
         async def run(self, instruction, deps=None, message_history=None, usage_limits=None):
@@ -365,5 +424,5 @@ async def test_kernel_register_toolkit_preserves_file_path_when_input_is_large()
     assert res == "Wrote reports/output.md (5000)"
     evt_start = mock_emit.call_args_list[0][0][0]
     assert evt_start.payload.phase == ToolPhase.START
-    assert evt_start.payload.input["file_path"] == "reports/output.md"
+    assert evt_start.payload.input["path"].endswith("/workspaces/sess/reports/output.md")
     assert evt_start.payload.input["content"] == {"_summary": "omitted", "length": 5000}

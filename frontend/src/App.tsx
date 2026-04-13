@@ -1,5 +1,6 @@
 import React, { useState, useEffect, ReactNode, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useBackendConnection, type Task } from './hooks/useBackendConnection';
 import { useSessions } from './hooks/useSessions';
 import { useI18n } from './hooks/useI18n';
@@ -22,7 +23,8 @@ import {
   Radar,
   Target,
   Link,
-  TrendingUp
+  TrendingUp,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -56,14 +58,7 @@ function isTauriRuntime() {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-function getPathBasename(value?: string) {
-  if (!value) {
-    return "";
-  }
-
-  const parts = value.split(/[\\/]/);
-  return parts[parts.length - 1] || value;
-}
+const CHROME_DOWNLOAD_URL = 'https://www.google.com/chrome/';
 
 type ProviderMetadata = {
   label: string;
@@ -80,6 +75,13 @@ type LlmProviderConfig = {
   metadata: ProviderMetadata;
 };
 
+type BrowserRuntimeStatus = {
+  available: boolean;
+  path?: string | null;
+  required?: boolean;
+  download_url?: string;
+};
+
 function buildModelOptionValue(provider: string, model: string) {
   return `${provider}:${model}`;
 }
@@ -87,7 +89,7 @@ function buildModelOptionValue(provider: string, model: string) {
 export default function App() {
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const connection = useBackendConnection(wsUrl);
-  const { call, execute: executeInstruction, isConnected, tasks, refreshTasks, toolActivities, clearToolActivities } = connection;
+  const { call, execute: executeInstruction, isConnected, tasks, refreshTasks, toolActivities, clearToolActivities, lastEvent } = connection;
   const { t, locale, changeLanguage } = useI18n();
   const {
     messages,
@@ -104,6 +106,7 @@ export default function App() {
     call,
     executeInstruction,
     clearToolActivities,
+    lastEvent,
   });
   const [input, setInput] = useState('');
   const [currentView, setCurrentView] = useState<'chat' | 'tasks' | 'skills' | 'settings'>('chat');
@@ -119,6 +122,7 @@ export default function App() {
   const [backendLogContent, setBackendLogContent] = useState('');
   const [backendLogSource, setBackendLogSource] = useState<'app' | 'sidecar'>('app');
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
+  const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -268,6 +272,12 @@ export default function App() {
       refreshModelSettings();
       refreshSkills();
       refreshSessions();
+      call('get_browser_runtime_status')
+        .then((status) => setBrowserRuntimeStatus(status as BrowserRuntimeStatus))
+        .catch((error) => {
+          console.error('Failed to check browser runtime:', error);
+          setBrowserRuntimeStatus(null);
+        });
     }
   }, [isConnected, call, refreshSessions]);
 
@@ -333,6 +343,15 @@ export default function App() {
     if (!input.trim()) return;
     execute(input);
     setInput('');
+  };
+
+  const handleOpenChromeDownload = async () => {
+    try {
+      await openUrl(CHROME_DOWNLOAD_URL);
+    } catch (error) {
+      console.error('Failed to open Chrome download URL:', error);
+      window.open(CHROME_DOWNLOAD_URL, '_blank', 'noopener,noreferrer');
+    }
   };
 
   const handleSaveConfig = async (
@@ -550,6 +569,9 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               className="flex-1 flex flex-col overflow-hidden"
             >
+              {browserRuntimeStatus && !browserRuntimeStatus.available && (
+                <BrowserRuntimeBanner t={t} onOpenChromeDownload={handleOpenChromeDownload} />
+              )}
               {/* Chat Area */}
               <div className="flex-1 overflow-y-auto p-10 space-y-8 flex flex-col scrollbar-hide">
                 {messages.length === 0 ? (
@@ -625,14 +647,12 @@ export default function App() {
                                    {activity.input && activity.input.url && <span className="ml-2 text-white/30 truncate font-normal">{activity.input.url}</span>}
                                    {activity.input && activity.input.skill_name && <span className="ml-2 text-blue-400 font-bold truncate">[{activity.input.skill_name}]</span>}
                                    {activity.input && activity.input.command && <span className="ml-2 text-orange-400 truncate font-normal">`{activity.input.command}`</span>}
-                                   {activity.input && (activity.input.path || activity.input.directory || activity.input.file_path) && (
+                                   {activity.input && activity.input.path && (
                                        <span
                                            className="ml-2 text-green-400 truncate font-normal"
-                                           title={String(activity.input.path || activity.input.directory || activity.input.file_path)}
+                                           title={String(activity.input.path)}
                                        >
-                                           {activity.tool_name === 'write_file' || activity.tool_name === 'read_file'
-                                             ? getPathBasename(String(activity.input.path || activity.input.directory || activity.input.file_path))
-                                             : String(activity.input.path || activity.input.directory || activity.input.file_path)}
+                                           {String(activity.input.path)}
                                        </span>
                                    )}
                                    {activity.input && activity.input.title && <span className="ml-2 text-white/40 italic truncate">"{activity.input.title}"</span>}
@@ -1067,6 +1087,37 @@ function QuickAction({ icon, title, onClick }: { icon: ReactNode, title: string,
         <ChevronRight size={18} className="absolute right-0 bottom-0 text-white/10 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 group-hover:text-white/40 transition-all" />
       </div>
     </button>
+  );
+}
+
+function BrowserRuntimeBanner({
+  t,
+  onOpenChromeDownload,
+}: {
+  t: (key: string) => string;
+  onOpenChromeDownload: () => void;
+}) {
+  return (
+    <div className="mx-10 mt-6 rounded-[1.5rem] border border-amber-300/20 bg-amber-400/[0.08] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.18)] backdrop-blur-xl">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-amber-300/20 bg-amber-300/10 text-amber-100">
+            <Globe size={18} />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-black tracking-tight text-amber-50">{t('browser.chrome_required.title')}</p>
+            <p className="max-w-3xl text-xs font-medium leading-5 text-white/65">{t('browser.chrome_required.description')}</p>
+          </div>
+        </div>
+        <button
+          onClick={onOpenChromeDownload}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl bg-white px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.18em] text-[#080808] transition-all hover:bg-white/90 active:scale-[0.98]"
+        >
+          {t('browser.chrome_required.download')}
+          <ExternalLink size={13} />
+        </button>
+      </div>
+    </div>
   );
 }
 

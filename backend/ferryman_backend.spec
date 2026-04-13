@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parents[0]
@@ -26,6 +26,7 @@ hiddenimports = sorted(
             "playwright._impl.__pyinstaller",
             "playwright._impl._path_utils",
             "playwright.async_api",
+            "playwright.sync_api",
             "playwright_stealth",
             "pythonjsonlogger.orjson",
         ]
@@ -33,6 +34,7 @@ hiddenimports = sorted(
 )
 
 datas = []
+datas += collect_data_files("playwright_stealth", includes=["js/**/*.js"])
 for package_name in (
     "genai_prices",
     "pydantic_ai",
@@ -64,7 +66,6 @@ a = Analysis(
         "lancedb",
         "numpy",
         "pandas",
-        "playwright.sync_api",
         "pyarrow",
         "pytest",
         "sentence_transformers",

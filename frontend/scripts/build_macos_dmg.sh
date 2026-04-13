@@ -18,6 +18,12 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+# Tauri's unsigned app bundle can contain an ad-hoc executable signature that
+# does not seal bundled resources. Re-sign locally so macOS accepts the copied
+# app bundle from the DMG during install smoke tests.
+codesign --force --deep --sign - "$APP_PATH"
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
 mkdir -p "$DMG_DIR"
 TMP_DIR="$(mktemp -d /tmp/ferryman-dmg.XXXXXX)"
 cleanup() {

@@ -9,7 +9,7 @@ pydantic-settings==2.13.1
 jsonrpcserver==5.0.9
 
 # --- AI & Execution ---
-pydantic-ai==1.78.0
+pydantic-ai==1.80.0
 google-genai==1.71.0
 anthropic==0.84.0
 openai==2.31.0

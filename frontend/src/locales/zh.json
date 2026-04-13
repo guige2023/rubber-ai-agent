@@ -8,6 +8,13 @@
   "common": {
     "error_prefix": "错误"
   },
+  "browser": {
+    "chrome_required": {
+      "title": "需要安装Chrome",
+      "description": "网页自动化任务需要调用本机已安装的Google Chrome。",
+      "download": "下载Chrome"
+    }
+  },
   "nav": {
     "chat": "对话",
     "sessions": "会话历史",

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import shutil
 from pathlib import Path
 
@@ -25,6 +24,11 @@ SYSTEM_CHROME_CANDIDATES = [
     "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
 ]
+
+CHROME_REQUIRED_MESSAGE = (
+    "Chrome runtime is unavailable. Install Google Chrome from "
+    "https://www.google.com/chrome/ and restart Ferryman."
+)
 
 
 class BrowserController:
@@ -71,7 +75,9 @@ class BrowserController:
                 logger.warning(f"Failed to launch browser via {plan['label']}: {e}")
 
         if not self._browser_context or not self._page:
-            raise RuntimeError(f"Unable to launch browser with any runtime: {last_error}") from last_error
+            if not launch_plans:
+                raise RuntimeError(CHROME_REQUIRED_MESSAGE) from last_error
+            raise RuntimeError(f"Unable to launch system Chrome: {last_error}") from last_error
 
         # Apply Playwright-Stealth patch (v2.x API)
         await Stealth().apply_stealth_async(self._page)
@@ -93,13 +99,6 @@ class BrowserController:
 
     @staticmethod
     def _resolve_system_browser_path() -> Path | None:
-        env_path = os.environ.get("FERRYMAN_BROWSER_PATH")
-        if env_path:
-            candidate = Path(env_path).expanduser()
-            if candidate.exists():
-                return candidate
-            logger.warning(f"FERRYMAN_BROWSER_PATH does not exist: {candidate}")
-
         for candidate in SYSTEM_CHROME_CANDIDATES:
             path = Path(candidate)
             if path.exists():
@@ -115,6 +114,16 @@ class BrowserController:
 
         return None
 
+    @classmethod
+    def get_runtime_status(cls) -> dict[str, str | bool | None]:
+        browser_path = cls._resolve_system_browser_path()
+        return {
+            "available": browser_path is not None,
+            "path": str(browser_path) if browser_path else None,
+            "required": True,
+            "download_url": "https://www.google.com/chrome/",
+        }
+
     def _build_launch_plans(self) -> list[dict]:
         plans: list[dict] = []
         system_browser_path = self._resolve_system_browser_path()
@@ -126,13 +135,6 @@ class BrowserController:
                 }
             )
 
-        bundled_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-        bundled_label = (
-            f"bundled Chromium via PLAYWRIGHT_BROWSERS_PATH={bundled_path}"
-            if bundled_path
-            else "bundled Chromium"
-        )
-        plans.append({"label": bundled_label, "launch_kwargs": {}})
         return plans
 
     async def _launch_browser(self, plan: dict, args: list[str]):

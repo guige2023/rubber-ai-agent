@@ -1,9 +1,10 @@
 ---
 name: stock-analyzer
 description: >
-  EXECUTE a professional-grade Financial Audit & Stock Analysis. Use this for deep fundamental 
-  investigation (Margin of Safety), 5-year data audits, and Wyckoff technical analysis. 
-  Outputs an actionable investment research report.
+  Use this for stock valuation, intrinsic value, fair value, fundamental analysis,
+  or investment research for a public company, equity, or ticker such as Alibaba,
+  BABA, 9988.HK, Tencent, or 0700.HK. Produces a data-backed report with 5-year
+  financial audit, margin of safety, and Wyckoff technical analysis.
 version: 1.0.0
 author: Ferryman
 ---

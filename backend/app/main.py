@@ -5,23 +5,113 @@ import secrets
 import asyncio
 from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from logging.config import dictConfig
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from jsonrpcserver import async_dispatch, method, Success
-from sqlmodel import select, desc, text
+from sqlalchemy import and_, or_
+from sqlmodel import select, desc
 
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.kernel import FerrymanKernel
-from app.models.database import Session, Message, Task
+from app.models.database import Session, Message, Schedule, Task
 from app.models.schemas import JsonRpcError, JsonRpcErrorCode, JsonRpcErrorResponse
 
 logger = logging.getLogger(__name__)
 DEFAULT_FERRYMAN_BEARER_TOKEN = "dev-token"
+
+
+def encode_datetime_cursor(sort_at: datetime, entity_id: str) -> str:
+    if sort_at.tzinfo is None:
+        sort_at = sort_at.replace(tzinfo=timezone.utc)
+    normalized = sort_at.astimezone(timezone.utc).isoformat()
+    return json.dumps({"sort_at": normalized, "id": entity_id}, separators=(",", ":"))
+
+
+def decode_datetime_cursor(cursor: str) -> tuple[datetime, str]:
+    payload = json.loads(cursor)
+    if not isinstance(payload, dict):
+        raise ValueError("Cursor payload must be an object.")
+
+    sort_at = payload.get("sort_at")
+    entity_id = payload.get("id")
+    if not isinstance(sort_at, str) or not isinstance(entity_id, str):
+        raise ValueError("Cursor must include string sort_at and id fields.")
+
+    parsed_at = datetime.fromisoformat(sort_at)
+    if parsed_at.tzinfo is None:
+        parsed_at = parsed_at.replace(tzinfo=timezone.utc)
+
+    return parsed_at, entity_id
+
+
+def fetch_datetime_cursor_page(
+    db_session,
+    statement,
+    *,
+    model: Any,
+    sort_field: str,
+    cursor: Optional[str],
+    limit: int,
+) -> tuple[list[Any], Optional[str]]:
+    limit = max(1, limit)
+    sort_column = getattr(model, sort_field)
+    id_column = getattr(model, "id")
+
+    statement = statement.order_by(desc(sort_column), desc(id_column))
+    if cursor:
+        try:
+            cursor_dt, cursor_id = decode_datetime_cursor(cursor)
+            statement = statement.where(
+                or_(
+                    sort_column < cursor_dt,
+                    and_(sort_column == cursor_dt, id_column < cursor_id),
+                )
+            )
+        except Exception as e:
+            logger.exception(f"Invalid cursor format: {cursor}, exception: {e}")
+
+    items = list(db_session.exec(statement.limit(limit + 1)).all())
+    has_more = len(items) > limit
+    if not has_more:
+        return items, None
+
+    items = items[:limit]
+    last_item = items[-1]
+    return items, encode_datetime_cursor(getattr(last_item, sort_field), last_item.id)
+
+
+async def emit_refresh_event(
+    emit_event_cb,
+    *,
+    entity: str,
+    action: str,
+    entity_id: Optional[str] = None,
+    delta: Optional[dict] = None,
+    session_id: Optional[str] = None,
+) -> None:
+    if not emit_event_cb:
+        return
+
+    from app.models.events import DataEntity, EntityAction, EventNamespace, FerrymanEventEnvelope, RefreshPayload
+
+    event = FerrymanEventEnvelope(
+        namespace=EventNamespace.DATA,
+        event="refresh",
+        session_id=session_id,
+        payload=RefreshPayload(
+            entity=DataEntity(entity),
+            action=EntityAction(action),
+            entity_id=entity_id,
+            delta=delta,
+        ),
+    )
+    await emit_event_cb(event)
 
 
 def is_websocket_authorized(websocket: WebSocket) -> bool:
@@ -34,7 +124,7 @@ def is_websocket_authorized(websocket: WebSocket) -> bool:
 
 def configure_logging(log_level: Optional[str] = None) -> None:
     settings = get_settings()
-    log_level = log_level or settings.log_level
+    log_level = (log_level or settings.log_level).upper()
     log_dir = settings.log_dir
     log_file = log_dir / "ferryman.log"
 
@@ -100,7 +190,7 @@ def configure_logging(log_level: Optional[str] = None) -> None:
                 "propagate": False,
             },
             "pydantic_ai": {
-                "level": "WARNING",
+                "level": log_level,
                 "handlers": ["console", "file"],
                 "propagate": False,
             }
@@ -258,6 +348,13 @@ async def get_backend_log_info(context):
 
 
 @method
+async def get_browser_runtime_status(context):
+    from app.core.browser import BrowserController
+
+    return Success(BrowserController.get_runtime_status())
+
+
+@method
 async def read_backend_logs(context, source: str = "app", lines: int = 200):
     paths = get_backend_log_paths()
     target = Path(paths.get(source, paths["app"]))
@@ -269,7 +366,7 @@ async def read_backend_logs(context, source: str = "app", lines: int = 200):
     })
 
 
-async def background_generate_title(kernel, session_id: str, instruction: str):
+async def background_generate_title(kernel, session_id: str, instruction: str, emit_event_cb=None):
     try:
         from pydantic_ai.agent import Agent
         from app.models.database import Session
@@ -286,8 +383,17 @@ async def background_generate_title(kernel, session_id: str, instruction: str):
             session_obj = db_session.get(Session, session_id)
             if session_obj and not session_obj.title:
                 session_obj.title = generated_title
+                session_obj.updated_at = datetime.now(timezone.utc)
                 db_session.add(session_obj)
                 db_session.commit()
+                await emit_refresh_event(
+                    emit_event_cb,
+                    entity="session",
+                    action="updated",
+                    entity_id=session_id,
+                    delta={"title": generated_title},
+                    session_id=session_id,
+                )
     except Exception as e:
         logger.error(f"Failed to auto-generate title for session {session_id}: {e}")
 
@@ -297,8 +403,6 @@ async def execute(context, instruction: str, session_id: str = "default"):
     """
     Ferryman OS 核心指令入口：接收自然语言指令并调度 Master Agent。
     """
-    logger.info(f"📥 OS Instruction Received: {instruction} (Session: {session_id})")
-
     if context and hasattr(context, "kernel"):
         # Provide an emit callback that uses the active websocket
         async def emit_ws_event(event_model) -> None:
@@ -330,8 +434,7 @@ async def execute(context, instruction: str, session_id: str = "default"):
                 need_title_gen = True
 
         if need_title_gen:
-            import asyncio
-            asyncio.create_task(background_generate_title(context.kernel, session_id, instruction))
+            asyncio.create_task(background_generate_title(context.kernel, session_id, instruction, emit_ws_event))
 
         # result is already dumped as a dict in run_master_agent in the new unified format
         return Success(result)
@@ -384,6 +487,7 @@ async def update_session(context, session_id: str, title: str):
         if not session_obj:
             return Success({"status": "error", "message": "Session not found"})
         session_obj.title = title
+        session_obj.updated_at = datetime.now(timezone.utc)
         db_session.add(session_obj)
         db_session.commit()
         return Success({"status": "success"})
@@ -394,26 +498,14 @@ async def list_sessions(context, cursor: Optional[str] = None, limit: int = 20):
     """Lists available chat sessions with cursor-based pagination."""
     logger.debug(f"Listing sessions (cursor: {cursor}, limit: {limit})")
     with get_session() as db_session:
-        statement = select(Session).order_by(desc(Session.updated_at))
-
-        if cursor:
-            # We assume cursor is the isoformat string of updated_at for simplicity in this implementation
-            # Or use id if updated_at is identical. For now, let's use updated_at.
-            try:
-                from datetime import datetime
-                cursor_dt = datetime.fromisoformat(cursor)
-                statement = statement.where(Session.updated_at < cursor_dt)
-            except Exception as e:
-                logger.exception(f"Invalid cursor format: {cursor}, exception: {e}")
-
-        sessions_list = db_session.exec(statement.limit(limit + 1)).all()
-
-        has_more = len(sessions_list) > limit
-        if has_more:
-            sessions_list = sessions_list[:limit]
-            next_cursor = sessions_list[-1].updated_at.isoformat()
-        else:
-            next_cursor = None
+        sessions_list, next_cursor = fetch_datetime_cursor_page(
+            db_session,
+            select(Session),
+            model=Session,
+            sort_field="updated_at",
+            cursor=cursor,
+            limit=limit,
+        )
 
         return Success({
             "sessions": [{
@@ -428,56 +520,20 @@ async def list_sessions(context, cursor: Optional[str] = None, limit: int = 20):
 
 
 @method
-async def get_messages(context, session_id: str, cursor: Optional[str] = None, limit: int = 50):
-    """Returns messages for a specific session with pagination and token refresh logic."""
+async def list_messages(context, session_id: str, cursor: Optional[str] = None, limit: int = 50):
+    """Returns messages for a specific session with pagination."""
     logger.debug(f"Fetching messages for session: {session_id} (cursor: {cursor})")
 
     with get_session() as db_session:
-        # 1. On-open refresh: Sync token counts from messages
-        # Use SQL aggregation for efficiency as planned
-        try:
-            # SQLite specific json_extract usage via text() for precision
-            sync_sql = text("""
-                            UPDATE sessions
-                            SET input_tokens  = COALESCE((SELECT SUM(json_extract(metadata, '$.usage.input_tokens'))
-                                                          FROM messages
-                                                          WHERE session_id = :sid
-                                                            AND role = 'assistant'), 0),
-                                output_tokens = COALESCE((SELECT SUM(json_extract(metadata, '$.usage.output_tokens'))
-                                                          FROM messages
-                                                          WHERE session_id = :sid
-                                                            AND role = 'assistant'), 0)
-                            WHERE id = :sid
-                            """)
-            db_session.execute(sync_sql, {"sid": session_id})
-            db_session.commit()
-        except Exception as e:
-            logger.error(f"Failed to sync session tokens: {e}")
+        messages_list, next_cursor = fetch_datetime_cursor_page(
+            db_session,
+            select(Message).where(Message.session_id == session_id),
+            model=Message,
+            sort_field="created_at",
+            cursor=cursor,
+            limit=limit,
+        )
 
-        # 2. Fetch messages with pagination
-        statement = select(Message).where(Message.session_id == session_id).order_by(desc(Message.created_at))
-
-        if cursor:
-            # Here cursor is the message ID or timestamp. Let's use ID for stable paging.
-            # But created_at is better for chronological order.
-            try:
-                from datetime import datetime
-                cursor_dt = datetime.fromisoformat(cursor)
-                statement = statement.where(Message.created_at < cursor_dt)
-            except Exception as e:
-                logger.exception(f"Invalid cursor format: {cursor}, exception: {e}")
-
-        messages_list = db_session.exec(statement.limit(limit + 1)).all()
-
-        # Sort back to ascending for display
-        has_more = len(messages_list) > limit
-        if has_more:
-            messages_list = messages_list[:limit]
-            next_cursor = messages_list[-1].created_at.isoformat()
-        else:
-            next_cursor = None
-
-        # Sort ascending for the frontend
         messages_list.reverse()
 
         return Success({
@@ -488,43 +544,62 @@ async def get_messages(context, session_id: str, cursor: Optional[str] = None, l
 
 
 @method
-async def list_tasks(context, session_id: Optional[str] = None):
-    """Lists tasks, optionally filtered by session."""
-    logger.debug(f"Listing tasks (filter session_id: {session_id})")
-    from sqlmodel import select
-    from app.models.database import Task
-    from app.core.db import get_session
+async def list_tasks(context, session_id: Optional[str] = None, cursor: Optional[str] = None, limit: int = 50):
+    """Lists tasks, optionally filtered by session, with cursor-based pagination."""
+    logger.debug(f"Listing tasks (filter session_id: {session_id}, cursor: {cursor}, limit: {limit})")
     with get_session() as session:
         statement = select(Task)
         if session_id:
             statement = statement.where(Task.session_id == session_id)
-        tasks = session.exec(statement.order_by(Task.updated_at.desc())).all()
+
+        tasks, next_cursor = fetch_datetime_cursor_page(
+            session,
+            statement,
+            model=Task,
+            sort_field="updated_at",
+            cursor=cursor,
+            limit=limit,
+        )
+
         logger.debug(f"Found {len(tasks)} tasks")
-        return Success([{
-            "id": t.id,
-            "title": t.title,
-            "status": t.status,
-            "progress": t.metadata_.get("progress_note", ""),
-            "updated_at": t.updated_at.isoformat()
-        } for t in tasks])
+        return Success({
+            "tasks": [{
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "progress": t.metadata_.get("progress_note", ""),
+                "updated_at": t.updated_at.isoformat()
+            } for t in tasks],
+            "next_cursor": next_cursor,
+        })
 
 
 @method
-async def list_schedules(context):
-    """Lists all automated routines."""
-    logger.debug("Listing all automated schedules")
-    from sqlmodel import select
-    from app.models.database import Schedule
-    from app.core.db import get_session
+async def list_schedules(context, cursor: Optional[str] = None, limit: int = 50):
+    """Lists automated routines with cursor-based pagination."""
+    logger.debug(f"Listing automated schedules (cursor: {cursor}, limit: {limit})")
+
     with get_session() as session:
-        schedules = session.exec(select(Schedule)).all()
+        schedules, next_cursor = fetch_datetime_cursor_page(
+            session,
+            select(Schedule),
+            model=Schedule,
+            sort_field="updated_at",
+            cursor=cursor,
+            limit=limit,
+        )
+
         logger.debug(f"Found {len(schedules)} schedules")
-        return Success([{
-            "id": s.id,
-            "name": s.name,
-            "cron": s.cron_expression,
-            "enabled": s.enabled
-        } for s in schedules])
+        return Success({
+            "schedules": [{
+                "id": s.id,
+                "name": s.name,
+                "cron": s.cron_expression,
+                "enabled": s.enabled,
+                "updated_at": s.updated_at.isoformat(),
+            } for s in schedules],
+            "next_cursor": next_cursor,
+        })
 
 
 @app.websocket("/ws")
@@ -543,7 +618,7 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 data = await websocket.receive_text()
             except WebSocketDisconnect:
-                logger.info("❌ WebSocket disconnected")
+                logger.warning("❌ WebSocket disconnected")
                 break
 
             try:

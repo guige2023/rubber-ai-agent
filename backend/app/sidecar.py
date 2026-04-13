@@ -12,6 +12,7 @@ def configure_release_runtime() -> None:
 
     # Release sidecars should not load ambient Pydantic plugins such as Logfire.
     os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "1")
+    os.environ.setdefault("FERRYMAN_LOG_LEVEL", "INFO")
 
 
 configure_release_runtime()

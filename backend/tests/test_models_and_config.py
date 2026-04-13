@@ -151,6 +151,7 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     """Configured providers should be fetched online and custom models remain selectable."""
     config.set("llm.openai", {"api_key": "sk-openai"}, category="llm")
     config.set("llm.qwen", {"api_key": "sk-qwen"}, category="llm")
+    config.set("llm.kimi", {"api_key": "sk-kimi"}, category="llm")
     config.set(
         "llm.custom",
         {"api_key": "sk-custom", "base_url": "https://custom.example.com/v1", "model": "my-custom-model"},
@@ -165,6 +166,8 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
             return ["gpt-4o", "text-embedding-3-large"]
         if provider == "qwen":
             return []
+        if provider == "kimi":
+            return ["kimi-k2.5", "kimi-k2-thinking"]
         if provider == "custom":
             return ["server-model", "my-custom-model"]
         return []
@@ -179,9 +182,95 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     assert "gemini" not in models
     assert models["openai"] == ["gpt-4o", "text-embedding-3-large"]
     assert "qwen" in models
+    assert "kimi" in models
     assert "custom" in models
-    assert models["qwen"] == ["qwen-max", "qwen-plus", "qwen-omni-turbo"]
+    assert models["qwen"] == ["qwen-max", "qwen-plus", "qwen3.5-plus", "qwen3.5-omni-plus"]
+    assert models["kimi"] == ["kimi-k2.5", "kimi-k2-thinking"]
     assert models["custom"] == ["server-model", "my-custom-model"]
+
+
+def test_available_models_include_openai_anthropic_and_gemini_when_configured():
+    config.set("llm.openai", {"api_key": "sk-openai"}, category="llm")
+    config.set("llm.anthropic", {"api_key": "sk-anthropic"}, category="llm")
+    config.set("llm.gemini", {"api_key": "sk-gemini"}, category="llm")
+    config.set("system.llm.active_model", "openai:gpt-4o", category="system")
+
+    original_fetcher = config._fetch_provider_models
+
+    def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
+        if provider == "openai":
+            return ["gpt-4o", "text-embedding-3-large"]
+        if provider == "anthropic":
+            return ["claude-sonnet-4-5", "claude-opus-4-1"]
+        if provider == "gemini":
+            return ["gemini-3.1-pro-preview", "gemini-3.1-flash-preview"]
+        return []
+
+    config._fetch_provider_models = staticmethod(fake_fetcher)
+    try:
+        models = config.get_available_models()
+    finally:
+        config._fetch_provider_models = original_fetcher
+
+    assert models["openai"] == ["gpt-4o", "text-embedding-3-large"]
+    assert models["anthropic"] == ["claude-sonnet-4-5", "claude-opus-4-1"]
+    assert models["gemini"] == ["gemini-3.1-pro-preview", "gemini-3.1-flash-preview"]
+
+
+def test_get_available_models_hides_unconfigured_providers():
+    config.set("llm.openai", {"api_key": "sk-openai"}, category="llm")
+    config.set("llm.anthropic", {"api_key": ""}, category="llm")
+    config.set("llm.gemini", {"api_key": ""}, category="llm")
+
+    original_fetcher = config._fetch_provider_models
+
+    def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
+        if provider == "openai":
+            return ["gpt-4o"]
+        return ["should-not-appear"]
+
+    config._fetch_provider_models = staticmethod(fake_fetcher)
+    try:
+        models = config.get_available_models()
+    finally:
+        config._fetch_provider_models = original_fetcher
+
+    assert models == {"openai": ["gpt-4o"]}
+
+
+def test_fetch_provider_models_routes_to_provider_specific_fetchers(monkeypatch):
+    monkeypatch.setattr(config, "_fetch_anthropic_models", staticmethod(lambda api_key, base_url: ["claude-sonnet-4-5"]))
+    monkeypatch.setattr(config, "_fetch_gemini_models", staticmethod(lambda api_key, base_url: ["gemini-3.1-pro-preview"]))
+    monkeypatch.setattr(
+        config,
+        "_fetch_openai_compatible_models",
+        staticmethod(lambda api_key, base_url: ["gpt-4o", "kimi-k2.5", "moonshot-v1-8k-vision-preview"]),
+    )
+
+    assert config._fetch_provider_models(
+        "anthropic",
+        "sk-a",
+        "https://api.anthropic.com/v1",
+        "anthropic",
+    ) == ["claude-sonnet-4-5"]
+    assert config._fetch_provider_models(
+        "gemini",
+        "sk-g",
+        "https://generativelanguage.googleapis.com",
+        "gemini",
+    ) == ["gemini-3.1-pro-preview"]
+    assert config._fetch_provider_models(
+        "openai",
+        "sk-o",
+        "https://api.openai.com/v1",
+        "openai_compatible",
+    ) == ["gpt-4o", "kimi-k2.5", "moonshot-v1-8k-vision-preview"]
+    assert config._fetch_provider_models(
+        "kimi",
+        "sk-k",
+        "https://api.moonshot.ai/v1",
+        "openai_compatible",
+    ) == ["kimi-k2.5"]
 
 
 def test_filter_chat_model_ids_excludes_non_chat_entries():
@@ -264,4 +353,27 @@ def test_filter_qwen_models_keeps_only_qwen_family_entries():
         "qwen-max",
         "qwen-plus",
         "qwen-omni-turbo",
+    ])
+
+
+def test_filter_kimi_models_keeps_supported_chat_entries():
+    filtered = config._filter_kimi_models([
+        "kimi-k2.5",
+        "kimi-k2-thinking",
+        "kimi-k2-thinking-turbo",
+        "kimi-k2-0905-preview",
+        "kimi-latest",
+        "kimi-thinking-preview",
+        "moonshot-v1-8k",
+        "moonshot-v1-32k-vision-preview",
+        "text-embedding-v1",
+        "qwen-plus",
+    ])
+
+    assert filtered == sorted([
+        "kimi-k2.5",
+        "kimi-k2-0905-preview",
+        "kimi-k2-thinking",
+        "kimi-k2-thinking-turbo",
+        "moonshot-v1-8k",
     ])

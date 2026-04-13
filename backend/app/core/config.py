@@ -6,11 +6,10 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -31,7 +30,10 @@ class Settings(BaseSettings):
     # Base directory for all Ferryman persistence
     root_dir: Path = Field(default=Path.home() / ".ferryman", validation_alias="FERRYMAN_ROOT_DIR")
     port: int = 8000
-    log_level: str = "DEBUG"
+    log_level: str = Field(
+        default="DEBUG",
+        validation_alias=AliasChoices("FERRYMAN_LOG_LEVEL", "LOG_LEVEL"),
+    )
 
     @property
     def user_dir(self) -> Path:
@@ -195,7 +197,21 @@ class Settings(BaseSettings):
                 "models": [
                     "qwen-max",
                     "qwen-plus",
-                    "qwen-omni-turbo",
+                    "qwen3.5-plus",
+                    "qwen3.5-omni-plus",
+                ],
+            },
+            "kimi": {
+                "label": "Kimi",
+                "placeholder_base_url": "https://api.moonshot.ai/v1",
+                "list_mode": "openai_compatible",
+                "models": [
+                    "kimi-k2.5",
+                    "kimi-k2-thinking",
+                    "kimi-k2-thinking-turbo",
+                    "kimi-k2-0905-preview",
+                    "kimi-k2-turbo-preview",
+                    "moonshot-v1-128k",
                 ],
             },
             "custom": {
@@ -254,7 +270,7 @@ class Settings(BaseSettings):
                     base_url=base_url,
                     list_mode=definition.get("list_mode", "openai_compatible"),
                 )
-                if not provider_models and provider == "qwen":
+                if not provider_models:
                     provider_models = list(definition.get("models", []))
 
             deduped_models = list(dict.fromkeys(model for model in provider_models if model))
@@ -280,9 +296,11 @@ class Settings(BaseSettings):
             model_ids = Settings._fetch_openai_compatible_models(api_key=api_key, base_url=base_url)
             if provider == "qwen":
                 return Settings._filter_qwen_models(model_ids)
+            if provider == "kimi":
+                return Settings._filter_kimi_models(model_ids)
             return model_ids
         except Exception as exc:
-            logger.warning("Failed to fetch models for provider %s: %s", provider, exc)
+            logger.warning(f"Failed to fetch models for provider {provider}: {exc}")
             return []
 
     @staticmethod
@@ -411,6 +429,41 @@ class Settings(BaseSettings):
             if any(keyword in normalized for keyword in excluded_keywords):
                 continue
             if Settings._has_trailing_build_or_date_variant(normalized):
+                continue
+            filtered.append(model_id)
+
+        return sorted(dict.fromkeys(filtered))
+
+    @staticmethod
+    def _filter_kimi_models(model_ids: List[str]) -> List[str]:
+        allowed_prefixes = (
+            "kimi-k2",
+            "moonshot-v1",
+        )
+        deprecated_models = {
+            "kimi-latest",
+            "kimi-thinking-preview",
+        }
+        excluded_keywords = (
+            "embedding",
+            "embed",
+            "vision",
+            "image",
+            "audio",
+            "video",
+            "tts",
+            "asr",
+            "rerank",
+        )
+
+        filtered = []
+        for model_id in model_ids:
+            normalized = model_id.lower().strip()
+            if not normalized or normalized in deprecated_models:
+                continue
+            if not any(normalized.startswith(prefix) for prefix in allowed_prefixes):
+                continue
+            if any(keyword in normalized for keyword in excluded_keywords):
                 continue
             filtered.append(model_id)
 

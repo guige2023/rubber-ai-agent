@@ -55,6 +55,8 @@ class CommandToolkit:
     @staticmethod
     def _build_command(script_path: Path, args: List[str]) -> List[str]:
         if script_path.suffix == ".py":
+            if getattr(sys, "frozen", False):
+                return [sys.executable, "--run-python-script", str(script_path), *args]
             return [sys.executable, str(script_path), *args]
         if script_path.suffix == ".sh":
             return ["/bin/bash", str(script_path), *args]

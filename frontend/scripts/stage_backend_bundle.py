@@ -104,7 +104,7 @@ def build_backend_sidecar() -> None:
             f"`{python_executable} -m pip install -r backend/requirements-build.txt`."
         ) from exc
 
-    built_dir = BACKEND_DIST_ROOT / "ferryman-backend"
+    built_dir = BACKEND_DIST_ROOT / "ferryman"
     if not built_dir.exists():
         raise RuntimeError(f"Expected built backend sidecar at {built_dir}")
     shutil.copytree(built_dir, BACKEND_DST, dirs_exist_ok=True)

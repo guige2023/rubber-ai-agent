@@ -372,11 +372,13 @@ class FerrymanKernel:
         provider_catalog = self._settings.get_llm_provider_catalog()
         if provider in {"qwen", "kimi", "doubao"} and not base_url:
             base_url = provider_catalog[provider]["placeholder_base_url"]
+        if provider == "anthropic" and isinstance(base_url, str) and base_url.rstrip("/").endswith("/v1"):
+            base_url = base_url.rstrip("/")[:-3]
 
         p_kwargs = {k: v for k, v in {"api_key": api_key, "base_url": base_url}.items() if v is not None}
 
         try:
-            if provider in {"openai", "qwen", "doubao", "azure_openai", "custom"}:
+            if provider in {"openai", "qwen", "doubao", "custom"}:
                 from pydantic_ai.models.openai import OpenAIChatModel
                 from pydantic_ai.providers.openai import OpenAIProvider
                 return OpenAIChatModel(model_name, provider=OpenAIProvider(**p_kwargs))

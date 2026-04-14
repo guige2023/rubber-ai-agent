@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from functools import lru_cache
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError
@@ -230,15 +231,6 @@ class Settings(BaseSettings):
                     "doubao-seed-2-0-code-preview-260215",
                 ],
             },
-            "azure_openai": {
-                "label": "Azure OpenAI",
-                "placeholder_base_url": "https://your-resource.openai.azure.com/openai/v1",
-                "requires_base_url": True,
-                "list_mode": "openai_compatible",
-                "models": [
-                    "gpt-5.4-mini",
-                ],
-            },
             "custom": {
                 "label": "Custom",
                 "placeholder_base_url": "https://api.example.com/v1",
@@ -341,8 +333,6 @@ class Settings(BaseSettings):
                 return Settings._filter_kimi_models(model_ids)
             if provider == "doubao":
                 return Settings._filter_doubao_models(model_ids)
-            if provider == "azure_openai":
-                return Settings._filter_azure_openai_models(model_ids)
             return Settings._filter_chat_model_ids(model_ids)
         except HTTPError as exc:
             if exc.code in {404, 405, 501}:
@@ -682,51 +672,6 @@ class Settings(BaseSettings):
         return Settings._dedupe_preserve_order([item[3] for item in selected])[:6]
 
     @staticmethod
-    def _filter_azure_openai_models(model_ids: List[str]) -> List[str]:
-        excluded_keywords = (
-            "audio",
-            "canvas",
-            "computer-use",
-            "dall-e",
-            "embedding",
-            "image",
-            "realtime",
-            "search",
-            "speech",
-            "tts",
-            "transcribe",
-            "vision",
-            "whisper",
-        )
-
-        candidates = []
-        for model_id in model_ids:
-            normalized = model_id.lower().strip()
-            match = re.match(r"^(gpt-\d+(?:\.\d+)*-[a-z0-9]+)(?:-\d{4}-\d{2}-\d{2})?$", normalized)
-            if not match:
-                continue
-            if any(keyword in normalized for keyword in excluded_keywords):
-                continue
-            alias = match.group(1)
-            version = Settings._extract_gpt_version(alias)
-            if not version:
-                continue
-            candidates.append((
-                version,
-                Settings._variant_priority(alias, ("pro", "mini", "nano")),
-                Settings._model_date_score(normalized),
-                alias,
-            ))
-
-        if not candidates:
-            return []
-
-        latest_version = max(candidate[0] for candidate in candidates)
-        selected = [candidate for candidate in candidates if candidate[0] == latest_version]
-        selected.sort(key=lambda item: (item[1], tuple(-part for part in item[2])))
-        return Settings._dedupe_preserve_order([item[3] for item in selected])[:6]
-
-    @staticmethod
     def _fetch_openai_compatible_models(api_key: str, base_url: str) -> List[str]:
         payload = Settings._http_get_json(
             Settings._build_openai_compatible_models_url(base_url),
@@ -744,14 +689,37 @@ class Settings(BaseSettings):
 
     @staticmethod
     def _fetch_anthropic_models(api_key: str, base_url: str) -> List[str]:
-        payload = Settings._http_get_json(
-            Settings._build_openai_compatible_models_url(base_url),
-            headers={
+        url = Settings._build_openai_compatible_models_url(base_url)
+        fallback_headers = (
+            {
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",
             },
+            {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
         )
+        last_error: Exception | None = None
+
+        for headers in fallback_headers:
+            try:
+                payload = Settings._http_get_json(url, headers=headers)
+                break
+            except HTTPError as exc:
+                last_error = exc
+                if exc.code in {401, 403}:
+                    continue
+                raise
+            except JSONDecodeError as exc:
+                last_error = exc
+                continue
+        else:
+            if isinstance(last_error, HTTPError):
+                raise last_error
+            raise ModelListEndpointUnavailable("Anthropic models endpoint did not return JSON")
+
         model_ids = [
             item.get("id", "").strip()
             for item in payload.get("data", [])

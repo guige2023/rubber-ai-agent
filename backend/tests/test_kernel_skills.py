@@ -310,6 +310,22 @@ updated: 2026-04-14
     assert any("Directory name" in item for item in payload["errors"])
 
 
+def test_run_skill_script_uses_frozen_sidecar_entrypoint_for_python(monkeypatch):
+    script_path = Path("/tmp/demo.py")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "/tmp/ferryman")
+
+    command = CommandToolkit._build_command(script_path, ["--flag", "value"])
+
+    assert command == [
+        "/tmp/ferryman",
+        "--run-python-script",
+        "/tmp/demo.py",
+        "--flag",
+        "value",
+    ]
+
+
 # --- Skill Loading Utils Tests ---
 from app.core.utils import load_skill_from_directory
 from app.models.schemas import SkillModel

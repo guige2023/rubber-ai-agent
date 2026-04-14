@@ -165,40 +165,40 @@ def test_init_llm_model_uses_openai_provider_for_doubao(monkeypatch):
     }
 
 
-def test_init_llm_model_uses_openai_provider_for_azure_openai(monkeypatch):
+def test_init_llm_model_strips_trailing_v1_for_anthropic(monkeypatch):
     settings = create_test_settings()
-    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "azure_openai:gpt-5.4-mini")
+    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "anthropic:claude-haiku-4-5-20251001")
     monkeypatch.setattr(
         Settings,
         "get_provider_llm_config",
         lambda self, provider: {
             "api_key": "sk-test",
-            "base_url": "https://example.openai.azure.com/openai/v1",
+            "base_url": "https://cc.honoursoft.cn/v1",
         },
     )
 
     captured = {}
 
-    class FakeOpenAIProvider:
+    class FakeAnthropicProvider:
         def __init__(self, **kwargs):
             captured["provider_kwargs"] = kwargs
 
-    def fake_openai_chat_model(model_name, provider):
+    def fake_anthropic_model(model_name, provider):
         captured["model_name"] = model_name
         captured["provider"] = provider
-        return "azure-model"
+        return "anthropic-model"
 
-    monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
-    monkeypatch.setattr("pydantic_ai.providers.openai.OpenAIProvider", FakeOpenAIProvider)
+    monkeypatch.setattr("pydantic_ai.models.anthropic.AnthropicModel", fake_anthropic_model)
+    monkeypatch.setattr("pydantic_ai.providers.anthropic.AnthropicProvider", FakeAnthropicProvider)
 
     kernel = FerrymanKernel(settings=settings)
 
-    assert kernel._init_llm_model() == "azure-model"
-    assert captured["model_name"] == "gpt-5.4-mini"
-    assert isinstance(captured["provider"], FakeOpenAIProvider)
+    assert kernel._init_llm_model() == "anthropic-model"
+    assert captured["model_name"] == "claude-haiku-4-5-20251001"
+    assert isinstance(captured["provider"], FakeAnthropicProvider)
     assert captured["provider_kwargs"] == {
         "api_key": "sk-test",
-        "base_url": "https://example.openai.azure.com/openai/v1",
+        "base_url": "https://cc.honoursoft.cn",
     }
 
 

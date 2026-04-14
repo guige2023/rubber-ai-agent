@@ -83,8 +83,6 @@ def test_websocket_llm_and_model_config_flow(client):
             return ["kimi-k2.5"]
         if provider == "doubao":
             return ["doubao-seed-2-0-pro-260215"]
-        if provider == "azure_openai":
-            return ["gpt-5.4-mini"]
         if provider == "custom":
             return ["custom-chat-model"]
         return []
@@ -109,17 +107,13 @@ def test_websocket_llm_and_model_config_flow(client):
             openai_config = next((c for c in response["result"] if c["provider"] == "openai"), None)
             kimi_config = next((c for c in response["result"] if c["provider"] == "kimi"), None)
             doubao_config = next((c for c in response["result"] if c["provider"] == "doubao"), None)
-            azure_config = next((c for c in response["result"] if c["provider"] == "azure_openai"), None)
             assert openai_config is not None
             assert kimi_config is not None
             assert doubao_config is not None
-            assert azure_config is not None
             assert kimi_config["metadata"]["label"] == "Kimi"
             assert kimi_config["metadata"]["placeholder_base_url"] == "https://api.moonshot.cn/v1"
             assert doubao_config["metadata"]["label"] == "Doubao"
             assert doubao_config["metadata"]["placeholder_base_url"] == "https://ark.cn-beijing.volces.com/api/v3"
-            assert azure_config["metadata"]["label"] == "Azure OpenAI"
-            assert azure_config["metadata"]["placeholder_base_url"] == "https://your-resource.openai.azure.com/openai/v1"
             assert openai_config["api_key"] == "sk-test-key"
             assert openai_config["base_url"] == "https://test.api"
 
@@ -170,21 +164,6 @@ def test_websocket_llm_and_model_config_flow(client):
 
             response = send_rpc(websocket, "get_available_models", request_id=10)
             assert response["result"]["doubao"] == ["doubao-seed-2-0-pro-260215"]
-
-            response = send_rpc(
-                websocket,
-                "set_llm_config",
-                {
-                    "provider": "azure_openai",
-                    "api_key": "sk-azure",
-                    "base_url": "https://example.openai.azure.com/openai/v1",
-                },
-                request_id=101,
-            )
-            assert response["result"] == {"status": "success"}
-
-            response = send_rpc(websocket, "get_available_models", request_id=102)
-            assert response["result"]["azure_openai"] == ["gpt-5.4-mini"]
 
             response = send_rpc(
                 websocket,

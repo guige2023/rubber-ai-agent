@@ -1,6 +1,8 @@
-import pytest
 from datetime import datetime, timezone
+from json import JSONDecodeError
 from urllib.error import HTTPError
+
+import pytest
 from sqlmodel import select
 
 from app.models.database import Session, Message, Task, AppConfig
@@ -155,11 +157,6 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     config.set("llm.kimi", {"api_key": "sk-kimi"}, category="llm")
     config.set("llm.doubao", {"api_key": "sk-doubao"}, category="llm")
     config.set(
-        "llm.azure_openai",
-        {"api_key": "sk-azure", "base_url": "https://example.openai.azure.com/openai/v1"},
-        category="llm",
-    )
-    config.set(
         "llm.custom",
         {"api_key": "sk-custom", "base_url": "https://custom.example.com/v1", "model": "my-custom-model"},
         category="llm",
@@ -177,8 +174,6 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
             return ["kimi-k2.5", "kimi-k2-thinking"]
         if provider == "doubao":
             return ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-lite-260215"]
-        if provider == "azure_openai":
-            return ["gpt-5.4-mini"]
         if provider == "custom":
             return ["server-model", "my-custom-model"]
         return []
@@ -195,12 +190,10 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     assert "qwen" in models
     assert "kimi" in models
     assert "doubao" in models
-    assert "azure_openai" in models
     assert "custom" in models
     assert models["qwen"] == ["qwen-max", "qwen-plus", "qwen3.5-plus", "qwen3.5-omni-plus"]
     assert models["kimi"] == ["kimi-k2.5", "kimi-k2-thinking"]
     assert models["doubao"] == ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-lite-260215"]
-    assert models["azure_openai"] == ["gpt-5.4-mini"]
     assert models["custom"] == ["server-model", "my-custom-model"]
 
 
@@ -270,41 +263,24 @@ def test_get_available_models_does_not_fallback_on_fetch_error():
     assert "kimi" not in models
 
 
-def test_get_available_models_skips_azure_openai_without_base_url():
-    config.set("llm.azure_openai", {"api_key": "sk-azure"}, category="llm")
-
-    original_fetcher = config._fetch_provider_models
-
-    def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
-        return ["should-not-appear"]
-
-    config._fetch_provider_models = staticmethod(fake_fetcher)
-    try:
-        models = config.get_available_models()
-    finally:
-        config._fetch_provider_models = original_fetcher
-
-    assert "azure_openai" not in models
-
-
 def test_fetch_provider_models_routes_to_provider_specific_fetchers(monkeypatch):
     monkeypatch.setattr(config, "_fetch_anthropic_models", staticmethod(lambda api_key, base_url: ["claude-sonnet-4-5"]))
     monkeypatch.setattr(config, "_fetch_gemini_models", staticmethod(lambda api_key, base_url: ["gemini-3.1-pro-preview"]))
     monkeypatch.setattr(
         config,
         "_fetch_openai_compatible_models",
-        staticmethod(
-            lambda api_key, base_url: [
-                "gpt-4o",
-                "kimi-k2.5",
-                "moonshot-v1-8k-vision-preview",
-                "doubao-seed-2-0-pro-260215",
-                "doubao-seed-1-6-251015",
-                "doubao-seed-2-0-code-preview-260215",
+            staticmethod(
+                lambda api_key, base_url: [
+                    "gpt-4o",
+                    "gpt-5.4-mini-2026-03-17",
+                    "gpt-5.4-nano-2026-03-17",
+                    "gpt-5.4-audio-preview-2026-03-17",
+                    "kimi-k2.5",
+                    "moonshot-v1-8k-vision-preview",
+                    "doubao-seed-2-0-pro-260215",
+                    "doubao-seed-1-6-251015",
+                    "doubao-seed-2-0-code-preview-260215",
                 "doubao-seedream-4-0-250828",
-                "gpt-5.4-mini-2026-03-17",
-                "gpt-5.4-nano-2026-03-17",
-                "gpt-5.4-audio-preview-2026-03-17",
             ]
         ),
     )
@@ -339,14 +315,6 @@ def test_fetch_provider_models_routes_to_provider_specific_fetchers(monkeypatch)
         "https://ark.cn-beijing.volces.com/api/v3",
         "openai_compatible",
     ) == ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-code-preview-260215"]
-    assert config._fetch_provider_models(
-        "azure_openai",
-        "sk-a",
-        "https://example.openai.azure.com/openai/v1",
-        "openai_compatible",
-    ) == ["gpt-5.4-mini", "gpt-5.4-nano"]
-
-
 def test_fetch_provider_models_marks_missing_models_endpoint_as_unavailable(monkeypatch):
     def raise_not_found(api_key: str, base_url: str):
         raise HTTPError(base_url, 404, "Not Found", hdrs=None, fp=None)
@@ -360,6 +328,41 @@ def test_fetch_provider_models_marks_missing_models_endpoint_as_unavailable(monk
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
             "openai_compatible",
         )
+
+
+def test_fetch_anthropic_models_falls_back_to_bearer_auth(monkeypatch):
+    attempts = []
+
+    def fake_http_get_json(url: str, headers=None, query=None):
+        attempts.append(headers or {})
+        if headers and headers.get("x-api-key"):
+            raise HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
+        return {"data": [{"id": "claude-sonnet-4-6"}]}
+
+    monkeypatch.setattr(config, "_http_get_json", staticmethod(fake_http_get_json))
+
+    assert config._fetch_anthropic_models("sk-anthropic", "https://proxy.example.com/v1") == ["claude-sonnet-4-6"]
+    assert attempts == [
+        {
+            "x-api-key": "sk-anthropic",
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        {
+            "Authorization": "Bearer sk-anthropic",
+            "Content-Type": "application/json",
+        },
+    ]
+
+
+def test_fetch_anthropic_models_marks_non_json_response_as_unavailable(monkeypatch):
+    def fake_http_get_json(url: str, headers=None, query=None):
+        raise JSONDecodeError("Expecting value", "", 0)
+
+    monkeypatch.setattr(config, "_http_get_json", staticmethod(fake_http_get_json))
+
+    with pytest.raises(ModelListEndpointUnavailable):
+        config._fetch_anthropic_models("sk-anthropic", "https://proxy.example.com/v1")
 
 
 def test_filter_chat_model_ids_excludes_non_chat_entries():
@@ -497,25 +500,4 @@ def test_filter_doubao_models_keeps_latest_supported_chat_family():
         "doubao-seed-2-1-lite-260415",
         "doubao-seed-2-1-mini-260415",
         "doubao-seed-2-1-code-preview-260415",
-    ]
-
-
-def test_filter_azure_openai_models_keeps_latest_gpt_family_aliases():
-    filtered = config._filter_azure_openai_models([
-        "dall-e-3-3.0",
-        "gpt-35-turbo-0125",
-        "gpt-4o-2024-11-20",
-        "gpt-5.4-mini-2026-03-17",
-        "gpt-5.4-nano-2026-03-17",
-        "gpt-5.5-nano-2026-06-01",
-        "gpt-5.5-mini-2026-06-01",
-        "gpt-5.4-audio-preview-2026-03-17",
-        "gpt-5.4-realtime-preview-2026-03-17",
-        "text-embedding-3-large",
-        "gpt-5.4-mini-2026-03-17",
-    ])
-
-    assert filtered == [
-        "gpt-5.5-mini",
-        "gpt-5.5-nano",
     ]

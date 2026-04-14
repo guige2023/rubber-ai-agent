@@ -133,7 +133,7 @@ fn bundled_backend_sidecar_executable(app: &AppHandle) -> Result<PathBuf, String
 
     let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     let sidecar_dir = resource_dir.join("gen").join("backend-sidecar");
-    let executable = sidecar_dir.join("ferryman-backend");
+    let executable = sidecar_dir.join("ferryman");
     if executable.exists() {
         return Ok(executable);
     }

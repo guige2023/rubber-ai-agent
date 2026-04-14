@@ -35,6 +35,7 @@ hiddenimports = sorted(
 
 datas = []
 datas += collect_data_files("playwright_stealth", includes=["js/**/*.js"])
+datas += collect_data_files("trafilatura", includes=["settings.cfg"])
 for package_name in (
     "genai_prices",
     "pydantic_ai",
@@ -138,7 +139,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="ferryman-backend",
+    name="ferryman",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -158,5 +159,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="ferryman-backend",
+    name="ferryman",
 )

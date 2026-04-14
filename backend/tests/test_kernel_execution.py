@@ -59,7 +59,7 @@ version: 1.0.0
     skill_md.write_text(content, encoding="utf-8")
 
 
-def test_init_llm_model_uses_moonshot_provider_for_kimi(monkeypatch):
+def test_init_llm_model_uses_openai_provider_for_kimi(monkeypatch):
     settings = create_test_settings()
     monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "kimi:kimi-k2.5")
     monkeypatch.setattr(Settings, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
@@ -71,7 +71,7 @@ def test_init_llm_model_uses_moonshot_provider_for_kimi(monkeypatch):
             captured["client_kwargs"] = kwargs
             captured["client_instance"] = self
 
-    class FakeMoonshotProvider:
+    class FakeOpenAIProvider:
         def __init__(self, **kwargs):
             captured["provider_kwargs"] = kwargs
 
@@ -82,13 +82,13 @@ def test_init_llm_model_uses_moonshot_provider_for_kimi(monkeypatch):
 
     monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
     monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
-    monkeypatch.setattr("pydantic_ai.providers.moonshotai.MoonshotAIProvider", FakeMoonshotProvider)
+    monkeypatch.setattr("pydantic_ai.providers.openai.OpenAIProvider", FakeOpenAIProvider)
 
     kernel = FerrymanKernel(settings=settings)
 
     assert kernel._init_llm_model() == "kimi-model"
     assert captured["model_name"] == "kimi-k2.5"
-    assert isinstance(captured["provider"], FakeMoonshotProvider)
+    assert isinstance(captured["provider"], FakeOpenAIProvider)
     assert captured["client_kwargs"] == {
         "api_key": "sk-test",
         "base_url": "https://api.moonshot.cn/v1",
@@ -112,7 +112,7 @@ def test_init_llm_model_supports_custom_kimi_base_url(monkeypatch):
             captured["client_kwargs"] = kwargs
             captured["client_instance"] = self
 
-    class FakeMoonshotProvider:
+    class FakeOpenAIProvider:
         def __init__(self, **kwargs):
             captured["provider_kwargs"] = kwargs
 
@@ -123,7 +123,7 @@ def test_init_llm_model_supports_custom_kimi_base_url(monkeypatch):
 
     monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
     monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
-    monkeypatch.setattr("pydantic_ai.providers.moonshotai.MoonshotAIProvider", FakeMoonshotProvider)
+    monkeypatch.setattr("pydantic_ai.providers.openai.OpenAIProvider", FakeOpenAIProvider)
 
     kernel = FerrymanKernel(settings=settings)
 

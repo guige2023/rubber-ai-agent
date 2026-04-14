@@ -125,10 +125,14 @@ codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 mkdir -p "$DMG_DIR"
 TMP_DIR="$(mktemp -d /tmp/ferryman-dmg.XXXXXX)"
 MOUNT_DIR=""
+INSTALLED_APP_DIR=""
 cleanup() {
   if [[ -n "$MOUNT_DIR" && -d "$MOUNT_DIR" ]]; then
     hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
     rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$INSTALLED_APP_DIR" && -d "$INSTALLED_APP_DIR" ]]; then
+    rm -rf "$INSTALLED_APP_DIR"
   fi
   rm -rf "$TMP_DIR"
 }
@@ -175,6 +179,11 @@ if [[ ! -d "$MOUNT_DIR/$APP_NAME" ]]; then
   echo "Mounted DMG does not contain $APP_NAME" >&2
   exit 1
 fi
+
+INSTALLED_APP_DIR="$(mktemp -d /tmp/ferryman-installed-app.XXXXXX)"
+ditto "$MOUNT_DIR/$APP_NAME" "$INSTALLED_APP_DIR/$APP_NAME"
+python3 "$ROOT_DIR/scripts/verify_release_bundle.py" --app-path "$INSTALLED_APP_DIR/$APP_NAME"
+
 hdiutil detach "$MOUNT_DIR"
 rmdir "$MOUNT_DIR"
 MOUNT_DIR=""

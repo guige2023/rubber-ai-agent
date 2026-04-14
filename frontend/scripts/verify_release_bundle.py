@@ -19,6 +19,7 @@ def required_paths(app_path: Path) -> list[Path]:
         resources / "backend-sidecar" / "ferryman",
         resources / "backend-sidecar" / "_internal" / "playwright_stealth" / "js" / "generate.magic.arrays.js",
         resources / "backend-sidecar" / "_internal" / "trafilatura" / "settings.cfg",
+        resources / "backend-sidecar" / "_internal" / "justext" / "stoplists",
         resources / "skills",
     ]
 
@@ -42,6 +43,10 @@ def main() -> int:
     missing = [str(path) for path in required_paths(app_path) if not path.exists()]
     if missing:
         raise RuntimeError(f"Missing required packaged resources: {missing}")
+
+    stoplists_dir = app_path / "Contents" / "Resources" / "gen" / "backend-sidecar" / "_internal" / "justext" / "stoplists"
+    if not any(stoplists_dir.glob("*.txt")):
+        raise RuntimeError(f"Packaged jusText stoplists directory is empty: {stoplists_dir}")
 
     sidecar = app_path / "Contents" / "Resources" / "gen" / "backend-sidecar" / "ferryman"
     skills_dir = app_path / "Contents" / "Resources" / "gen" / "skills"

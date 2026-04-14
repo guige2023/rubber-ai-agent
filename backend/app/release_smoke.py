@@ -3,16 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import socket
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import MethodType, SimpleNamespace
 
+import uvicorn
+import websockets
+from justext.utils import get_stoplist, get_stoplists
 from pydantic_ai.usage import RequestUsage, Usage
 
 from app.core.browser import BrowserController
 from app.core.config import get_settings
 from app.core.deps import AgentDeps
 from app.core.kernel import FerrymanKernel
+from app.main import DEFAULT_FERRYMAN_BEARER_TOKEN, app as fastapi_app
 from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.file import FileToolkit
 from app.core.toolkits.skill import SkillToolkit
@@ -78,6 +82,64 @@ def _write_smoke_page(target: Path) -> None:
     )
 
 
+def _pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+async def _rpc_call(websocket, method: str, params: dict[str, object] | None = None, request_id: int = 1) -> dict[str, object]:
+    await websocket.send(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params or {},
+                "id": request_id,
+            }
+        )
+    )
+    return json.loads(await websocket.recv())
+
+
+async def _run_websocket_smoke(report: dict[str, object]) -> None:
+    port = _pick_free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            fastapi_app,
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+            access_log=False,
+        )
+    )
+    server_task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        _require(server.started, "Embedded websocket smoke server did not start.")
+
+        uri = f"ws://127.0.0.1:{port}/ws?access_token={DEFAULT_FERRYMAN_BEARER_TOKEN}"
+        async with websockets.connect(uri) as websocket:
+            ping = await _rpc_call(websocket, "ping", request_id=1)
+            _require(ping.get("result") == "pong", f"Unexpected ping response: {ping}")
+
+            skills = await _rpc_call(websocket, "list_skills", request_id=2)
+            skill_names = [item["name"] for item in skills.get("result", [])]
+            _require("bundle-smoke-skill" in skill_names, f"Bundled smoke skill missing from list_skills: {skill_names}")
+
+            browser_status = await _rpc_call(websocket, "get_browser_runtime_status", request_id=3)
+            runtime = browser_status.get("result", {})
+            _require(runtime.get("available") is True, f"Unexpected browser runtime status via websocket: {browser_status}")
+
+        report["checks"].append({"name": "websocket_rpc"})
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(server_task, timeout=10)
+
+
 async def run_bundle_smoke_test() -> dict[str, object]:
     settings = get_settings()
     kernel = FerrymanKernel(settings)
@@ -90,6 +152,13 @@ async def run_bundle_smoke_test() -> dict[str, object]:
         kernel.scan_skills()
         report["checks"].append({"name": "scan_skills", "count": len(kernel.skills)})
         _require(bool(kernel.skills), "No skills were loaded from the bundled skill directories.")
+        _require("bundle-smoke-skill" in kernel.skills, "Bundled smoke skill was not staged into the release assets.")
+
+        stoplists = get_stoplists()
+        _require(bool(stoplists), "jusText stoplists were not found in the bundled runtime.")
+        english_stoplist = get_stoplist("English")
+        _require(bool(english_stoplist), "jusText English stoplist could not be loaded from the bundle.")
+        report["checks"].append({"name": "justext_stoplists", "count": len(stoplists)})
 
         write_result = await FileToolkit.write_file(base_ctx, "notes/hello.txt", "bundle smoke")
         _require("Successfully wrote" in write_result, f"Unexpected write_file result: {write_result}")
@@ -123,17 +192,39 @@ async def run_bundle_smoke_test() -> dict[str, object]:
         _require("bundle-smoke-schedule" in schedule_listing, f"list_schedules missing schedule: {schedule_listing}")
         report["checks"].append({"name": "task_tools"})
 
-        draft_skill_dir = workspace / "bundle-smoke-skill"
-        _write_smoke_skill(draft_skill_dir, "bundle-smoke-skill")
-        publish_result = json.loads(await SkillToolkit.publish_skill(base_ctx, "bundle-smoke-skill"))
-        _require(publish_result["ok"] is True, f"publish_skill failed: {publish_result}")
-        _require("bundle-smoke-skill" in kernel.skills, "Published smoke skill was not registered.")
-
-        skill_ctx = SimpleNamespace(
+        bundled_skill_ctx = SimpleNamespace(
             deps=AgentDeps(kernel=kernel, session_id=session_id, skill_name="bundle-smoke-skill"),
             usage=Usage(),
         )
-        skill_files = await FileToolkit.list_files(skill_ctx, str(kernel.skills["bundle-smoke-skill"].path))
+        bundled_assets = await FileToolkit.list_files(bundled_skill_ctx, "assets")
+        _require("sample.txt" in bundled_assets, f"Bundled skill assets are missing: {bundled_assets}")
+        bundled_asset_text = await FileToolkit.read_file(bundled_skill_ctx, "assets/sample.txt")
+        _require("Ferryman bundled skill asset check." in bundled_asset_text, f"Unexpected bundled asset contents: {bundled_asset_text!r}")
+        bundled_reference_text = await FileToolkit.read_file(bundled_skill_ctx, "references/sample.md")
+        _require("Bundle Smoke Reference" in bundled_reference_text, f"Unexpected bundled reference contents: {bundled_reference_text!r}")
+        bundled_script_result = json.loads(await CommandToolkit.run_skill_script(bundled_skill_ctx, "verify_bundle_resources.py"))
+        _require(bundled_script_result["ok"] is True, f"Bundled skill resource script failed: {bundled_script_result}")
+        bundled_payload = json.loads(bundled_script_result["stdout"])
+        _require(
+            bundled_payload == {
+                "asset": "Ferryman bundled skill asset check.",
+                "reference": "# Bundle Smoke Reference\nFerryman bundled skill reference check.",
+            },
+            f"Bundled skill script returned unexpected payload: {bundled_payload}",
+        )
+        report["checks"].append({"name": "bundled_skill_resources"})
+
+        draft_skill_dir = workspace / "bundle-smoke-draft-skill"
+        _write_smoke_skill(draft_skill_dir, "bundle-smoke-draft-skill")
+        publish_result = json.loads(await SkillToolkit.publish_skill(base_ctx, "bundle-smoke-draft-skill"))
+        _require(publish_result["ok"] is True, f"publish_skill failed: {publish_result}")
+        _require("bundle-smoke-draft-skill" in kernel.skills, "Published smoke skill was not registered.")
+
+        skill_ctx = SimpleNamespace(
+            deps=AgentDeps(kernel=kernel, session_id=session_id, skill_name="bundle-smoke-draft-skill"),
+            usage=Usage(),
+        )
+        skill_files = await FileToolkit.list_files(skill_ctx, str(kernel.skills["bundle-smoke-draft-skill"].path))
         _require("SKILL.md" in skill_files, f"Published skill resources not readable: {skill_files}")
         command_result = json.loads(await CommandToolkit.run_skill_script(skill_ctx, "echo.py"))
         _require(command_result["ok"] is True, f"run_skill_script failed: {command_result}")
@@ -152,12 +243,12 @@ async def run_bundle_smoke_test() -> dict[str, object]:
             async def run(self, instruction, deps, usage, usage_limits):
                 _require("Runtime Context:" in instruction, "Skill instruction was not runtime-augmented.")
                 _require(deps.skill_name == "bundle-smoke-skill", "Skill deps did not carry the active skill name.")
-                _require(usage is skill_ctx.usage, "Skill usage object was not forwarded.")
+                _require(usage is base_ctx.usage, "Skill usage object was not forwarded.")
                 return FakeSkillResult()
 
         kernel.build_skill_agent = MethodType(lambda self, skill_name: FakeSkillAgent(), kernel)
         try:
-            skill_run_result = await SkillToolkit.run_skill(skill_ctx, "bundle-smoke-skill", "Run smoke skill")
+            skill_run_result = await SkillToolkit.run_skill(base_ctx, "bundle-smoke-skill", "Run smoke skill")
         finally:
             kernel.build_skill_agent = original_build_skill_agent
         _require(skill_run_result == "bundle-smoke-skill-ran", f"run_skill returned unexpected output: {skill_run_result}")
@@ -191,6 +282,8 @@ async def run_bundle_smoke_test() -> dict[str, object]:
         screenshot = await WebToolkit.browser_screenshot(base_ctx)
         _require(bool(getattr(screenshot, "data", b"")), "browser_screenshot returned empty image data.")
         report["checks"].append({"name": "web_tools"})
+
+        await _run_websocket_smoke(report)
 
         return report
     finally:

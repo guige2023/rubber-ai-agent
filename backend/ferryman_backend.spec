@@ -36,6 +36,7 @@ hiddenimports = sorted(
 datas = []
 datas += collect_data_files("playwright_stealth", includes=["js/**/*.js"])
 datas += collect_data_files("trafilatura", includes=["settings.cfg"])
+datas += collect_data_files("justext", includes=["stoplists/*"])
 for package_name in (
     "genai_prices",
     "pydantic_ai",

@@ -594,8 +594,17 @@ async def list_messages(context, session_id: str, cursor: Optional[str] = None, 
         messages_list.reverse()
 
         return Success({
-            "messages": [{"role": m.role, "content": m.content, "type": m.type, "metadata": m.metadata_} for m in
-                         messages_list],
+            "messages": [
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "content": m.content,
+                    "type": m.type,
+                    "metadata": m.metadata_,
+                    "created_at": m.created_at.isoformat(),
+                }
+                for m in messages_list
+            ],
             "next_cursor": next_cursor
         })
 

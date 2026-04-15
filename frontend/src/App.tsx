@@ -1,8 +1,8 @@
-import React, { useState, useEffect, ReactNode, useRef } from 'react';
+import React, { useState, useEffect, ReactNode, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useBackendConnection } from './hooks/useBackendConnection';
-import { useSessions } from './hooks/useSessions';
+import { useBackendConnection, type ToolActivityPayload } from './hooks/useBackendConnection';
+import { useSessions, type Message } from './hooks/useSessions';
 import { useI18n } from './hooks/useI18n';
 import { 
   Settings, 
@@ -19,6 +19,7 @@ import {
   Trash2,
   RefreshCw,
   Check,
+  Copy,
   X,
   Flame,
   Radar,
@@ -121,6 +122,77 @@ function buildModelOptionValue(provider: string, model: string) {
   return `${provider}:${model}`;
 }
 
+function getToolActivityDisplayName(toolName: string, t: (key: string) => string) {
+  const translated = t(`tools.${toolName}`);
+  return translated !== `tools.${toolName}` ? translated : toolName;
+}
+
+function buildToolActivityCopyLine(activity: ToolActivityPayload, t: (key: string) => string) {
+  const segments = [getToolActivityDisplayName(activity.tool_name, t)];
+
+  if (activity.input?.url) {
+    segments.push(String(activity.input.url));
+  }
+  if (activity.input?.skill_name) {
+    segments.push(`[${String(activity.input.skill_name)}]`);
+  }
+  if (activity.input?.command) {
+    segments.push(String(activity.input.command));
+  }
+  if (activity.input?.path) {
+    segments.push(String(activity.input.path));
+  }
+  if (activity.input?.title) {
+    segments.push(`"${String(activity.input.title)}"`);
+  }
+  if (activity.duration_ms !== undefined) {
+    segments.push(`${activity.duration_ms}ms`);
+  }
+
+  return segments.join(' ');
+}
+
+function getMessageCopyText(
+  message: Message,
+  toolActivities: ToolActivityPayload[],
+  t: (key: string) => string,
+) {
+  if (message.metadata?.state !== 'pending') {
+    return message.content.trim();
+  }
+
+  const activityLines = toolActivities.map((activity) => buildToolActivityCopyLine(activity, t));
+  return [message.content.trim(), ...activityLines].filter(Boolean).join('\n').trim();
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function formatMessageTimestamp(createdAt?: string) {
+  if (!createdAt) {
+    return '';
+  }
+
+  const messageDate = new Date(createdAt);
+  if (Number.isNaN(messageDate.getTime())) {
+    return '';
+  }
+
+  const now = new Date();
+  const isToday =
+    messageDate.getFullYear() === now.getFullYear() &&
+    messageDate.getMonth() === now.getMonth() &&
+    messageDate.getDate() === now.getDate();
+  const timePart = `${pad2(messageDate.getHours())}:${pad2(messageDate.getMinutes())}`;
+
+  if (isToday) {
+    return timePart;
+  }
+
+  return `${messageDate.getFullYear()}/${pad2(messageDate.getMonth() + 1)}/${pad2(messageDate.getDate())} ${timePart}`;
+}
+
 export default function App() {
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const connection = useBackendConnection(wsUrl);
@@ -161,19 +233,37 @@ export default function App() {
   const [backendLogSource, setBackendLogSource] = useState<'app' | 'sidecar'>('app');
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
+  const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const didApplyInitialModelRouteRef = useRef(false);
+  const copyResetTimerRef = useRef<number | null>(null);
   const sendShortcutHint = sendMode === 'enter' ? t('chat.send_shortcut_enter_hint') : t('chat.send_shortcut_mod_enter_hint');
 
   useEffect(() => {
     localStorage.setItem('ferryman_send_mode', sendMode);
   }, [sendMode]);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isExecuting]);
+    if (currentView !== 'chat') {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [currentView, messages, toolActivities]);
+
+  useEffect(() => () => {
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -328,6 +418,27 @@ export default function App() {
     setInput('');
   };
 
+  const handleCopyMessage = useCallback(async (messageKey: string, text: string) => {
+    if (!text.trim()) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageKey(messageKey);
+
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+
+      copyResetTimerRef.current = window.setTimeout(() => {
+        setCopiedMessageKey((current) => (current === messageKey ? null : current));
+      }, 1600);
+    } catch (error) {
+      console.error('Failed to copy message:', error);
+    }
+  }, []);
+
   const handleOpenChromeDownload = async () => {
     try {
       await openUrl(CHROME_DOWNLOAD_URL);
@@ -369,6 +480,9 @@ export default function App() {
   const selectedModelValue = activeModel && availableModelValues.includes(activeModel) ? activeModel : '';
   const isModelReady = modelReadiness?.ready ?? true;
   const shouldWarnModelSelector = modelReadiness?.issue?.code === 'no_runnable_model';
+  const shouldHighlightModelSelector = availableModelValues.length > 0 && !selectedModelValue;
+  const modelSelectorPlaceholder = getModelSelectorPlaceholder(t, modelReadiness?.issue, availableModelValues.length);
+  const inlineModelHint = getInlineModelHint(t, modelReadiness?.issue, availableModelValues.length);
 
   return (
     <div className="flex w-full h-full bg-transparent text-white selection:bg-white/20 selection:text-white font-sans">
@@ -628,58 +742,98 @@ export default function App() {
                     </div>
                 ) : (
                   <div className={cn(CHAT_RAIL_CLASS, "flex flex-col gap-8")}>
-                    {messages.map((msg, i) => (
+                    {messages.map((msg, i) => {
+                      const messageKey = msg.id || `${msg.role}-${i}`;
+                      const copyText = getMessageCopyText(msg, toolActivities, t);
+                      const isCopied = copiedMessageKey === messageKey;
+                      const timestampLabel = formatMessageTimestamp(msg.created_at);
+                      const bubbleShellClass = cn(
+                        "relative rounded-[1.5rem] shadow-lg",
+                        msg.role === 'user'
+                          ? "bg-white text-[#080808] font-bold shadow-sm px-6 py-4 text-[14px]"
+                          : msg.metadata?.state === 'failed'
+                            ? "bg-red-500/10 border border-red-500/30 text-red-100 backdrop-blur-md px-8 py-7 text-[15px] leading-loose markdown-container"
+                            : "bg-transparent border border-white/10 text-white/90 backdrop-blur-md px-8 py-7 text-[15px] leading-loose markdown-container"
+                      );
+                      const metaBarClass = cn(
+                        "absolute bottom-0 flex items-center gap-2 px-1 py-1 text-[12px] font-medium opacity-0 translate-y-1 transition-all duration-200 group-hover/message:translate-y-0 group-hover/message:opacity-100 group-focus-within/message:translate-y-0 group-focus-within/message:opacity-100",
+                        msg.role === 'user'
+                          ? "right-1 text-white/65"
+                          : "left-1 text-white/55"
+                      );
+
+                      return (
                       <motion.div
-                        key={msg.id || i}
+                        key={messageKey}
                         initial={{ opacity: 0, x: msg.role === 'user' ? 20 : -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         className={cn(
-                          "max-w-[85%] rounded-[1.5rem] shadow-lg",
-                        msg.role === 'user'
-                            ? "ml-auto bg-white text-[#080808] font-bold shadow-sm px-6 py-4 text-[14px]"
-                            : msg.metadata?.state === 'failed'
-                              ? "mr-auto bg-red-500/10 border border-red-500/30 text-red-100 backdrop-blur-md px-8 py-7 text-[15px] leading-loose markdown-container"
-                              : "mr-auto bg-transparent border border-white/10 text-white/90 backdrop-blur-md px-8 py-7 text-[15px] leading-loose markdown-container"
+                          "group/message relative max-w-[85%] pb-11",
+                          msg.role === 'user'
+                            ? "ml-auto"
+                            : "mr-auto"
                         )}
                       >
-                        {msg.metadata?.state === 'pending' ? (
-                          <div className="space-y-4">
-                            <ThinkingIndicator />
-                            {toolActivities.map((activity, idx) => (
-                               <div key={`${activity.run_id}-${activity.tool_name}-${idx}`} className="flex items-center gap-2 text-[12px] font-mono text-white/50 bg-white/5 px-4 py-2 rounded-xl">
-                                  {activity.phase === 'start' || activity.phase === 'running'
-                                      ? <RefreshCw size={12} className="animate-spin text-white/40 shrink-0" />
-                                      : activity.phase === 'error'
-                                          ? <X size={12} className="text-red-400 shrink-0" />
-                                          : <Check size={12} className="text-green-400 shrink-0" />
-                                  }
-                                  <span className="flex-1 truncate">
-                                    {
-                                        // @ts-ignore
-                                        (t(`tools.${activity.tool_name}`) !== `tools.${activity.tool_name}`) ? t(`tools.${activity.tool_name}`) : activity.tool_name
-                                     }
-                                     {activity.input && activity.input.url && <span className="ml-2 text-white/30 truncate font-normal">{activity.input.url}</span>}
-                                     {activity.input && activity.input.skill_name && <span className="ml-2 text-blue-400 font-bold truncate">[{activity.input.skill_name}]</span>}
-                                     {activity.input && activity.input.command && <span className="ml-2 text-orange-400 truncate font-normal">`{activity.input.command}`</span>}
-                                     {activity.input && activity.input.path && (
-                                         <span
-                                             className="ml-2 text-green-400 truncate font-normal"
-                                             title={String(activity.input.path)}
-                                         >
-                                             {String(activity.input.path)}
-                                         </span>
-                                     )}
-                                     {activity.input && activity.input.title && <span className="ml-2 text-white/40 italic truncate">"{activity.input.title}"</span>}
-                                  </span>
-                                  {activity.duration_ms !== undefined && <span className="text-white/20 shrink-0">{activity.duration_ms}ms</span>}
-                               </div>
-                            ))}
+                        <div className={bubbleShellClass}>
+                          {msg.metadata?.state === 'pending' ? (
+                            <div className="space-y-4">
+                              <ThinkingIndicator />
+                              {toolActivities.map((activity, idx) => (
+                                 <div key={`${activity.run_id}-${activity.tool_name}-${idx}`} className="flex items-center gap-2 text-[12px] font-mono text-white/50 bg-white/5 px-4 py-2 rounded-xl">
+                                    {activity.phase === 'start' || activity.phase === 'running'
+                                        ? <RefreshCw size={12} className="animate-spin text-white/40 shrink-0" />
+                                        : activity.phase === 'error'
+                                            ? <X size={12} className="text-red-400 shrink-0" />
+                                            : <Check size={12} className="text-green-400 shrink-0" />
+                                    }
+                                    <span className="flex-1 truncate">
+                                      {getToolActivityDisplayName(activity.tool_name, t)}
+                                       {activity.input && activity.input.url && <span className="ml-2 text-white/30 truncate font-normal">{activity.input.url}</span>}
+                                       {activity.input && activity.input.skill_name && <span className="ml-2 text-blue-400 font-bold truncate">[{activity.input.skill_name}]</span>}
+                                       {activity.input && activity.input.command && <span className="ml-2 text-orange-400 truncate font-normal">`{activity.input.command}`</span>}
+                                       {activity.input && activity.input.path && (
+                                           <span
+                                               className="ml-2 text-green-400 truncate font-normal"
+                                               title={String(activity.input.path)}
+                                           >
+                                               {String(activity.input.path)}
+                                           </span>
+                                       )}
+                                       {activity.input && activity.input.title && <span className="ml-2 text-white/40 italic truncate">"{activity.input.title}"</span>}
+                                    </span>
+                                    {activity.duration_ms !== undefined && <span className="text-white/20 shrink-0">{activity.duration_ms}ms</span>}
+                                 </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <Markdown content={msg.content} />
+                          )}
+                        </div>
+                        {(copyText || timestampLabel) ? (
+                          <div className={metaBarClass}>
+                            {copyText ? (
+                              <button
+                                type="button"
+                                onClick={() => handleCopyMessage(messageKey, copyText)}
+                                aria-label={isCopied ? t('common.copied') : t('common.copy')}
+                                title={isCopied ? t('common.copied') : t('common.copy')}
+                                className={cn(
+                                  "flex h-5 w-5 items-center justify-center transition-colors",
+                                  msg.role === 'user'
+                                    ? "text-white/58 hover:text-white/82"
+                                    : "text-white/48 hover:text-white"
+                                )}
+                              >
+                                {isCopied ? <Check size={14} strokeWidth={2.4} /> : <Copy size={14} strokeWidth={2.2} />}
+                              </button>
+                            ) : null}
+                            {timestampLabel ? (
+                              <span className="tabular-nums tracking-[0.01em]">{timestampLabel}</span>
+                            ) : null}
                           </div>
-                        ) : (
-                          <Markdown content={msg.content} />
-                        )}
+                        ) : null}
                       </motion.div>
-                    ))}
+                    )})}
                   </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -903,14 +1057,21 @@ export default function App() {
                         <div className="space-y-1.5">
                           <span className="text-sm font-bold tracking-tight text-white/70">{t('settings.active_model_label')}</span>
                           {!isModelReady && (
-                            <p className="max-w-2xl text-xs font-medium leading-5 text-white/48">{t('settings.inline_model_hint')}</p>
+                            <p className="max-w-2xl text-xs font-medium leading-5 text-white/48">{inlineModelHint}</p>
                           )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <div className="relative">
-                          {shouldWarnModelSelector && (
-                            <span className="pointer-events-none absolute left-3.5 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-amber-300 shadow-[0_0_0_4px_rgba(252,211,77,0.08)]" />
+                          {(shouldWarnModelSelector || shouldHighlightModelSelector) && (
+                            <span
+                              className={cn(
+                                "pointer-events-none absolute left-3.5 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full",
+                                shouldWarnModelSelector
+                                  ? "bg-amber-300 shadow-[0_0_0_4px_rgba(252,211,77,0.08)]"
+                                  : "bg-sky-300 shadow-[0_0_0_4px_rgba(125,211,252,0.08)]"
+                              )}
+                            />
                           )}
                           <select
                             value={selectedModelValue}
@@ -919,11 +1080,13 @@ export default function App() {
                               "min-w-[18rem] rounded-xl py-2.5 pr-4 text-xs font-bold outline-none transition-all cursor-pointer ring-1 appearance-none",
                               shouldWarnModelSelector
                                 ? "pl-8 border border-amber-300/55 bg-black/40 text-amber-50 ring-amber-300/20 shadow-[0_0_0_1px_rgba(252,211,77,0.12),0_10px_30px_rgba(245,158,11,0.08)] hover:border-amber-200/70 hover:text-white"
-                                : "pl-4 border border-white/10 bg-white/5 ring-white/5 hover:bg-white/10"
+                                : shouldHighlightModelSelector
+                                  ? "pl-8 border border-sky-200/35 bg-sky-300/[0.08] text-white ring-sky-300/15 shadow-[0_0_0_1px_rgba(125,211,252,0.12),0_10px_30px_rgba(56,189,248,0.08)] hover:border-sky-100/45 hover:bg-sky-300/[0.12]"
+                                  : "pl-4 border border-white/10 bg-white/5 ring-white/5 hover:bg-white/10"
                             )}
                           >
                             <option value="" disabled>
-                              {t('settings.no_models')}
+                              {modelSelectorPlaceholder}
                             </option>
                             {Object.entries(availableModels).map(([provider, models]) => (
                               <optgroup key={provider} label={providerLabels[provider] || provider.charAt(0).toUpperCase() + provider.slice(1)}>
@@ -1096,6 +1259,46 @@ function getModelReadinessDescription(t: (key: string) => string, issue?: ModelR
     case 'no_runnable_model':
     default:
       return t('settings.setup_no_runnable_model');
+  }
+}
+
+function getInlineModelHint(
+  t: (key: string) => string,
+  issue: ModelReadinessIssue | null | undefined,
+  availableModelCount: number
+) {
+  if (availableModelCount > 0) {
+    return t('settings.inline_select_model_hint');
+  }
+
+  switch (issue?.code) {
+    case 'missing_base_url':
+      return t('settings.inline_missing_base_url_hint');
+    case 'missing_api_key':
+    case 'no_runnable_model':
+    case 'active_model_invalid':
+    default:
+      return t('settings.inline_model_hint');
+  }
+}
+
+function getModelSelectorPlaceholder(
+  t: (key: string) => string,
+  issue: ModelReadinessIssue | null | undefined,
+  availableModelCount: number
+) {
+  if (availableModelCount > 0) {
+    return t('settings.select_model_placeholder');
+  }
+
+  switch (issue?.code) {
+    case 'missing_base_url':
+      return t('settings.missing_base_url_placeholder');
+    case 'missing_api_key':
+    case 'no_runnable_model':
+    case 'active_model_invalid':
+    default:
+      return t('settings.no_models');
   }
 }
 

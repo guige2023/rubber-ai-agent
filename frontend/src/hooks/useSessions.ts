@@ -6,6 +6,7 @@ export interface Message {
   id?: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  created_at?: string;
   metadata?: {
     state?: 'pending' | 'failed';
     error?: string;
@@ -122,16 +123,19 @@ export function useSessions({
 
   const execute = useCallback(async (instruction: string) => {
     if (!instruction.trim()) return;
+    const nowIso = new Date().toISOString();
+    const userMessageId = crypto.randomUUID();
     const pendingMessageId = crypto.randomUUID();
 
     setIsExecuting(true);
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: instruction },
+      { id: userMessageId, role: 'user', content: instruction, created_at: nowIso },
       {
         id: pendingMessageId,
         role: 'assistant',
         content: '',
+        created_at: nowIso,
         metadata: { state: 'pending' },
       },
     ]);

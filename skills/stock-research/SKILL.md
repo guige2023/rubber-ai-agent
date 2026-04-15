@@ -1,17 +1,18 @@
 ---
-name: stock-analyzer
+name: stock-research
 description: >
-  Use this for stock valuation, intrinsic value, fair value, fundamental analysis,
-  or investment research for a public company, equity, or ticker such as Alibaba,
-  BABA, 9988.HK, Tencent, or 0700.HK. Produces a data-backed report with 5-year
-  financial audit, margin of safety, and Wyckoff technical analysis.
+  Use this for stock research, stock valuation, fair value, intrinsic value,
+  DCF, margin of safety, fundamental analysis, equity research, company quality,
+  moat analysis, capital allocation, or questions about whether a stock is
+  undervalued, overvalued, or worth buying. Produces a data-backed research
+  report using 5-year financials, valuation math, and Wyckoff chart analysis.
 version: 0.1.0
 author: Ferryman
 created: 2026-04-12
-updated: 2026-04-14
+updated: 2026-04-15
 ---
 
-# Stock Analysis Research
+# Stock Research
 
 You are a Senior Financial Auditor and Wyckoff Technical Specialist. Your core objective is to perform a rigorous, data-driven analysis of a stock and produce a "Premium" investment research report that identifies high-quality compounders or deep-value opportunities.
 

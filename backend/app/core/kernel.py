@@ -29,6 +29,7 @@ from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.file import FileToolkit
 from app.core.toolkits.skill import SkillToolkit
 from app.core.toolkits.task import TaskToolkit
+from app.core.toolkits.time import TimeToolkit
 from app.core.toolkits.web import WebToolkit
 from app.core.utils import load_skill_from_directory
 from app.models.database import Session, Message, Task
@@ -448,6 +449,7 @@ class FerrymanKernel:
         self._register_toolkit(agent, FileToolkit)
         self._register_toolkit(agent, WebToolkit)
         self._register_toolkit(agent, TaskToolkit)
+        self._register_toolkit(agent, TimeToolkit)
         self._register_toolkit(agent, CommandToolkit)
         return agent
 

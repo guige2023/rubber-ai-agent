@@ -8,15 +8,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.messages import ModelResponse, ToolCallPart, TextPart, ToolReturnPart
+from pydantic_ai.messages import BinaryImage, ModelResponse, ToolCallPart, TextPart, ToolReturn, ToolReturnPart
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.usage import RunUsage
 
+from app.core.browser import BrowserActionError
 from app.core.config import Settings
 from app.core.kernel import FerrymanKernel, LLMConfigurationError
 from app.core.deps import AgentDeps
 from app.core.toolkits.skill import SkillToolkit
+from app.core.toolkits.web import WebToolkit
 from app.models.events import FerrymanEventEnvelope, EventNamespace, ToolPhase, ToolActivityPayload
 from app.models.schemas import Usage
 
@@ -59,6 +61,38 @@ version: 1.0.0
 # Mock SOP
 """
     skill_md.write_text(content, encoding="utf-8")
+
+
+def parse_tool_payload(raw: str) -> dict:
+    return json.loads(raw)
+
+
+def assert_success_tool_payload(raw: str, tool_name: str, expected_data):
+    payload = parse_tool_payload(raw)
+    assert payload["tool_name"] == tool_name
+    assert payload["status"] == "success"
+    assert payload["error"] is None
+    assert payload["data"] == expected_data
+    return payload
+
+
+def assert_error_tool_payload(
+    raw: str,
+    tool_name: str,
+    *,
+    error_type: str,
+    message: str,
+):
+    payload = parse_tool_payload(raw)
+    assert payload["tool_name"] == tool_name
+    assert payload["status"] == "error"
+    assert payload["data"] is None
+    assert payload["error"] == {
+        "type": error_type,
+        "message": message,
+        "retryable": False,
+    }
+    return payload
 
 
 def test_init_llm_model_uses_openai_provider_for_kimi(monkeypatch):
@@ -293,10 +327,17 @@ async def test_master_agent_can_recover_from_soft_failed_run_skill(monkeypatch):
                 )
             ])
 
-        payload = json.loads(tool_returns[-1].content)
-        assert payload["ok"] is False
-        assert payload["skill_name"] == "target_skill"
-        assert payload["error"] == "delegate exploded"
+        payload = parse_tool_payload(tool_returns[-1].content)
+        assert payload["tool_name"] == "run_skill"
+        assert payload["status"] == "error"
+        assert payload["error"] == {
+            "type": "tool_result_error",
+            "message": "delegate exploded",
+            "retryable": False,
+        }
+        assert payload["data"]["ok"] is False
+        assert payload["data"]["skill_name"] == "target_skill"
+        assert payload["data"]["error"] == "delegate exploded"
         return ModelResponse(parts=[
             TextPart(content="Delegated skill failed cleanly, switching strategy.")
         ])
@@ -446,7 +487,11 @@ async def test_skill_run_returns_soft_failure_payload_when_delegate_fails(monkey
 
     result = await SkillToolkit.run_skill(ctx, "target_skill", "Do the skill work")
 
-    assert result == '{"ok": false, "skill_name": "target_skill", "error": "delegate exploded"}'
+    assert result == {
+        "ok": False,
+        "skill_name": "target_skill",
+        "error": "delegate exploded",
+    }
 
 
 # --- test_agent_events.py ---
@@ -510,6 +555,8 @@ class DummyToolkit:
         async def dummy_tool(ctx, arg1: str):
             if arg1 == "fail":
                 raise ValueError("Intentional error")
+            if arg1 == "json-text":
+                return '{"alpha": 1}'
             return f"Processed {arg1}"
         return [dummy_tool]
 
@@ -534,6 +581,42 @@ class FileSummaryDummyToolkit:
 
         return [write_file]
 
+
+class SoftFailBrowserToolkit:
+    @staticmethod
+    def get_tools():
+        async def browser_navigate(ctx):
+            raise BrowserActionError("Failed to navigate: boom")
+
+        return [browser_navigate]
+
+
+class HardFailBrowserToolkit:
+    @staticmethod
+    def get_tools():
+        async def browser_screenshot(ctx):
+            raise BrowserActionError("Failed to take screenshot: boom")
+
+        return [browser_screenshot]
+
+
+class RetryDummyToolkit:
+    @staticmethod
+    def get_tools():
+        async def retry_tool(ctx):
+            raise ModelRetry("bad arguments")
+
+        return [retry_tool]
+
+
+class ImageDummyToolkit:
+    @staticmethod
+    def get_tools():
+        async def browser_screenshot(ctx):
+            return BinaryImage(b"img-bytes", media_type="image/png", identifier="shot-1")
+
+        return [browser_screenshot]
+
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_wrapper():
     kernel = FerrymanKernel(settings=create_test_settings())
@@ -555,7 +638,7 @@ async def test_kernel_register_toolkit_wrapper():
     ctx = MockContext(deps)
     
     res = await registered_tool(ctx, arg1="ok")
-    assert res == "Processed ok"
+    assert_success_tool_payload(res, "dummy_tool", "Processed ok")
     
     assert mock_emit.call_count == 2
     evt_start = mock_emit.call_args_list[0][0][0]
@@ -567,11 +650,19 @@ async def test_kernel_register_toolkit_wrapper():
     assert evt_end.payload.duration_ms is not None
     
     mock_emit.reset_mock()
-    with pytest.raises(ValueError):
-        await registered_tool(ctx, arg1="fail")
-        
+    error_res = await registered_tool(ctx, arg1="fail")
+    assert_error_tool_payload(
+        error_res,
+        "dummy_tool",
+        error_type="ValueError",
+        message="Intentional error",
+    )
+
     assert mock_emit.call_count == 2
     assert mock_emit.call_args_list[1][0][0].payload.phase == ToolPhase.ERROR
+
+    json_text_res = await registered_tool(ctx, arg1="json-text")
+    assert_success_tool_payload(json_text_res, "dummy_tool", '{"alpha": 1}')
 
 
 @pytest.mark.asyncio
@@ -593,8 +684,8 @@ async def test_kernel_register_toolkit_preserves_each_tool_binding():
 
     ctx = MockContext()
 
-    assert await first_registered(ctx) == "first"
-    assert await second_registered(ctx) == "second"
+    assert_success_tool_payload(await first_registered(ctx), "first_tool", "first")
+    assert_success_tool_payload(await second_registered(ctx), "second_tool", "second")
     assert first_registered.__name__ == "first_tool"
     assert second_registered.__name__ == "second_tool"
 
@@ -621,9 +712,192 @@ async def test_kernel_register_toolkit_preserves_file_path_when_input_is_large()
 
     long_content = "A" * 5000
     res = await registered_tool(ctx, "reports/output.md", long_content)
-
-    assert res == "Wrote reports/output.md (5000)"
+    assert_success_tool_payload(res, "write_file", "Wrote reports/output.md (5000)")
     evt_start = mock_emit.call_args_list[0][0][0]
     assert evt_start.payload.phase == ToolPhase.START
     assert evt_start.payload.input["path"].endswith("/workspaces/sess/reports/output.md")
     assert evt_start.payload.input["content"] == {"_summary": "omitted", "length": 5000}
+
+
+@pytest.mark.asyncio
+async def test_kernel_register_toolkit_retries_browser_action_error_before_last_attempt():
+    kernel = FerrymanKernel(settings=create_test_settings())
+    agent = Agent('test')
+
+    import unittest.mock
+    agent.tool = unittest.mock.MagicMock()
+
+    kernel._register_toolkit(agent, SoftFailBrowserToolkit)
+    registered_tool = agent.tool.call_args[0][0]
+
+    mock_emit = AsyncMock()
+    deps = AgentDeps(kernel=kernel, session_id="sess", emit_event_cb=mock_emit)
+
+    class MockContext:
+        def __init__(self, d):
+            self.deps = d
+            self.last_attempt = False
+
+    ctx = MockContext(deps)
+
+    with pytest.raises(ModelRetry, match="Failed to navigate: boom"):
+        await registered_tool(ctx)
+
+    assert mock_emit.call_args_list[1][0][0].payload.phase == ToolPhase.ERROR
+
+
+@pytest.mark.asyncio
+async def test_kernel_register_toolkit_soft_fails_browser_action_error_on_last_attempt():
+    kernel = FerrymanKernel(settings=create_test_settings())
+    agent = Agent('test')
+
+    import unittest.mock
+    agent.tool = unittest.mock.MagicMock()
+
+    kernel._register_toolkit(agent, SoftFailBrowserToolkit)
+    registered_tool = agent.tool.call_args[0][0]
+
+    mock_emit = AsyncMock()
+    deps = AgentDeps(kernel=kernel, session_id="sess", emit_event_cb=mock_emit)
+
+    class MockContext:
+        def __init__(self, d):
+            self.deps = d
+            self.last_attempt = True
+
+    ctx = MockContext(deps)
+
+    result = await registered_tool(ctx)
+
+    assert_error_tool_payload(
+        result,
+        "browser_navigate",
+        error_type="browser_action_error",
+        message="Failed to navigate: boom",
+    )
+    assert mock_emit.call_args_list[1][0][0].payload.phase == ToolPhase.ERROR
+
+
+@pytest.mark.asyncio
+async def test_kernel_register_toolkit_soft_fails_browser_screenshot_on_last_attempt():
+    kernel = FerrymanKernel(settings=create_test_settings())
+    agent = Agent('test')
+
+    import unittest.mock
+    agent.tool = unittest.mock.MagicMock()
+
+    kernel._register_toolkit(agent, HardFailBrowserToolkit)
+    registered_tool = agent.tool.call_args[0][0]
+
+    mock_emit = AsyncMock()
+    deps = AgentDeps(kernel=kernel, session_id="sess", emit_event_cb=mock_emit)
+
+    class MockContext:
+        def __init__(self, d):
+            self.deps = d
+            self.last_attempt = True
+
+    ctx = MockContext(deps)
+
+    result = await registered_tool(ctx)
+    assert_error_tool_payload(
+        result,
+        "browser_screenshot",
+        error_type="browser_action_error",
+        message="Failed to take screenshot: boom",
+    )
+
+
+@pytest.mark.asyncio
+async def test_kernel_register_toolkit_soft_fails_when_browser_boot_fails(monkeypatch):
+    kernel = FerrymanKernel(settings=create_test_settings())
+    agent = Agent('test')
+
+    import unittest.mock
+    agent.tool = unittest.mock.MagicMock()
+
+    kernel._register_toolkit(agent, WebToolkit)
+    registered_tool = agent.tool.call_args_list[0][0][0]
+
+    async def mock_get_browser(session_id, headless=None):
+        raise RuntimeError("Chrome runtime is unavailable.")
+
+    monkeypatch.setattr(kernel, "get_browser", mock_get_browser)
+
+    mock_emit = AsyncMock()
+    deps = AgentDeps(kernel=kernel, session_id="sess", emit_event_cb=mock_emit)
+
+    class MockContext:
+        def __init__(self, d):
+            self.deps = d
+            self.last_attempt = True
+
+    ctx = MockContext(deps)
+
+    result = await registered_tool(ctx, "https://example.com")
+
+    assert_error_tool_payload(
+        result,
+        "browser_navigate",
+        error_type="browser_action_error",
+        message="Chrome runtime is unavailable.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_kernel_register_toolkit_soft_fails_model_retry_on_last_attempt():
+    kernel = FerrymanKernel(settings=create_test_settings())
+    agent = Agent('test')
+
+    import unittest.mock
+    agent.tool = unittest.mock.MagicMock()
+
+    kernel._register_toolkit(agent, RetryDummyToolkit)
+    registered_tool = agent.tool.call_args[0][0]
+
+    mock_emit = AsyncMock()
+    deps = AgentDeps(kernel=kernel, session_id="sess", emit_event_cb=mock_emit)
+
+    class MockContext:
+        def __init__(self, d):
+            self.deps = d
+            self.last_attempt = True
+
+    result = await registered_tool(MockContext(deps))
+    assert_error_tool_payload(
+        result,
+        "retry_tool",
+        error_type="model_retry_exhausted",
+        message="bad arguments",
+    )
+
+
+@pytest.mark.asyncio
+async def test_kernel_register_toolkit_wraps_binary_image_with_json_payload():
+    kernel = FerrymanKernel(settings=create_test_settings())
+    agent = Agent('test')
+
+    import unittest.mock
+    agent.tool = unittest.mock.MagicMock()
+
+    kernel._register_toolkit(agent, ImageDummyToolkit)
+    registered_tool = agent.tool.call_args[0][0]
+
+    deps = AgentDeps(kernel=kernel, session_id="sess", emit_event_cb=AsyncMock())
+
+    class MockContext:
+        def __init__(self, d):
+            self.deps = d
+
+    result = await registered_tool(MockContext(deps))
+
+    assert isinstance(result, ToolReturn)
+    payload = parse_tool_payload(result.return_value)
+    assert payload["tool_name"] == "browser_screenshot"
+    assert payload["status"] == "success"
+    assert payload["data"] == {
+        "kind": "binary_image",
+        "media_type": "image/png",
+        "identifier": "shot-1",
+    }
+    assert result.content and isinstance(result.content[0], BinaryImage)

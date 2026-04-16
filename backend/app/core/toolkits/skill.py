@@ -1,4 +1,3 @@
-import json
 import logging
 import shutil
 from pathlib import Path
@@ -25,7 +24,7 @@ class SkillToolkit:
         ctx: RunContext[AgentDeps],
         skill_name: str,
         instruction: str,
-    ) -> str:
+    ) -> str | dict:
         """Run an installed skill with the given instruction.
 
         `skill_name` must exist in the registered skill list. Returns the
@@ -103,20 +102,17 @@ class SkillToolkit:
                     "error": str(e),
                 }
             })
-            return json.dumps(
-                {
-                    "ok": False,
-                    "skill_name": skill_name,
-                    "error": str(e),
-                },
-                ensure_ascii=False,
-            )
+            return {
+                "ok": False,
+                "skill_name": skill_name,
+                "error": str(e),
+            }
 
     @staticmethod
     async def publish_skill(
         ctx: RunContext[AgentDeps],
         draft_path: str,
-    ) -> str:
+    ) -> dict:
         """Publish a draft skill from the current session workspace.
 
         The draft directory must stay inside the workspace and contain a valid
@@ -153,13 +149,10 @@ class SkillToolkit:
         shutil.copytree(str(source_path), str(destination_path))
         kernel.scan_skills()
 
-        return json.dumps(
-            {
-                "ok": True,
-                "skill_name": skill.name,
-                "source_path": str(source_path),
-                "destination_path": str(destination_path),
-                "registered": skill.name in kernel.skills,
-            },
-            ensure_ascii=False,
-        )
+        return {
+            "ok": True,
+            "skill_name": skill.name,
+            "source_path": str(source_path),
+            "destination_path": str(destination_path),
+            "registered": skill.name in kernel.skills,
+        }

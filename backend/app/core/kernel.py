@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from asgi_correlation_id import correlation_id
 from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -21,6 +22,7 @@ from pydantic_ai.usage import UsageLimits
 from sqlmodel import select
 
 from app.core.config import Settings
+from app.core.browser import BrowserActionError
 from app.core.db import get_session, init_db
 # Refactored Imports
 from app.core.deps import AgentDeps
@@ -31,6 +33,7 @@ from app.core.toolkits.skill import SkillToolkit
 from app.core.toolkits.task import TaskToolkit
 from app.core.toolkits.time import TimeToolkit
 from app.core.toolkits.web import WebToolkit
+from app.core.tool_results import build_tool_error_result, build_tool_success_result
 from app.core.utils import load_skill_from_directory
 from app.models.database import Session, Message, Task
 from app.models.schemas import SkillModel, TaskStatus, Usage
@@ -550,7 +553,8 @@ class FerrymanKernel:
                         )
 
                         try:
-                            result = await bound_tool_func(ctx, *args, **kwargs)
+                            raw_result = await bound_tool_func(ctx, *args, **kwargs)
+                            result = build_tool_success_result(tool_name, raw_result)
                             duration = int((time.time() - start_time) * 1000)
                             await ctx.deps.emit_tool_event(
                                 run_id=run_id,
@@ -559,6 +563,52 @@ class FerrymanKernel:
                                 duration_ms=duration
                             )
                             return result
+                        except BrowserActionError as e:
+                            duration = int((time.time() - start_time) * 1000)
+                            await ctx.deps.emit_tool_event(
+                                run_id=run_id,
+                                tool_name=tool_name,
+                                phase="error",
+                                duration_ms=duration
+                            )
+                            if getattr(ctx, "last_attempt", False):
+                                logger.warning(
+                                    "Soft-failing browser tool %s on last attempt for session %s: %s",
+                                    tool_name,
+                                    ctx.deps.session_id,
+                                    e,
+                                )
+                                return build_tool_error_result(
+                                    tool_name,
+                                    message=str(e),
+                                    error_type="browser_action_error",
+                                    retryable=False,
+                                    summary=f"{tool_name} failed after exhausting retries.",
+                                )
+                            raise ModelRetry(str(e)) from e
+                        except ModelRetry as e:
+                            duration = int((time.time() - start_time) * 1000)
+                            await ctx.deps.emit_tool_event(
+                                run_id=run_id,
+                                tool_name=tool_name,
+                                phase="error",
+                                duration_ms=duration
+                            )
+                            if getattr(ctx, "last_attempt", False):
+                                logger.warning(
+                                    "Soft-failing tool %s after retry exhaustion for session %s: %s",
+                                    tool_name,
+                                    ctx.deps.session_id,
+                                    e,
+                                )
+                                return build_tool_error_result(
+                                    tool_name,
+                                    message=str(e),
+                                    error_type="model_retry_exhausted",
+                                    retryable=False,
+                                    summary=f"{tool_name} failed after exhausting retries.",
+                                )
+                            raise
                         except Exception as e:
                             duration = int((time.time() - start_time) * 1000)
                             await ctx.deps.emit_tool_event(
@@ -567,7 +617,18 @@ class FerrymanKernel:
                                 phase="error",
                                 duration_ms=duration
                             )
-                            raise e
+                            logger.exception(
+                                "Tool %s failed unexpectedly in session %s",
+                                tool_name,
+                                ctx.deps.session_id,
+                            )
+                            return build_tool_error_result(
+                                tool_name,
+                                message=str(e),
+                                error_type=type(e).__name__,
+                                retryable=False,
+                                summary=f"{tool_name} failed due to an unexpected error.",
+                            )
 
                     return wrapped_tool
 

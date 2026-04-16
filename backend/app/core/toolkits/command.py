@@ -71,12 +71,12 @@ class CommandToolkit:
         script_name: str,
         args: Annotated[List[str] | None, BeforeValidator(_coerce_args)] = None,
         timeout_ms: int = 10000,
-    ) -> str:
+    ) -> dict:
         """Run a script from the current skill's `scripts/` directory.
 
         The script runs with the current session workspace as its working
-        directory. Returns a JSON string with command, exit code, timeout
-        status, stdout, and stderr.
+        directory. Returns a structured result with command, exit code,
+        timeout status, stdout, and stderr.
         """
         resolved_args = args or []
         script_path = CommandToolkit._resolve_script_path(ctx, script_name)
@@ -111,4 +111,4 @@ class CommandToolkit:
             "stdout": stdout.decode("utf-8", errors="replace"),
             "stderr": stderr.decode("utf-8", errors="replace"),
         }
-        return json.dumps(result, ensure_ascii=False)
+        return result

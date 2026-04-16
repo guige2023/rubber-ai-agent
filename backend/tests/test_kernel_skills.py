@@ -198,8 +198,7 @@ async def test_publish_skill_copies_draft_and_registers_it():
 
     ctx = SimpleNamespace(deps=AgentDeps(kernel=kernel, session_id=session_id))
 
-    result = await SkillToolkit.publish_skill(ctx, "draft-skill")
-    payload = json.loads(result)
+    payload = await SkillToolkit.publish_skill(ctx, "draft-skill")
 
     published_dir = TEST_USER_SKILLS / "draft-skill"
     assert payload["ok"] is True
@@ -233,12 +232,10 @@ async def test_skill_creator_draft_publish_lifecycle_stays_in_allowed_paths():
     workspace = kernel.get_session_workspace(session_id)
     creator_ctx = SimpleNamespace(deps=AgentDeps(kernel=kernel, session_id=session_id, skill_name="skill-creator"))
 
-    init_result = json.loads(
-        await CommandToolkit.run_skill_script(
-            creator_ctx,
-            "init_skill.py",
-            ["demo-skill", "--description", "Demo skill", "--with-scripts"],
-        )
+    init_result = await CommandToolkit.run_skill_script(
+        creator_ctx,
+        "init_skill.py",
+        ["demo-skill", "--description", "Demo skill", "--with-scripts"],
     )
     draft_dir = workspace / "demo-skill"
 
@@ -246,12 +243,12 @@ async def test_skill_creator_draft_publish_lifecycle_stays_in_allowed_paths():
     assert draft_dir.exists()
     assert "SKILL.md" in await FileToolkit.list_files(creator_ctx, "demo-skill")
 
-    validate_result = json.loads(
-        await CommandToolkit.run_skill_script(creator_ctx, "quick_validate.py", ["./demo-skill"])
+    validate_result = await CommandToolkit.run_skill_script(
+        creator_ctx, "quick_validate.py", ["./demo-skill"]
     )
     assert validate_result["ok"] is True
 
-    publish_result = json.loads(await SkillToolkit.publish_skill(creator_ctx, "demo-skill"))
+    publish_result = await SkillToolkit.publish_skill(creator_ctx, "demo-skill")
     published_dir = TEST_USER_SKILLS / "demo-skill"
 
     assert publish_result["ok"] is True

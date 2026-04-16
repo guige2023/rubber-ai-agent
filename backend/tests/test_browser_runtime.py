@@ -1,10 +1,14 @@
 from pathlib import Path
 
 import pytest
-from pydantic_ai.exceptions import ModelRetry
 from playwright.async_api import Error as PlaywrightError
 
-from app.core.browser import BrowserController, CHROME_REQUIRED_MESSAGE, wrap_browser_content
+from app.core.browser import (
+    BrowserActionError,
+    BrowserController,
+    CHROME_REQUIRED_MESSAGE,
+    wrap_browser_content,
+)
 
 
 def test_browser_launch_plans_do_not_fallback_to_bundled_chromium(monkeypatch):
@@ -38,7 +42,7 @@ async def test_browser_enter_shows_install_guidance_when_chrome_missing(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_browser_click_raises_model_retry_when_interaction_fails():
+async def test_browser_click_raises_browser_action_error_when_interaction_fails():
     class FakePage:
         async def wait_for_selector(self, selector, state="visible", timeout=10000):
             return None
@@ -49,7 +53,7 @@ async def test_browser_click_raises_model_retry_when_interaction_fails():
     controller = BrowserController()
     controller._page = FakePage()
 
-    with pytest.raises(ModelRetry, match="Failed to click 'button.submit': boom"):
+    with pytest.raises(BrowserActionError, match="Failed to click 'button.submit': boom"):
         await controller.click("button.submit")
 
 

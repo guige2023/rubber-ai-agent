@@ -1,10 +1,18 @@
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.tools import RunContext
+from app.core.browser import BrowserActionError
 from app.core.deps import AgentDeps
 from typing import Optional
 
 class WebToolkit:
     """Browser tools for page navigation, inspection, interaction, and capture."""
+
+    @staticmethod
+    async def _get_browser(ctx: RunContext[AgentDeps], headless: Optional[bool] = None):
+        try:
+            return await ctx.deps.kernel.get_browser(ctx.deps.session_id, headless=headless)
+        except RuntimeError as e:
+            raise BrowserActionError(str(e)) from e
 
     @staticmethod
     def get_tools():
@@ -26,7 +34,7 @@ class WebToolkit:
 
         Set `headless=False` when the browser should stay visible to the user.
         """
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id, headless=headless)
+        browser = await WebToolkit._get_browser(ctx, headless=headless)
         return await browser.navigate(url)
 
     @staticmethod
@@ -35,7 +43,7 @@ class WebToolkit:
 
         Best for article or content reading, not precise interaction targeting.
         """
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         return await browser.get_distilled_dom()
 
     @staticmethod
@@ -45,7 +53,7 @@ class WebToolkit:
         Accepts a selector. IDs from `browser_aria_snapshot` are recommended
         for stability.
         """
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         return await browser.click(selector)
 
     @staticmethod
@@ -55,13 +63,13 @@ class WebToolkit:
         Accepts a selector. IDs from `browser_aria_snapshot` are recommended
         for stability.
         """
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         return await browser.type(selector, text)
 
     @staticmethod
     async def browser_aria_snapshot(ctx: RunContext[AgentDeps]) -> str:
         """Return an accessibility snapshot with stable IDs for later interactions."""
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         return await browser.get_aria_snapshot()
 
     @staticmethod
@@ -71,7 +79,7 @@ class WebToolkit:
         selector: Optional[str] = None,
     ) -> str:
         """Scroll the page up or down, or scroll an element into view."""
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         return await browser.scroll(direction=direction, selector=selector)
 
     @staticmethod
@@ -81,13 +89,13 @@ class WebToolkit:
         selector: Optional[str] = None,
     ) -> str:
         """Wait for time to pass or for a selector to appear."""
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         return await browser.wait(timeout_ms, selector=selector)
 
     @staticmethod
     async def browser_console(ctx: RunContext[AgentDeps], clear: bool = False) -> str:
         """Return recent browser console messages and page errors."""
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         return await browser.get_console_messages(clear=clear)
 
     @staticmethod
@@ -97,6 +105,6 @@ class WebToolkit:
         Saves the image under the session workspace and returns it as
         `BinaryImage`.
         """
-        browser = await ctx.deps.kernel.get_browser(ctx.deps.session_id)
+        browser = await WebToolkit._get_browser(ctx)
         screenshot_dir = ctx.deps.kernel.get_session_workspace(ctx.deps.session_id) / "screenshots"
         return await browser.screenshot(selector, output_dir=screenshot_dir)

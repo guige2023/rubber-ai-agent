@@ -40,6 +40,10 @@ BROWSER_UNTRUSTED_NOTICE = (
 )
 
 
+class BrowserActionError(RuntimeError):
+    """Raised when a browser action fails due to page/runtime conditions."""
+
+
 def wrap_browser_content(text: str) -> str:
     """Mark browser-returned content as untrusted webpage data."""
     stripped = text.strip() if text else ""
@@ -460,7 +464,7 @@ class BrowserController:
             )
         except PlaywrightError as e:
             logger.exception(f"Failed to navigate to {url}")
-            raise ModelRetry(f"Failed to navigate: {str(e)}") from e
+            raise BrowserActionError(f"Failed to navigate: {str(e)}") from e
 
     async def get_distilled_dom(self) -> str:
         """Distills the DOM to return pure text/markdown content, avoiding token waste."""
@@ -470,7 +474,7 @@ class BrowserController:
             return wrap_browser_content(await self._get_distilled_dom_raw())
         except (PlaywrightError, TypeError, ValueError) as e:
             logger.exception("Failed to distill DOM")
-            raise ModelRetry(f"Failed to distill DOM: {str(e)}") from e
+            raise BrowserActionError(f"Failed to distill DOM: {str(e)}") from e
 
     async def get_aria_snapshot(self) -> str:
         """
@@ -482,7 +486,7 @@ class BrowserController:
             return wrap_browser_content(await self._get_aria_snapshot_raw())
         except PlaywrightError as e:
             logger.exception("Failed to generate ARIA snapshot")
-            raise ModelRetry(f"Failed to generate ARIA snapshot: {str(e)}") from e
+            raise BrowserActionError(f"Failed to generate ARIA snapshot: {str(e)}") from e
 
     async def click_id(self, element_id: str) -> str:
         """Clicks an element by its semantic ID from the last snapshot."""
@@ -521,7 +525,7 @@ class BrowserController:
                 return f"Successfully clicked '{selector}' (forced)"
         except PlaywrightError as e:
             logger.exception(f"Failed to click '{selector}'")
-            raise ModelRetry(f"Failed to click '{selector}': {str(e)}") from e
+            raise BrowserActionError(f"Failed to click '{selector}': {str(e)}") from e
 
     async def hover(self, selector: str) -> str:
         """Hovers over an element defined by the selector."""
@@ -553,7 +557,7 @@ class BrowserController:
             return f"Successfully scrolled {direction}"
         except PlaywrightError as e:
             logger.exception(f"Failed to scroll {selector if selector else 'page'}")
-            raise ModelRetry(f"Failed to scroll: {str(e)}") from e
+            raise BrowserActionError(f"Failed to scroll: {str(e)}") from e
 
     async def wait(self, timeout_ms: int = 2000, selector: str = None) -> str:
         """Waits for a specified time or for a selector to become visible."""
@@ -569,7 +573,7 @@ class BrowserController:
                 return f"Waited for {timeout_ms}ms."
         except PlaywrightError as e:
             logger.exception(f"Wait failed for {selector if selector else 'timeout'}")
-            raise ModelRetry(f"Wait failed: {str(e)}") from e
+            raise BrowserActionError(f"Wait failed: {str(e)}") from e
 
     async def get_console_messages(self, clear: bool = False) -> str:
         """Return captured browser console, page, and request-failure messages."""
@@ -610,7 +614,7 @@ class BrowserController:
             return BinaryImage.from_path(str(p))
         except (OSError, PlaywrightError) as e:
             logger.exception(f"Failed to take screenshot of {selector if selector else 'page'}")
-            raise ModelRetry(f"Failed to take screenshot: {str(e)}") from e
+            raise BrowserActionError(f"Failed to take screenshot: {str(e)}") from e
 
     async def type(self, selector: str, text: str) -> str:
         """Types text into an input field defined by the selector."""
@@ -625,4 +629,4 @@ class BrowserController:
             return f"Successfully typed '{text}' into '{selector}'"
         except PlaywrightError as e:
             logger.exception(f"Failed to type in '{selector}'")
-            raise ModelRetry(f"Failed to type in '{selector}': {str(e)}") from e
+            raise BrowserActionError(f"Failed to type in '{selector}': {str(e)}") from e

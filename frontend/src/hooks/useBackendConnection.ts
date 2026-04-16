@@ -16,6 +16,8 @@ export interface Usage {
 
 export interface ToolActivityPayload {
   run_id: string;
+  event_id?: string;
+  seq?: number;
   tool_name: string;
   phase: 'start' | 'running' | 'complete' | 'error';
   input?: Record<string, any>;
@@ -83,6 +85,13 @@ export function useBackendConnection(url: string | null) {
           const evt = data.params as FerrymanEvent;
           setLastEvent(evt);
           if (evt.namespace === "agent" && evt.event === "tool_activity") {
+            console.debug('[ferryman][tool_activity]', {
+              runId: evt.payload.run_id,
+              eventId: evt.payload.event_id,
+              seq: evt.payload.seq,
+              toolName: evt.payload.tool_name,
+              phase: evt.payload.phase,
+            });
             setToolActivities((prev) => {
                // Update phase manually for the same tool + run? 
                // Wait, phase complete/error usually follows a start. Let's just append sequentially to simulate a streaming log.
@@ -148,6 +157,10 @@ export function useBackendConnection(url: string | null) {
     return call('execute', { instruction, session_id: sessionId });
   }, [call]);
 
+  const cancelRun = useCallback((runId: string, sessionId?: string) => {
+    return call('cancel_run', sessionId ? { run_id: runId, session_id: sessionId } : { run_id: runId });
+  }, [call]);
+
   const refreshTasks = useCallback(async () => {
     const result: any = await call('list_tasks');
     setTasks(Array.isArray(result) ? result : (result?.tasks || []));
@@ -158,6 +171,7 @@ export function useBackendConnection(url: string | null) {
   return {
     call,
     execute,
+    cancelRun,
     isConnected,
     tasks,
     toolActivities,

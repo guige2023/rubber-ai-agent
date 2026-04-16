@@ -2,17 +2,33 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FerrymanEvent, RefreshPayload, Usage } from './useBackendConnection';
 import { translateStatic } from './useI18n';
 
+export type MessageRunStatus = 'pending' | 'success' | 'failed' | 'canceled';
+
+export interface MessageRunMetadata {
+  id?: string;
+  status?: MessageRunStatus;
+  scope?: string;
+  error?: string;
+  [key: string]: any;
+}
+
+export interface MessageMetadata {
+  run?: MessageRunMetadata;
+  usage?: Usage;
+  model?: {
+    name?: string | null;
+    provider?: string | null;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
 export interface Message {
   id?: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   created_at?: string;
-  metadata?: {
-    state?: 'pending' | 'failed';
-    error?: string;
-    usage?: Usage;
-    [key: string]: any;
-  };
+  metadata?: MessageMetadata;
 }
 
 export interface Session {
@@ -26,13 +42,30 @@ export interface Session {
 interface UseSessionsArgs {
   call: (method: string, params?: any) => Promise<any>;
   executeInstruction: (instruction: string, sessionId: string) => Promise<any>;
+  cancelRun: (runId: string, sessionId?: string) => Promise<any>;
   clearToolActivities: () => void;
   lastEvent: FerrymanEvent | null;
+}
+
+type ActiveRun = {
+  runId: string;
+  sessionId: string;
+  userMessageId: string;
+  pendingMessageId: string;
+};
+
+export type ExecuteStatus = 'started' | 'busy' | 'error';
+
+export interface ExecuteResult {
+  status: ExecuteStatus;
+  message?: string;
+  runId?: string;
 }
 
 export function useSessions({
   call,
   executeInstruction,
+  cancelRun,
   clearToolActivities,
   lastEvent,
 }: UseSessionsArgs) {
@@ -40,7 +73,8 @@ export function useSessions({
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => localStorage.getItem('last_session_id') || 'default');
   const [currentUsage, setCurrentUsage] = useState<Usage>({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
-  const [isExecuting, setIsExecuting] = useState(false);
+  const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (currentSessionId) {
@@ -93,6 +127,94 @@ export function useSessions({
     });
   }, [lastEvent, refreshSessions]);
 
+  useEffect(() => {
+    if (!lastEvent || lastEvent.namespace !== 'agent' || lastEvent.event !== 'chat_final' || !activeRun) {
+      return;
+    }
+
+    const payload = lastEvent.payload as any;
+    if (payload?.run_id !== activeRun.runId || lastEvent.session_id !== activeRun.sessionId) {
+      return;
+    }
+
+    const usage = payload?.usage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+    const responseMessages = Array.isArray(payload?.messages) ? payload.messages : [];
+    const latestAssistantMessage = [...responseMessages].reverse().find((message: any) => message.role === 'assistant');
+    const latestAssistantResponse = latestAssistantMessage?.content || '';
+    const runMetadata = latestAssistantMessage?.metadata?.run || {};
+    const runStatus: MessageRunStatus = runMetadata.status || (latestAssistantResponse.startsWith('Run failed:') ? 'failed' : 'success');
+    const nextRunMetadata: MessageRunMetadata = {
+      id: runMetadata.id || activeRun.runId,
+      status: runStatus,
+      scope: runMetadata.scope || 'master',
+      ...(runMetadata.error ? { error: runMetadata.error } : {}),
+    };
+    const isVisibleRunSession = currentSessionId === activeRun.sessionId;
+
+    if (isVisibleRunSession) {
+      setMessages((prev) => {
+        if (runStatus === 'canceled') {
+          return prev
+            .filter((message) => message.id !== activeRun.pendingMessageId)
+            .map((message) => (
+              message.id === activeRun.userMessageId
+                ? {
+                    ...message,
+                    metadata: {
+                      ...(message.metadata || {}),
+                      run: nextRunMetadata,
+                    },
+                  }
+                : message
+            ));
+        }
+
+        const nextAssistantMetadata: MessageMetadata = {
+          usage,
+          run: nextRunMetadata,
+        };
+
+        if (latestAssistantMessage?.metadata?.model) {
+          nextAssistantMetadata.model = latestAssistantMessage.metadata.model;
+        }
+
+        return prev.map((message) => {
+          if (message.id === activeRun.userMessageId) {
+            return {
+              ...message,
+              metadata: {
+                ...(message.metadata || {}),
+                run: nextRunMetadata,
+              },
+            };
+          }
+
+          if (message.id === activeRun.pendingMessageId) {
+            return {
+              ...message,
+              content: latestAssistantResponse,
+              metadata: nextAssistantMetadata,
+            };
+          }
+
+          return message;
+        });
+      });
+
+      setCurrentUsage((prev) => ({
+        input_tokens: prev.input_tokens + (usage.input_tokens || 0),
+        output_tokens: prev.output_tokens + (usage.output_tokens || 0),
+        total_tokens: prev.total_tokens + (usage.total_tokens || 0),
+      }));
+    }
+
+    setActiveRun(null);
+    clearToolActivities();
+    refreshSessions().catch((error) => {
+      console.error('Failed to refresh sessions after chat final event:', error);
+    });
+  }, [activeRun, clearToolActivities, currentSessionId, lastEvent, refreshSessions]);
+
   const createNewSession = useCallback(async () => {
     const newId = crypto.randomUUID();
     setCurrentSessionId(newId);
@@ -121,78 +243,81 @@ export function useSessions({
     }
   }, [call, currentSessionId, refreshSessions, switchSession]);
 
-  const execute = useCallback(async (instruction: string) => {
-    if (!instruction.trim()) return;
-    const nowIso = new Date().toISOString();
-    const userMessageId = crypto.randomUUID();
-    const pendingMessageId = crypto.randomUUID();
+  const execute = useCallback(async (instruction: string): Promise<ExecuteResult> => {
+    const trimmedInstruction = instruction.trim();
+    if (!trimmedInstruction) {
+      return { status: 'error', message: translateStatic('chat.run_failed') };
+    }
+    if (activeRun || isSubmitting) {
+      return { status: 'busy', message: translateStatic('chat.session_busy') };
+    }
 
-    setIsExecuting(true);
-    setMessages((prev) => [
-      ...prev,
-      { id: userMessageId, role: 'user', content: instruction, created_at: nowIso },
-      {
-        id: pendingMessageId,
-        role: 'assistant',
-        content: '',
-        created_at: nowIso,
-        metadata: { state: 'pending' },
-      },
-    ]);
+    const targetSessionId = currentSessionId;
+    setIsSubmitting(true);
 
     try {
-      clearToolActivities();
-      const result = await executeInstruction(instruction, currentSessionId);
-      
-      // result is now FerrymanEventEnvelope format
-      const payload = result?.payload;
-      if (!payload) {
-        throw new Error(translateStatic('chat.run_failed'));
+      const result = await executeInstruction(trimmedInstruction, targetSessionId);
+      const status = result?.status;
+      const runId = result?.run_id;
+
+      if (status === 'busy') {
+        return {
+          status: 'busy',
+          message: result?.message || translateStatic('chat.session_busy'),
+          runId,
+        };
       }
 
-      const usage = payload.usage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-      const responseMessages = payload.messages || [];
-      const latestAssistantMessage = responseMessages.reverse().find((m: any) => m.role === 'assistant');
-      const latestAssistantResponse = latestAssistantMessage?.content || '';
-      const runMetadata = latestAssistantMessage?.metadata?.run || {};
-      const isFailed = runMetadata.status === 'failed' || latestAssistantResponse.startsWith('Run failed:');
+      if (status !== 'started' || !runId) {
+        throw new Error(result?.message || translateStatic('chat.run_failed'));
+      }
 
-      setMessages((prev) => prev.map((message) => (
-        message.id === pendingMessageId
-          ? {
-              ...message,
-              content: latestAssistantResponse,
-              metadata: {
-                usage,
-                state: isFailed ? 'failed' : undefined,
-                error: runMetadata.error,
-              },
-            }
-          : message
-      )));
+      const nowIso = new Date().toISOString();
+      const userMessageId = crypto.randomUUID();
+      const pendingMessageId = crypto.randomUUID();
 
-      setCurrentUsage((prev) => ({
-        input_tokens: prev.input_tokens + (usage.input_tokens || 0),
-        output_tokens: prev.output_tokens + (usage.output_tokens || 0),
-        total_tokens: prev.total_tokens + (usage.total_tokens || 0),
-      }));
-
-      await refreshSessions();
+      clearToolActivities();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: userMessageId,
+          role: 'user',
+          content: trimmedInstruction,
+          created_at: nowIso,
+          metadata: {
+            run: {
+              id: runId,
+              status: 'pending',
+              scope: 'master',
+            },
+          },
+        },
+        {
+          id: pendingMessageId,
+          role: 'assistant',
+          content: '',
+          created_at: nowIso,
+          metadata: { run: { id: runId, status: 'pending', scope: 'master' } },
+        },
+      ]);
+      setActiveRun({ runId, sessionId: targetSessionId, userMessageId, pendingMessageId });
+      return { status: 'started', runId };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setMessages((prev) => prev.map((item) => (
-        item.id === pendingMessageId
-          ? {
-              ...item,
-              content: `${translateStatic('chat.run_failed')}\n\n${translateStatic('common.error_prefix')}: ${message}`,
-              metadata: { state: 'failed', error: message },
-            }
-          : item
-      )));
+      return { status: 'error', message };
     } finally {
-      setIsExecuting(false);
+      setIsSubmitting(false);
     }
-  }, [currentSessionId, executeInstruction, refreshSessions]);
+  }, [activeRun, clearToolActivities, currentSessionId, executeInstruction, isSubmitting]);
+
+  const stopActiveRun = useCallback(async () => {
+    if (!activeRun) return;
+    try {
+      await cancelRun(activeRun.runId, activeRun.sessionId);
+    } catch (error) {
+      console.error('Failed to cancel active run:', error);
+    }
+  }, [activeRun, cancelRun]);
 
   return {
     messages,
@@ -205,6 +330,8 @@ export function useSessions({
     createNewSession,
     deleteSession,
     execute,
-    isExecuting,
+    stopActiveRun,
+    isSubmitting,
+    isExecuting: activeRun !== null,
   };
 }

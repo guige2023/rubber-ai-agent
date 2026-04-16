@@ -136,8 +136,34 @@ async def test_skill_context_keeps_writes_inside_session_workspace():
 
     ctx = SimpleNamespace(deps=AgentDeps(kernel=kernel, session_id="skill-session", skill_name="bundled_skill"))
 
-    with pytest.raises(ValueError, match="Path escapes session workspace"):
+    with pytest.raises(ModelRetry, match="Invalid path: use a relative path"):
         await FileToolkit.write_file(ctx, str(skill.path / "scripts" / "generated.txt"), "nope")
+
+
+@pytest.mark.asyncio
+async def test_skill_context_rejects_out_of_scope_read_with_model_retry():
+    create_mock_skill_with_script("bundled_skill", "Bundled skill desc", TEST_BUNDLED_SKILLS)
+    kernel = FerrymanKernel(create_test_settings())
+    kernel.scan_skills()
+
+    ctx = SimpleNamespace(deps=AgentDeps(kernel=kernel, session_id="skill-session", skill_name="bundled_skill"))
+    outside_path = str(TEST_ROOT / "outside.txt")
+
+    with pytest.raises(ModelRetry, match="Invalid path: use a relative path"):
+        await FileToolkit.read_file(ctx, outside_path)
+
+
+@pytest.mark.asyncio
+async def test_skill_context_rejects_out_of_scope_list_with_model_retry():
+    create_mock_skill_with_script("bundled_skill", "Bundled skill desc", TEST_BUNDLED_SKILLS)
+    kernel = FerrymanKernel(create_test_settings())
+    kernel.scan_skills()
+
+    ctx = SimpleNamespace(deps=AgentDeps(kernel=kernel, session_id="skill-session", skill_name="bundled_skill"))
+    outside_dir = str(TEST_ROOT / "outside-dir")
+
+    with pytest.raises(ModelRetry, match="Invalid path: use a relative path"):
+        await FileToolkit.list_files(ctx, outside_dir)
 
 
 @pytest.mark.asyncio

@@ -223,6 +223,7 @@ export default function App() {
     messages,
     execute,
     stopActiveRun,
+    isSubmitting,
     isExecuting,
     sessions,
     currentSessionId,
@@ -257,6 +258,7 @@ export default function App() {
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
   const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
+  const [composerNotice, setComposerNotice] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -268,6 +270,20 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('ferryman_send_mode', sendMode);
   }, [sendMode]);
+
+  useEffect(() => {
+    if (!composerNotice) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setComposerNotice((current) => (current === composerNotice ? null : current));
+    }, 3200);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [composerNotice]);
   useEffect(() => {
     if (currentView !== 'chat') {
       return;
@@ -435,14 +451,23 @@ export default function App() {
     }
   }, [isConnected]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (isExecuting) {
       stopActiveRun();
       return;
     }
     if (!modelReadiness?.ready || !input.trim()) return;
-    execute(input);
-    setInput('');
+    const submittedInstruction = input;
+    const result = await execute(submittedInstruction);
+    if (result.status === 'started') {
+      setComposerNotice(null);
+      setInput((current) => (current === submittedInstruction ? '' : current));
+      return;
+    }
+
+    if (result.message) {
+      setComposerNotice(result.message);
+    }
   };
 
   const handleCopyMessage = useCallback(async (messageKey: string, text: string) => {
@@ -875,7 +900,12 @@ export default function App() {
                       <textarea
                         ref={inputRef}
                         value={input}
-                        onChange={(e) => setInput(e.target.value)}
+                        onChange={(e) => {
+                          setInput(e.target.value);
+                          if (composerNotice) {
+                            setComposerNotice(null);
+                          }
+                        }}
                         onKeyDown={(e) => {
                           if (e.key !== 'Enter' || e.nativeEvent.isComposing) {
                             return;
@@ -905,7 +935,7 @@ export default function App() {
                         >
                           <button
                             onClick={handleSend}
-                            disabled={!isExecuting && !input.trim()}
+                            disabled={isSubmitting || (!isExecuting && !input.trim())}
                             aria-label={isExecuting ? t('chat.stop') : sendShortcutHint}
                             className={cn(
                               "group relative h-10 w-10 flex items-center justify-center rounded-l-lg transition-colors active:scale-95 disabled:cursor-not-allowed",
@@ -915,7 +945,13 @@ export default function App() {
                             <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md border border-white/10 bg-[#111] px-2 py-1 font-mono text-[10px] font-bold tracking-[0.04em] text-white/60 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
                               {isExecuting ? t('chat.stop') : sendShortcutHint}
                             </span>
-                            {isExecuting ? <StopIndicator /> : <Send size={17} strokeWidth={input.trim() ? 2.5 : 1.5} className="relative z-10" />}
+                            {isExecuting ? (
+                              <StopIndicator />
+                            ) : isSubmitting ? (
+                              <RefreshCw size={16} strokeWidth={2.4} className="relative z-10 animate-spin" data-testid="send-submitting-indicator" />
+                            ) : (
+                              <Send size={17} strokeWidth={input.trim() ? 2.5 : 1.5} className="relative z-10" />
+                            )}
                           </button>
                           <button
                             type="button"
@@ -954,6 +990,11 @@ export default function App() {
                         )}
                       </div>
                     </div>
+                    {composerNotice ? (
+                      <div className="px-4 pb-3 text-xs font-medium text-white/58">
+                        {composerNotice}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className="flex items-center justify-center gap-4 mt-4">

@@ -556,6 +556,65 @@ def test_websocket_execute_can_be_canceled_while_socket_stays_responsive(client,
         }
 
 
+def test_websocket_execute_returns_busy_when_session_already_has_active_run(client, monkeypatch):
+    blocker = asyncio.Event()
+
+    async def fake_run_master_agent(instruction: str, session_id: str, emit_event_cb=None):
+        await blocker.wait()
+        return {
+            "namespace": "agent",
+            "event": "chat_final",
+            "session_id": session_id,
+            "ts": "2026-04-09T00:00:00Z",
+            "payload": {
+                "run_id": "should-not-complete",
+                "messages": [{"role": "assistant", "content": "done"}],
+                "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            },
+        }
+
+    monkeypatch.setattr(app.state.kernel, "run_master_agent", fake_run_master_agent)
+
+    with client.websocket_connect(websocket_path()) as websocket:
+        start_response, _ = send_rpc_until_response(
+            websocket,
+            "execute",
+            {"instruction": "first run", "session_id": "session-busy"},
+            request_id=30,
+        )
+        run_id = start_response["result"]["run_id"]
+        assert start_response["result"] == {
+            "status": "started",
+            "run_id": run_id,
+            "session_id": "session-busy",
+        }
+
+        busy_response = send_rpc(
+            websocket,
+            "execute",
+            {"instruction": "second run", "session_id": "session-busy"},
+            request_id=31,
+        )
+        assert busy_response["result"] == {
+            "status": "busy",
+            "run_id": run_id,
+            "session_id": "session-busy",
+            "message": "Current session already has an active run.",
+        }
+
+        cancel_response, _ = send_rpc_until_response(
+            websocket,
+            "cancel_run",
+            {"run_id": run_id, "session_id": "session-busy"},
+            request_id=32,
+        )
+        assert cancel_response["result"] == {
+            "status": "canceling",
+            "run_id": run_id,
+            "session_id": "session-busy",
+        }
+
+
 def test_websocket_create_session_without_title_defaults_to_empty_string(client, session):
     with client.websocket_connect(websocket_path()) as websocket:
         response = send_rpc(

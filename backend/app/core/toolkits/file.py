@@ -1,9 +1,12 @@
 from pathlib import Path
+import logging
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import RunContext
 
 from app.core.deps import AgentDeps
+
+logger = logging.getLogger(__name__)
 
 class FileToolkit:
     """Read and write files for the current session.
@@ -15,6 +18,15 @@ class FileToolkit:
     @staticmethod
     def get_tools():
         return [FileToolkit.read_file, FileToolkit.write_file, FileToolkit.list_files]
+
+    @staticmethod
+    def _raise_path_retry(raw_path: str) -> None:
+        raise ModelRetry(
+            "Invalid path: use a relative path. "
+            "Reads may only use the session workspace or current skill resources; "
+            "writes may only use the session workspace. "
+            f"Got: {raw_path}"
+        )
 
     @staticmethod
     def _normalize_workspace_path(file_path: str) -> str:
@@ -70,8 +82,26 @@ class FileToolkit:
         try:
             workspace_path = FileToolkit.resolve_session_path(kernel, session_id, raw_path)
         except ValueError:
+            logger.debug({
+                "message": {
+                    "event": "file_read_workspace_rejected",
+                    "session_id": session_id,
+                    "skill_name": skill_name,
+                    "raw_path": raw_path,
+                }
+            })
             if skill_name:
-                return FileToolkit._resolve_current_skill_resource_path(kernel, skill_name, raw_path)
+                skill_path = FileToolkit._resolve_current_skill_resource_path(kernel, skill_name, raw_path)
+                logger.debug({
+                    "message": {
+                        "event": "file_read_skill_fallback",
+                        "session_id": session_id,
+                        "skill_name": skill_name,
+                        "raw_path": raw_path,
+                        "resolved_path": str(skill_path),
+                    }
+                })
+                return skill_path
             raise
 
         if not skill_name or workspace_path.exists():
@@ -80,8 +110,29 @@ class FileToolkit:
         try:
             skill_path = FileToolkit._resolve_current_skill_resource_path(kernel, skill_name, raw_path)
         except ValueError:
+            logger.debug({
+                "message": {
+                    "event": "file_read_skill_fallback_rejected",
+                    "session_id": session_id,
+                    "skill_name": skill_name,
+                    "raw_path": raw_path,
+                    "workspace_path": str(workspace_path),
+                }
+            })
             return workspace_path
 
+        logger.debug({
+            "message": {
+                "event": "file_read_skill_fallback_exists_check",
+                "session_id": session_id,
+                "skill_name": skill_name,
+                "raw_path": raw_path,
+                "workspace_path": str(workspace_path),
+                "skill_path": str(skill_path),
+                "workspace_exists": workspace_path.exists(),
+                "skill_exists": skill_path.exists(),
+            }
+        })
         return skill_path if skill_path.exists() else workspace_path
 
     @staticmethod
@@ -90,12 +141,15 @@ class FileToolkit:
 
         Raises `ModelRetry` if the file does not exist.
         """
-        p = FileToolkit.resolve_read_path(
-            ctx.deps.kernel,
-            ctx.deps.session_id,
-            file_path,
-            ctx.deps.skill_name,
-        )
+        try:
+            p = FileToolkit.resolve_read_path(
+                ctx.deps.kernel,
+                ctx.deps.session_id,
+                file_path,
+                ctx.deps.skill_name,
+            )
+        except ValueError:
+            FileToolkit._raise_path_retry(file_path)
         if not p.exists():
             raise ModelRetry(f"File not found: {file_path}")
         return p.read_text(encoding="utf-8")
@@ -104,11 +158,14 @@ class FileToolkit:
     async def write_file(ctx: RunContext[AgentDeps], file_path: str, content: str) -> str:
         """Write a UTF-8 file inside the session workspace.
 
-        Creates parent directories as needed. Raises ValueError if the path
+        Creates parent directories as needed. Raises `ModelRetry` if the path
         escapes the workspace.
         """
         normalized = FileToolkit._normalize_workspace_path(file_path)
-        full_path = FileToolkit.resolve_session_path(ctx.deps.kernel, ctx.deps.session_id, file_path)
+        try:
+            full_path = FileToolkit.resolve_session_path(ctx.deps.kernel, ctx.deps.session_id, file_path)
+        except ValueError:
+            FileToolkit._raise_path_retry(file_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content, encoding="utf-8")
         return f"Successfully wrote {len(content)} characters to {normalized}"
@@ -119,12 +176,15 @@ class FileToolkit:
 
         Raises `ModelRetry` if the directory does not exist.
         """
-        p = FileToolkit.resolve_read_path(
-            ctx.deps.kernel,
-            ctx.deps.session_id,
-            directory,
-            ctx.deps.skill_name,
-        )
+        try:
+            p = FileToolkit.resolve_read_path(
+                ctx.deps.kernel,
+                ctx.deps.session_id,
+                directory,
+                ctx.deps.skill_name,
+            )
+        except ValueError:
+            FileToolkit._raise_path_retry(directory)
         if not p.exists():
             raise ModelRetry(f"Directory not found: {directory}")
         entries = sorted(p.iterdir())

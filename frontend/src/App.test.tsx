@@ -95,6 +95,9 @@ describe('App chat interactions', () => {
             'chat.placeholder': 'Prompt',
             'chat.send_shortcut_enter_hint': 'Enter to send',
             'chat.send_shortcut_mod_enter_hint': 'Send with Cmd/Ctrl + Enter',
+            'chat.stop': 'Stop current run',
+            'chat.status_canceled': 'Canceled',
+            'chat.session_busy': 'This session is still running.',
             'common.copy': 'Copy',
             'common.copied': 'Copied',
             'nav.recent_sessions': 'Recent Sessions',
@@ -116,9 +119,30 @@ describe('App chat interactions', () => {
     });
 
     mockedUseBackendConnection.mockImplementation(() => ({
-      call: vi.fn(),
+      call: vi.fn(async (method: string) => {
+        if (method === 'get_active_model') {
+          return 'qwen:qwen3.6-plus';
+        }
+        if (method === 'get_model_readiness') {
+          return { ready: true, active_model: 'qwen:qwen3.6-plus', issue: null };
+        }
+        if (method === 'get_llm_configs') {
+          return [];
+        }
+        if (method === 'get_available_models') {
+          return {};
+        }
+        if (method === 'list_skills') {
+          return [];
+        }
+        if (method === 'read_backend_logs') {
+          return { content: '' };
+        }
+        return {};
+      }),
       execute: vi.fn(),
-      isConnected: false,
+      cancelRun: vi.fn(),
+      isConnected: true,
       tasks: [],
       toolActivities: mockedToolActivities,
       lastEvent: null,
@@ -144,7 +168,9 @@ describe('App chat interactions', () => {
       switchSession: vi.fn(),
       createNewSession: vi.fn().mockResolvedValue('session-2'),
       deleteSession: vi.fn(),
-      execute: vi.fn(),
+      execute: vi.fn().mockResolvedValue({ status: 'started' }),
+      stopActiveRun: vi.fn(),
+      isSubmitting: false,
       isExecuting: false,
     }));
   });
@@ -187,7 +213,7 @@ describe('App chat interactions', () => {
     const baseTime = new Date().toISOString();
     mockedMessages = [
       { id: 'user-1', role: 'user', content: 'Run this task.', created_at: baseTime },
-      { id: 'assistant-1', role: 'assistant', content: '', created_at: baseTime, metadata: { state: 'pending' } },
+      { id: 'assistant-1', role: 'assistant', content: '', created_at: baseTime, metadata: { run: { status: 'pending', scope: 'master' } } },
     ];
 
     const { rerender } = render(<App />);
@@ -199,7 +225,7 @@ describe('App chat interactions', () => {
     scrollIntoView.mockClear();
     mockedMessages = [
       { id: 'user-1', role: 'user', content: 'Run this task.', created_at: baseTime },
-      { id: 'assistant-1', role: 'assistant', content: 'Partial output arrived.', created_at: baseTime, metadata: { state: 'pending' } },
+      { id: 'assistant-1', role: 'assistant', content: 'Partial output arrived.', created_at: baseTime, metadata: { run: { status: 'pending', scope: 'master' } } },
     ];
     rerender(<App />);
 
@@ -221,5 +247,136 @@ describe('App chat interactions', () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('keeps user message content visible while the assistant is pending', async () => {
+    mockedMessages = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Use the seo-backlink-research skill.',
+        created_at: new Date().toISOString(),
+        metadata: { run: { status: 'pending', scope: 'master' } },
+      },
+    ];
+    mockedToolActivities = [
+      {
+        run_id: 'run-1',
+        tool_name: 'run_skill',
+        phase: 'running',
+        input: { skill_name: 'seo-backlink-research' },
+      },
+    ];
+
+    render(<App />);
+
+    expect(screen.getByText('Use the seo-backlink-research skill.')).toBeInTheDocument();
+    expect(screen.queryByText('reading_file')).not.toBeInTheDocument();
+    expect(screen.queryByText('[seo-backlink-research]')).not.toBeInTheDocument();
+  });
+
+  it('uses the send button as stop while a run is active', async () => {
+    const stopActiveRun = vi.fn();
+    mockedMessages = [
+      { id: 'user-1', role: 'user', content: 'Run this task.', created_at: new Date().toISOString() },
+      { id: 'assistant-1', role: 'assistant', content: '', created_at: new Date().toISOString(), metadata: { run: { status: 'pending', scope: 'master' } } },
+    ];
+
+    mockedUseSessions.mockImplementation(() => ({
+      messages: mockedMessages,
+      setMessages: vi.fn(),
+      sessions: [
+        {
+          id: 'session-1',
+          title: 'Session 1',
+          updated_at: '2026-04-15T00:00:00Z',
+          input_tokens: 0,
+          output_tokens: 0,
+        },
+      ],
+      currentSessionId: 'session-1',
+      currentUsage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+      refreshSessions: vi.fn(),
+      switchSession: vi.fn(),
+      createNewSession: vi.fn().mockResolvedValue('session-2'),
+      deleteSession: vi.fn(),
+      execute: vi.fn().mockResolvedValue({ status: 'started' }),
+      stopActiveRun,
+      isSubmitting: false,
+      isExecuting: true,
+    }));
+
+    render(<App />);
+
+    expect(screen.getByTestId('stop-indicator')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop current run' }));
+    expect(stopActiveRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders canceled state beneath the user message without an assistant bubble', async () => {
+    mockedMessages = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Please stop this run.',
+        created_at: new Date().toISOString(),
+        metadata: { run: { status: 'canceled', scope: 'master' } },
+      },
+    ];
+
+    render(<App />);
+
+    expect(screen.getByText('Please stop this run.')).toBeInTheDocument();
+    expect(screen.getByText('Canceled')).toBeInTheDocument();
+    expect(screen.queryByText('Run canceled.')).not.toBeInTheDocument();
+    expect(screen.queryByText('reading_file')).not.toBeInTheDocument();
+  });
+
+  it('keeps the draft and shows a light notice when execute returns busy', async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: 'busy',
+      message: 'This session is still running.',
+    });
+
+    mockedUseSessions.mockImplementation(() => ({
+      messages: mockedMessages,
+      setMessages: vi.fn(),
+      sessions: [
+        {
+          id: 'session-1',
+          title: 'Session 1',
+          updated_at: '2026-04-15T00:00:00Z',
+          input_tokens: 0,
+          output_tokens: 0,
+        },
+      ],
+      currentSessionId: 'session-1',
+      currentUsage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+      refreshSessions: vi.fn(),
+      switchSession: vi.fn(),
+      createNewSession: vi.fn().mockResolvedValue('session-2'),
+      deleteSession: vi.fn(),
+      execute,
+      stopActiveRun: vi.fn(),
+      isSubmitting: false,
+      isExecuting: false,
+    }));
+
+    render(<App />);
+
+    const textarea = screen.getByPlaceholderText('Prompt') as HTMLTextAreaElement;
+    const sendButton = screen.getByRole('button', { name: 'Send with Cmd/Ctrl + Enter' });
+    fireEvent.change(textarea, { target: { value: 'Keep this draft.' } });
+    await waitFor(() => {
+      expect(sendButton).not.toBeDisabled();
+    });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(execute).toHaveBeenCalledWith('Keep this draft.');
+    });
+
+    expect(textarea.value).toBe('Keep this draft.');
+    expect(screen.getByText('This session is still running.')).toBeInTheDocument();
   });
 });

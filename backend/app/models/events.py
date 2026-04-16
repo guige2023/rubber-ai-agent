@@ -38,6 +38,8 @@ class ToolActivityPayload(BaseModel):
     用于在前端聊天气泡下方展示 "正在联网搜索..." 等实时动态。
     """
     run_id: str = Field(..., description="识别同一次大模型并发或任务的标识 UUID")
+    event_id: Optional[str] = Field(None, description="单条工具观测事件的唯一 ID，便于排查重复发送或重复接收")
+    seq: Optional[int] = Field(None, description="同一 AgentDeps 生命周期内递增的工具事件序号")
     tool_name: str = Field(..., description="底层原生的工具名称，如 'navigate', 'get_distilled_dom'")
     phase: ToolPhase = Field(..., description="工具执行阶段")
     input: Optional[Dict[str, Any]] = Field(None, description="工具的入参摘要（仅在 start/running 给定，限制大小）")

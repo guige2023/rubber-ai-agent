@@ -609,7 +609,7 @@ class FerrymanKernel:
         """
         logger.info(f"Master Agent processing session {session_id} (instruction_length={len(instruction)})")
 
-        request_id = correlation_id.get() or uuid4().hex
+        run_id = correlation_id.get() or uuid4().hex
         user_message_id: Optional[str] = None
 
         try:
@@ -637,7 +637,7 @@ class FerrymanKernel:
                     type="text",
                     metadata_={
                         "run": {
-                            "id": request_id,
+                            "id": run_id,
                             "status": "pending",
                             "scope": "master",
                         }
@@ -662,7 +662,7 @@ class FerrymanKernel:
                 logger.debug({
                     "message": {
                         "session_id": session_id,
-                        "request_id": request_id,
+                        "run_id": run_id,
                         "event": "llm_request",
                         "scope": "master",
                         "input": augmented_instruction,
@@ -698,7 +698,7 @@ class FerrymanKernel:
                 logger.debug({
                     "message": {
                         "session_id": session_id,
-                        "request_id": request_id,
+                        "run_id": run_id,
                         "event": "llm_response",
                         "scope": "master",
                         "output": str(result_data),
@@ -714,7 +714,7 @@ class FerrymanKernel:
                     if user_msg:
                         user_meta = dict(user_msg.metadata_ or {})
                         user_meta["run"] = {
-                            "id": request_id,
+                            "id": run_id,
                             "status": "success",
                             "scope": "master",
                         }
@@ -735,7 +735,7 @@ class FerrymanKernel:
                             "provider": serialized_response.get("provider_name") if serialized_response else None,
                         },
                         "run": {
-                            "id": request_id,
+                            "id": run_id,
                             "status": "success",
                             "scope": "master",
                         }
@@ -759,14 +759,14 @@ class FerrymanKernel:
             # Return ChatFinalPayload dict representing the unified event structure
             from app.models.events import FerrymanEventEnvelope, EventNamespace, ChatFinalPayload
             payload = ChatFinalPayload(
-                run_id=request_id,
+                run_id=run_id,
                 messages=[
                     {
                         "role": "assistant",
                         "content": str(result_data),
                         "metadata": {
                             "run": {
-                                "id": request_id,
+                                "id": run_id,
                                 "status": "success",
                                 "scope": "master",
                             }
@@ -793,7 +793,7 @@ class FerrymanKernel:
                     if user_msg:
                         user_meta = dict(user_msg.metadata_ or {})
                         user_meta["run"] = {
-                            "id": request_id,
+                            "id": run_id,
                             "status": "failed",
                             "scope": "master",
                             "error": error_message,
@@ -808,7 +808,7 @@ class FerrymanKernel:
                     type="text",
                     metadata_={
                         "run": {
-                            "id": request_id,
+                            "id": run_id,
                             "status": "failed",
                             "scope": "master",
                             "error": error_message,
@@ -827,14 +827,14 @@ class FerrymanKernel:
             # Return ChatFinalPayload dict representing the unified event structure for failure
             from app.models.events import FerrymanEventEnvelope, EventNamespace, ChatFinalPayload
             payload = ChatFinalPayload(
-                run_id=request_id,
+                run_id=run_id,
                 messages=[
                     {
                         "role": "assistant",
                         "content": f"Run failed: {error_message}",
                         "metadata": {
                             "run": {
-                                "id": request_id,
+                                "id": run_id,
                                 "status": "failed",
                                 "scope": "master",
                                 "error": error_message,

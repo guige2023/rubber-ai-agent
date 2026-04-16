@@ -810,9 +810,10 @@ async def execute(context, instruction: str, session_id: str = "default"):
             active_entry = context.app_state.execute_runs.get(active_run_id)
             if active_entry and not active_entry["task"].done():
                 return Success({
-                    "status": "in_flight",
+                    "status": "busy",
                     "run_id": active_run_id,
                     "session_id": session_id,
+                    "message": "Current session already has an active run.",
                 })
 
         websocket = getattr(context, "request_ws", None)

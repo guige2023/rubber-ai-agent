@@ -164,7 +164,6 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     config.set("system.llm.active_model", "qwen:qwen-plus", category="system")
 
     original_fetcher = config._fetch_provider_models
-    original_probe = config._probe_openai_compatible_chat_model
 
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         if provider == "openai":
@@ -177,18 +176,11 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
             return ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-lite-260215"]
         return []
 
-    def fake_probe(api_key: str, base_url: str, model: str):
-        assert api_key == "sk-custom"
-        assert base_url == "https://custom.example.com/v1"
-        assert model == "my-custom-model"
-
     config._fetch_provider_models = staticmethod(fake_fetcher)
-    config._probe_openai_compatible_chat_model = staticmethod(fake_probe)
     try:
         models = config.get_available_models()
     finally:
         config._fetch_provider_models = original_fetcher
-        config._probe_openai_compatible_chat_model = original_probe
 
     assert "openai" in models
     assert "gemini" not in models
@@ -285,7 +277,7 @@ def test_get_available_models_hides_provider_on_transient_fetch_error():
     assert "gemini" not in models
 
 
-def test_get_available_models_hides_custom_provider_when_fetch_fails():
+def test_get_available_models_returns_saved_custom_model_without_probe():
     config.set(
         "llm.custom",
         {"api_key": "sk-custom", "base_url": "https://custom.example.com/v1", "model": "my-custom-model"},
@@ -295,7 +287,7 @@ def test_get_available_models_hides_custom_provider_when_fetch_fails():
     original_probe = config._probe_openai_compatible_chat_model
 
     def fake_probe(api_key: str, base_url: str, model: str):
-        raise RuntimeError("HTTP 500 Internal Server Error")
+        raise AssertionError("get_available_models should not probe custom chat availability")
 
     config._probe_openai_compatible_chat_model = staticmethod(fake_probe)
     try:
@@ -303,7 +295,7 @@ def test_get_available_models_hides_custom_provider_when_fetch_fails():
     finally:
         config._probe_openai_compatible_chat_model = original_probe
 
-    assert "custom" not in models
+    assert models["custom"] == ["my-custom-model"]
 
 
 def test_validate_provider_config_returns_error_when_fetch_fails(monkeypatch):

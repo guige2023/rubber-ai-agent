@@ -360,19 +360,7 @@ class Settings(BaseSettings):
 
             if provider == "custom":
                 if api_key and base_url and configured_model:
-                    try:
-                        Settings._probe_openai_compatible_chat_model(
-                            api_key=api_key,
-                            base_url=base_url,
-                            model=configured_model,
-                        )
-                        provider_models = [configured_model]
-                    except ModelListEndpointUnavailable as exc:
-                        logger.exception(f"Model list endpoint unavailable for provider {provider}: {exc}")
-                        provider_models = []
-                    except Exception as exc:
-                        logger.exception(f"Failed to fetch models for provider {provider}: {exc}")
-                        provider_models = []
+                    provider_models = [configured_model]
             elif api_key and base_url:
                 try:
                     provider_models = Settings._fetch_provider_models(

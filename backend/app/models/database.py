@@ -5,6 +5,8 @@ import shortuuid
 from sqlalchemy import Column as SAColumn
 from sqlmodel import SQLModel, Field, JSON
 
+from app.core.utc_datetime import UTCDateTime
+
 
 class Session(SQLModel, table=True):
     __tablename__ = "sessions"
@@ -14,8 +16,14 @@ class Session(SQLModel, table=True):
     input_tokens: int = Field(default=0)
     output_tokens: int = Field(default=0)
     metadata_: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn("metadata", JSON))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )
 
 class Message(SQLModel, table=True):
     __tablename__ = "messages"
@@ -27,7 +35,10 @@ class Message(SQLModel, table=True):
     type: str  # text, tool_call, tool_result, thinking
     token_estimate: int = Field(default=0)
     metadata_: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn("metadata", JSON))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )
 
 class Task(SQLModel, table=True):
     __tablename__ = "tasks"
@@ -38,9 +49,15 @@ class Task(SQLModel, table=True):
     args: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn(JSON))
     status: str = Field(default="pending")  # pending, running, success, failed, canceled
     metadata_: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn("metadata", JSON))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    finished_at: Optional[datetime] = None
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )
+    finished_at: Optional[datetime] = Field(default=None, sa_column=SAColumn(UTCDateTime(), nullable=True))
 
 class Schedule(SQLModel, table=True):
     __tablename__ = "schedules"
@@ -50,12 +67,18 @@ class Schedule(SQLModel, table=True):
     cron_expression: str
     timezone: str = Field(default="UTC")
     enabled: bool = Field(default=True)
-    last_run_at: Optional[datetime] = None
-    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = Field(default=None, sa_column=SAColumn(UTCDateTime(), nullable=True))
+    next_run_at: Optional[datetime] = Field(default=None, sa_column=SAColumn(UTCDateTime(), nullable=True))
     total_run_count: int = Field(default=0)
     last_run_result: Optional[Dict[str, Any]] = Field(default=None, sa_column=SAColumn(JSON, nullable=True))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )
 
 class AppConfig(SQLModel, table=True):
     __tablename__ = "app_configs"
@@ -63,4 +86,7 @@ class AppConfig(SQLModel, table=True):
     value: Any = Field(sa_column=SAColumn(JSON))
     category: str = Field(index=True)  # e.g., "llm", "system"
     metadata_: Dict[str, Any] = Field(default_factory=dict, sa_column=SAColumn("metadata", JSON))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(UTCDateTime(), nullable=False),
+    )

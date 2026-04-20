@@ -54,6 +54,11 @@ type ActiveRun = {
   pendingMessageId: string;
 };
 
+type TerminalRunSnapshot = {
+  status: MessageRunStatus;
+  usage: Usage;
+};
+
 export type ExecuteStatus = 'started' | 'busy' | 'error';
 
 export interface ExecuteResult {
@@ -91,11 +96,60 @@ export function useSessions({
     }
   }, [call]);
 
+  const getTerminalRunSnapshot = useCallback((candidateMessages: Message[], runId: string): TerminalRunSnapshot | null => {
+    const runMessages = candidateMessages.filter((message) => message.metadata?.run?.id === runId);
+    const latestAssistantMessage = [...runMessages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.metadata?.run?.status && message.metadata.run.status !== 'pending');
+    const latestUserMessage = [...runMessages]
+      .reverse()
+      .find((message) => message.role === 'user' && message.metadata?.run?.status && message.metadata.run.status !== 'pending');
+
+    const status = latestAssistantMessage?.metadata?.run?.status || latestUserMessage?.metadata?.run?.status;
+    if (!status || status === 'pending') {
+      return null;
+    }
+
+    return {
+      status,
+      usage: latestAssistantMessage?.metadata?.usage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    };
+  }, []);
+
+  const reconcileActiveRunFromMessages = useCallback((candidateMessages: Message[], sessionId: string) => {
+    if (!activeRun || sessionId !== activeRun.sessionId) {
+      return false;
+    }
+
+    const snapshot = getTerminalRunSnapshot(candidateMessages, activeRun.runId);
+    if (!snapshot) {
+      return false;
+    }
+
+    if (currentSessionId === sessionId) {
+      setMessages(candidateMessages);
+      setCurrentUsage((prev) => ({
+        input_tokens: prev.input_tokens + (snapshot.usage.input_tokens || 0),
+        output_tokens: prev.output_tokens + (snapshot.usage.output_tokens || 0),
+        total_tokens: prev.total_tokens + (snapshot.usage.total_tokens || 0),
+      }));
+    }
+
+    setActiveRun(null);
+    clearToolActivities();
+    refreshSessions().catch((error) => {
+      console.error('Failed to refresh sessions after run reconciliation:', error);
+    });
+    return true;
+  }, [activeRun, clearToolActivities, currentSessionId, getTerminalRunSnapshot, refreshSessions]);
+
   const switchSession = useCallback(async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     try {
       const res: any = await call('list_messages', { session_id: sessionId, limit: 100 });
-      setMessages(res.messages || []);
+      const nextMessages = res.messages || [];
+      setMessages(nextMessages);
+      const reconciledActiveRun = reconcileActiveRunFromMessages(nextMessages, sessionId);
 
       const sessionInfo = sessions.find((session) => session.id === sessionId);
       if (sessionInfo) {
@@ -104,13 +158,13 @@ export function useSessions({
           output_tokens: sessionInfo.output_tokens,
           total_tokens: sessionInfo.input_tokens + sessionInfo.output_tokens,
         });
-      } else {
+      } else if (!reconciledActiveRun) {
         setCurrentUsage({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
       }
     } catch (error) {
       console.error('Failed to load session messages:', error);
     }
-  }, [call, sessions]);
+  }, [call, reconcileActiveRunFromMessages, sessions]);
 
   useEffect(() => {
     if (!lastEvent || lastEvent.namespace !== 'data' || lastEvent.event !== 'refresh') {
@@ -214,6 +268,36 @@ export function useSessions({
       console.error('Failed to refresh sessions after chat final event:', error);
     });
   }, [activeRun, clearToolActivities, currentSessionId, lastEvent, refreshSessions]);
+
+  useEffect(() => {
+    if (!activeRun || !lastEvent || lastEvent.namespace !== 'data' || lastEvent.event !== 'refresh') {
+      return;
+    }
+
+    const payload = lastEvent.payload as RefreshPayload;
+    const refreshedSessionId = lastEvent.session_id || payload.entity_id;
+    if (payload.entity !== 'session' || refreshedSessionId !== activeRun.sessionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    call('list_messages', { session_id: activeRun.sessionId, limit: 100 })
+      .then((res: any) => {
+        if (cancelled) {
+          return;
+        }
+
+        reconcileActiveRunFromMessages(res.messages || [], activeRun.sessionId);
+      })
+      .catch((error) => {
+        console.error('Failed to reconcile active run from session refresh:', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRun, call, lastEvent, reconcileActiveRunFromMessages]);
 
   const createNewSession = useCallback(async () => {
     const newId = crypto.randomUUID();

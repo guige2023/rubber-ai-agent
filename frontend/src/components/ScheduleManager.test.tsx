@@ -104,4 +104,78 @@ describe('ScheduleManager', () => {
     expect(screen.getByText('OpenAI API timeout')).toBeInTheDocument();
     expect(screen.getByText('run-xyz')).toBeInTheDocument();
   });
+
+  it('formats schedule timestamps with the schedule timezone', () => {
+    const schedule = buildSchedule();
+    mockedUseSchedules.mockReturnValue({
+      schedules: [schedule],
+      selectedSchedule: schedule,
+      setSelectedSchedule: vi.fn(),
+      nextCursor: null,
+      isLoading: false,
+      isLoadingMore: false,
+      error: null,
+      loadSchedules: vi.fn(),
+      selectSchedule: vi.fn(),
+      updateSchedule: vi.fn(),
+      deleteSchedule: vi.fn(),
+    });
+
+    const dateTimeFormatSpy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((_locale, options) => ({
+      format: () => `formatted:${String(options?.timeZone ?? 'local')}`,
+    }) as Intl.DateTimeFormat);
+
+    render(
+      <ScheduleManager
+        call={vi.fn()}
+        isConnected
+        t={(key) =>
+          ({
+            'schedules.title': 'Schedules',
+            'schedules.subtitle': 'Subtitle',
+            'schedules.refresh': 'Refresh Schedules',
+            'schedules.list_title': 'Schedule List',
+            'schedules.field_cron': 'Cron Expression',
+            'schedules.field_next_run': 'Next Run',
+            'schedules.field_last_run': 'Last Run',
+            'schedules.empty': 'Empty',
+            'schedules.enabled': 'Enabled',
+            'schedules.disabled': 'Paused',
+            'schedules.no_instruction': 'No instruction',
+            'schedules.detail_title': 'Schedule Details',
+            'schedules.field_name': 'Name',
+            'schedules.timezone_hint': 'Timezone hint',
+            'schedules.field_timezone': 'Timezone',
+            'schedules.field_instruction': 'Instruction',
+            'schedules.field_total_runs': 'Total Runs',
+            'schedules.field_last_run_result': 'Last Run Result',
+            'schedules.field_last_run_summary': 'Summary',
+            'schedules.field_last_run_error': 'Error',
+            'schedules.field_last_run_id': 'Run ID',
+            'schedules.field_created_at': 'Created',
+            'schedules.field_updated_at': 'Updated',
+            'schedules.last_run_succeeded': 'The last run completed successfully',
+            'schedules.last_run_failed': 'The last run failed',
+            'tasks.identifier': 'Identifier',
+            'common.delete': 'Delete',
+            'common.saving': 'Saving',
+            'common.save': 'Save',
+            'schedules.delete_title': 'Delete Schedule?',
+            'schedules.delete_description': '{name}',
+            'schedules.confirm_delete': 'Delete Schedule',
+            'common.cancel': 'Cancel',
+            'schedules.cron_hint': 'Cron hint',
+            'common.loading': 'Loading',
+            'common.load_more': 'Load more',
+          } as Record<string, string>)[key] ?? key
+        }
+      />
+    );
+
+    expect(screen.getAllByText('formatted:Asia/Shanghai').length).toBeGreaterThan(0);
+    expect(dateTimeFormatSpy).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ timeZone: 'Asia/Shanghai' })
+    );
+  });
 });

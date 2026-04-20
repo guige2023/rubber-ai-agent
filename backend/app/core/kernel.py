@@ -238,13 +238,13 @@ class FerrymanKernel:
                 if status:
                     db_task.status = status
                     if status in (TaskStatus.SUCCESS, TaskStatus.FAILED):
-                        db_task.finished_at = datetime.now()
+                        db_task.finished_at = datetime.now(timezone.utc)
                 if metadata:
                     # SQLModel Tip: Must re-assign to trigger dirty check for JSON
                     temp_meta = dict(db_task.metadata_)
                     temp_meta.update(metadata)
                     db_task.metadata_ = temp_meta
-                db_task.updated_at = datetime.now()
+                db_task.updated_at = datetime.now(timezone.utc)
                 session.add(db_task)
                 session.commit()
 

@@ -6,8 +6,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 from pydantic_ai.exceptions import ModelRetry
+from sqlalchemy import text
 from sqlmodel import select
 
+import app.core.kernel as kernel_module
+from app.core.kernel import FerrymanKernel
 from app.core.toolkits.task import TaskToolkit
 from app.models.database import Schedule, Task
 
@@ -178,6 +181,50 @@ async def test_list_tasks_filters_orders_and_formats_results(session):
 async def test_list_tasks_rejects_invalid_status():
     with pytest.raises(ModelRetry, match="status must be one of:"):
         await TaskToolkit.list_tasks(make_ctx(), status="later")
+
+
+def test_kernel_persist_task_update_writes_utc_timestamps(session, monkeypatch):
+    task = Task(
+        id="task-utc-update",
+        session_id="session-utc",
+        title="UTC task",
+        status="running",
+        args={"instruction": "Keep task timestamps in UTC."},
+    )
+    session.add(task)
+    session.commit()
+
+    class FakeDateTime:
+        @staticmethod
+        def now(tz=None):
+            if tz is timezone.utc:
+                return datetime(2026, 4, 20, 2, 0, 0, tzinfo=timezone.utc)
+            return datetime(2026, 4, 20, 10, 0, 0)
+
+    monkeypatch.setattr(kernel_module, "datetime", FakeDateTime)
+
+    kernel = FerrymanKernel.__new__(FerrymanKernel)
+    kernel.tasks = {}
+
+    kernel.persist_task_update(
+        "task-utc-update",
+        status="success",
+        metadata={"progress_note": "done"},
+    )
+
+    session.expire_all()
+    refreshed = session.get(Task, "task-utc-update")
+    assert refreshed is not None
+    assert refreshed.status == "success"
+    assert refreshed.finished_at == datetime(2026, 4, 20, 2, 0, 0, tzinfo=timezone.utc)
+    assert refreshed.updated_at == datetime(2026, 4, 20, 2, 0, 0, tzinfo=timezone.utc)
+
+    row = session.execute(
+        text("SELECT finished_at, updated_at FROM tasks WHERE id = :task_id"),
+        {"task_id": task.id},
+    ).one()
+    assert row[0] == "2026-04-20T02:00:00Z"
+    assert row[1] == "2026-04-20T02:00:00Z"
 
 
 @pytest.mark.asyncio

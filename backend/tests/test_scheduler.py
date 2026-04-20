@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import select
 
 from app.core.config import get_settings
@@ -82,6 +83,29 @@ async def test_scheduler_sync_schedule_sets_timezone_and_next_run(session):
     assert refreshed.timezone == "Asia/Shanghai"
     assert refreshed.next_run_at is not None
     assert scheduler._scheduler.get_job(schedule.id) is not None
+
+
+def test_schedule_datetime_columns_are_persisted_as_explicit_utc_strings(session):
+    schedule = Schedule(
+        id="schedule-utc-storage",
+        name="UTC storage",
+        cron_expression="14 10 * * *",
+        timezone="Asia/Shanghai",
+        enabled=True,
+        args={"instruction": "Persist as explicit UTC."},
+        next_run_at=datetime(2026, 4, 19, 2, 14, tzinfo=timezone.utc),
+    )
+    session.add(schedule)
+    session.commit()
+
+    row = session.execute(
+        text("SELECT next_run_at, created_at, updated_at FROM schedules WHERE id = :schedule_id"),
+        {"schedule_id": schedule.id},
+    ).one()
+
+    assert row[0] == "2026-04-19T02:14:00Z"
+    assert row[1].endswith("Z")
+    assert row[2].endswith("Z")
 
 
 @pytest.mark.asyncio

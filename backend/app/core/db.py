@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Generator
 
@@ -7,6 +8,7 @@ from sqlalchemy import inspect
 from sqlmodel import SQLModel, create_engine, Session as DBSession, text
 
 from app.core.config import get_settings
+from app.core.utc_datetime import format_utc_datetime, parse_utc_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,17 @@ engine = create_engine(
     echo=False,
     connect_args={"check_same_thread": False}
 )
+
+
+UTC_DATETIME_COLUMNS: dict[str, tuple[str, ...]] = {
+    "sessions": ("created_at", "updated_at"),
+    "messages": ("created_at",),
+    "tasks": ("created_at", "updated_at", "finished_at"),
+    "schedules": ("last_run_at", "next_run_at", "created_at", "updated_at"),
+    "app_configs": ("updated_at",),
+}
+
+UTC_DATETIME_MIGRATION_KEY = "system.utc_datetime_text_migration_v1"
 
 
 def migrate_session_memory_json_payloads() -> None:
@@ -71,6 +84,82 @@ def migrate_session_memory_json_payloads() -> None:
                     text("UPDATE sessions SET memory = NULL WHERE id = :id"),
                     {"id": session_id},
                 )
+        conn.commit()
+
+
+def migrate_datetime_columns_to_explicit_utc_strings() -> None:
+    """Normalize persisted datetimes to explicit ISO 8601 UTC strings."""
+    try:
+        inspector = inspect(engine)
+        table_names = set(inspector.get_table_names())
+    except Exception as e:
+        logger.exception(f"⚠️ Could not inspect datetime columns for migration with exception: {e}")
+        return
+
+    if "app_configs" in table_names:
+        with engine.connect() as conn:
+            migration_marker = conn.execute(
+                text("SELECT 1 FROM app_configs WHERE key = :key LIMIT 1"),
+                {"key": UTC_DATETIME_MIGRATION_KEY},
+            ).first()
+            if migration_marker:
+                return
+
+    with engine.connect() as conn:
+        for table_name, column_names in UTC_DATETIME_COLUMNS.items():
+            if table_name not in table_names:
+                continue
+
+            existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name in column_names:
+                if column_name not in existing_columns:
+                    continue
+
+                rows = conn.execute(
+                    text(f"SELECT rowid, {column_name} FROM {table_name} WHERE {column_name} IS NOT NULL")
+                ).fetchall()
+
+                for rowid, raw_value in rows:
+                    try:
+                        parsed = parse_utc_datetime(raw_value)
+                    except Exception as exc:
+                        logger.warning(
+                            "Skipping invalid datetime during UTC normalization: %s.%s=%r (%s)",
+                            table_name,
+                            column_name,
+                            raw_value,
+                            exc,
+                        )
+                        continue
+
+                    if parsed is None:
+                        continue
+
+                    normalized = format_utc_datetime(parsed)
+                    if raw_value == normalized:
+                        continue
+
+                    conn.execute(
+                        text(f"UPDATE {table_name} SET {column_name} = :value WHERE rowid = :rowid"),
+                        {"value": normalized, "rowid": rowid},
+                    )
+
+        if "app_configs" in table_names:
+            conn.execute(
+                text(
+                    """
+                    INSERT OR REPLACE INTO app_configs (key, value, category, metadata, updated_at)
+                    VALUES (:key, :value, :category, :metadata, :updated_at)
+                    """
+                ),
+                {
+                    "key": UTC_DATETIME_MIGRATION_KEY,
+                    "value": json.dumps(True),
+                    "category": "system",
+                    "metadata": json.dumps({"migration": "utc_datetime_text_v1"}),
+                    "updated_at": format_utc_datetime(datetime.now(timezone.utc)),
+                },
+            )
         conn.commit()
 
 def auto_migrate_schema():
@@ -128,6 +217,7 @@ def init_db():
     try:
         auto_migrate_schema()
         migrate_session_memory_json_payloads()
+        migrate_datetime_columns_to_explicit_utc_strings()
     except Exception as e:
         logger.exception("🚨 DB Initialization Error")
         # Re-raise to prevent the app from starting in a broken state

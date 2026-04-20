@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from starlette.websockets import WebSocketDisconnect
 from sqlmodel import select
 
@@ -778,7 +779,7 @@ def test_websocket_session_message_and_task_flows(client, session):
                     "last_run_at": None,
                     "next_run_at": None,
                     "total_run_count": 0,
-                    "updated_at": schedule.updated_at.isoformat(),
+                    "updated_at": schedule.updated_at.isoformat().replace("+00:00", "Z"),
                 }
             ],
             "next_cursor": None,
@@ -1011,6 +1012,47 @@ def test_websocket_update_schedule_syncs_schedule_manager(client, session):
 
     assert response["result"] == {"status": "success"}
     sync_schedule.assert_awaited_once_with("schedule-sync-update")
+
+
+def test_websocket_get_schedule_serializes_legacy_naive_datetime_as_explicit_utc(client, session):
+    schedule = Schedule(
+        id="schedule-legacy-utc",
+        name="Legacy UTC schedule",
+        cron_expression="14 10 * * *",
+        timezone="Asia/Shanghai",
+        enabled=True,
+        args={"instruction": "Keep UTC storage explicit."},
+    )
+    session.add(schedule)
+    session.commit()
+
+    session.execute(
+        text(
+            """
+            UPDATE schedules
+            SET next_run_at = :next_run_at,
+                created_at = :created_at,
+                updated_at = :updated_at
+            WHERE id = :schedule_id
+            """
+        ),
+        {
+            "schedule_id": schedule.id,
+            "next_run_at": "2026-04-19 02:14:00.000000",
+            "created_at": "2026-04-19 02:10:45.476888",
+            "updated_at": "2026-04-19 02:12:26.522405",
+        },
+    )
+    session.commit()
+    session.expire_all()
+
+    with client.websocket_connect(websocket_path()) as websocket:
+        response = send_rpc(websocket, "get_schedule", {"schedule_id": schedule.id}, request_id=204)
+
+    payload = response["result"]["schedule"]
+    assert payload["next_run_at"] == "2026-04-19T02:14:00Z"
+    assert payload["created_at"] == "2026-04-19T02:10:45.476888Z"
+    assert payload["updated_at"] == "2026-04-19T02:12:26.522405Z"
 
 
 def test_websocket_delete_schedule_removes_scheduler_job(client, session):

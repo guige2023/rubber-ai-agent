@@ -12,14 +12,24 @@ interface ScheduleManagerProps {
   t: (key: string) => string;
 }
 
-function formatDate(value?: string | null) {
+function formatDate(value?: string | null, timezone?: string) {
   if (!value) return '-';
-  return new Intl.DateTimeFormat(undefined, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: timezone || undefined,
+    }).format(new Date(value));
+  } catch {
+    return new Intl.DateTimeFormat(undefined, {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(value));
+  }
 }
 
 function getLastRunHeadline(schedule: Schedule, t: (key: string) => string) {
@@ -142,12 +152,11 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
                             {schedule.enabled ? t('schedules.enabled') : t('schedules.disabled')}
                           </span>
                         </div>
-                        <p className="mt-1 truncate text-xs font-medium text-white/30">{schedule.instruction || t('schedules.no_instruction')}</p>
                       </div>
                     </div>
                     <span className="truncate font-mono text-[11px] text-white/38">{schedule.cron}</span>
-                    <span className="font-mono text-[10px] text-white/28">{formatDate(schedule.next_run_at)}</span>
-                    <span className="font-mono text-[10px] text-white/28">{formatDate(schedule.last_run_at)}</span>
+                    <span className="font-mono text-[10px] text-white/28">{formatDate(schedule.next_run_at, schedule.timezone)}</span>
+                    <span className="font-mono text-[10px] text-white/28">{formatDate(schedule.last_run_at, schedule.timezone)}</span>
                     <ChevronRight size={15} className="justify-self-end text-white/18 transition-transform group-hover:translate-x-0.5 group-hover:text-white/45" />
                   </button>
                 ))
@@ -169,7 +178,7 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
       <SideDrawer
         open={Boolean(draft)}
         title={t('schedules.detail_title')}
-        subtitle={draft ? formatDate(draft.updated_at) : undefined}
+        subtitle={draft ? formatDate(draft.updated_at, draft.timezone) : undefined}
         onClose={() => setSelectedSchedule(null)}
       >
         {draft && (
@@ -202,12 +211,12 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
               <textarea value={draft.instruction || ''} onChange={(event) => setDraft({ ...draft, instruction: event.target.value })} className="field-textarea min-h-[180px]" />
             </Field>
             <div className="grid grid-cols-2 gap-3 text-xs text-white/35">
-              <Meta label={t('schedules.field_last_run')} value={formatDate(draft.last_run_at)} />
-              <Meta label={t('schedules.field_next_run')} value={formatDate(draft.next_run_at)} />
+              <Meta label={t('schedules.field_last_run')} value={formatDate(draft.last_run_at, draft.timezone)} />
+              <Meta label={t('schedules.field_next_run')} value={formatDate(draft.next_run_at, draft.timezone)} />
               <Meta label={t('schedules.field_timezone')} value={draft.timezone} />
               <Meta label={t('schedules.field_total_runs')} value={String(draft.total_run_count)} />
-              <Meta label={t('schedules.field_created_at')} value={formatDate(draft.created_at)} />
-              <Meta label={t('schedules.field_updated_at')} value={formatDate(draft.updated_at)} />
+              <Meta label={t('schedules.field_created_at')} value={formatDate(draft.created_at, draft.timezone)} />
+              <Meta label={t('schedules.field_updated_at')} value={formatDate(draft.updated_at, draft.timezone)} />
               <Meta label={t('tasks.identifier')} value={draft.id} wide />
             </div>
             {draft.last_run_result && (
@@ -226,7 +235,7 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
                   </div>
                   {draft.last_run_result.finished_at && (
                     <div className="mt-1 text-xs font-medium text-white/45">
-                      {formatDate(draft.last_run_result.finished_at)}
+                      {formatDate(draft.last_run_result.finished_at, draft.timezone)}
                     </div>
                   )}
                 </div>

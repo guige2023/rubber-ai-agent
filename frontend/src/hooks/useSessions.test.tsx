@@ -233,6 +233,97 @@ describe('useSessions', () => {
     expect(clearToolActivities).not.toHaveBeenCalled();
   });
 
+  it('reconciles a finished run from persisted messages when the final event is missed', async () => {
+    const persistedMessages = [
+      {
+        id: 'user-server-1',
+        role: 'user' as const,
+        content: 'Recover from storage',
+        created_at: '2026-04-15T14:41:00Z',
+        metadata: {
+          run: {
+            id: 'run-reconcile-1',
+            status: 'success' as const,
+            scope: 'master',
+          },
+        },
+      },
+      {
+        id: 'assistant-server-1',
+        role: 'assistant' as const,
+        content: 'Recovered final answer.',
+        created_at: '2026-04-15T14:41:05Z',
+        metadata: {
+          run: {
+            id: 'run-reconcile-1',
+            status: 'success' as const,
+            scope: 'master',
+          },
+          usage: {
+            input_tokens: 9,
+            output_tokens: 6,
+            total_tokens: 15,
+          },
+        },
+      },
+    ];
+    const call = vi.fn(async (method: string) => {
+      if (method === 'list_sessions') {
+        return { sessions: [] };
+      }
+      if (method === 'list_messages') {
+        return { messages: persistedMessages };
+      }
+      return {};
+    });
+    const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-reconcile-1' });
+    const cancelRun = vi.fn();
+    const clearToolActivities = vi.fn();
+    let lastEvent: FerrymanEvent | null = null;
+
+    const { result, rerender } = renderHook(() =>
+      useSessions({
+        call,
+        executeInstruction,
+        cancelRun,
+        clearToolActivities,
+        lastEvent,
+      })
+    );
+
+    await act(async () => {
+      await result.current.execute('Recover from storage');
+    });
+
+    expect(result.current.isExecuting).toBe(true);
+    expect(result.current.messages).toHaveLength(2);
+
+    lastEvent = {
+      namespace: 'data',
+      event: 'refresh',
+      session_id: 'default',
+      ts: '2026-04-15T14:41:10Z',
+      payload: {
+        entity: 'session',
+        action: 'updated',
+        entity_id: 'default',
+      },
+    };
+    rerender();
+
+    await waitFor(() => {
+      expect(result.current.isExecuting).toBe(false);
+    });
+
+    expect(result.current.messages).toEqual(persistedMessages);
+    expect(result.current.currentUsage).toEqual({
+      input_tokens: 9,
+      output_tokens: 6,
+      total_tokens: 15,
+    });
+    expect(clearToolActivities).toHaveBeenCalledTimes(2);
+  });
+
   it('does not overwrite the currently viewed session when another session run finishes', async () => {
     const sessionTwoMessages = [
       {

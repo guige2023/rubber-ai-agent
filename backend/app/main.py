@@ -23,6 +23,7 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.kernel import FerrymanKernel
 from app.core.scheduler import FerrymanScheduler, compute_next_run_at, normalize_timezone_name
+from app.core.utc_datetime import format_utc_datetime
 from app.models.database import Session, Message, Schedule, Task
 from app.models.schemas import JsonRpcError, JsonRpcErrorCode, JsonRpcErrorResponse
 
@@ -118,16 +119,16 @@ def serialize_schedule(schedule: Schedule, *, detail: bool = False) -> dict[str,
         "cron": schedule.cron_expression,
         "timezone": schedule.timezone or "UTC",
         "enabled": schedule.enabled,
-        "last_run_at": schedule.last_run_at.isoformat() if schedule.last_run_at else None,
-        "next_run_at": schedule.next_run_at.isoformat() if schedule.next_run_at else None,
+        "last_run_at": format_utc_datetime(schedule.last_run_at) if schedule.last_run_at else None,
+        "next_run_at": format_utc_datetime(schedule.next_run_at) if schedule.next_run_at else None,
         "total_run_count": schedule.total_run_count,
-        "updated_at": schedule.updated_at.isoformat(),
+        "updated_at": format_utc_datetime(schedule.updated_at),
     }
     if detail:
         payload.update({
             "instruction": schedule.args.get("instruction", ""),
             "last_run_result": schedule.last_run_result,
-            "created_at": schedule.created_at.isoformat(),
+            "created_at": format_utc_datetime(schedule.created_at),
         })
     return payload
 

@@ -167,7 +167,7 @@ export function useSessions({
     return true;
   }, [clearToolActivities, getTerminalRunSnapshot, refreshSessions]);
 
-  const mergePendingAssistantPlaceholder = useCallback((candidateMessages: Message[], sessionId: string) => {
+  const mergePendingAssistantPlaceholder = useCallback((candidateMessages: Message[], sessionId: string): Message[] => {
     const currentActiveRun = activeRunRef.current;
     if (!currentActiveRun || sessionId !== currentActiveRun.sessionId) {
       return candidateMessages;
@@ -196,21 +196,23 @@ export function useSessions({
     );
 
     if (!existingPlaceholder) {
-      return [
-        ...candidateMessages,
-        {
-          id: currentActiveRun.pendingMessageId,
-          role: 'assistant',
-          content: '',
-          created_at: new Date().toISOString(),
-          metadata: {
-            run: {
-              id: currentActiveRun.runId,
-              status: 'pending',
-              scope: 'master',
-            },
+      const pendingPlaceholder: Message = {
+        id: currentActiveRun.pendingMessageId,
+        role: 'assistant',
+        content: '',
+        created_at: new Date().toISOString(),
+        metadata: {
+          run: {
+            id: currentActiveRun.runId,
+            status: 'pending',
+            scope: 'master',
           },
         },
+      };
+
+      return [
+        ...candidateMessages,
+        pendingPlaceholder,
       ];
     }
 

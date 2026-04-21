@@ -201,6 +201,7 @@
     "field_cron": "Cron表达式",
     "field_timezone": "时区",
     "field_instruction": "执行指令",
+    "field_enabled": "启用状态",
     "field_last_run": "上次运行",
     "field_next_run": "下次运行",
     "field_total_runs": "累计运行次数",

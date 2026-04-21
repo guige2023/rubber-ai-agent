@@ -85,6 +85,7 @@ export function useSessions({
   const currentSessionIdRef = useRef(currentSessionId);
   const sessionsRef = useRef(sessions);
   const activeRunRef = useRef(activeRun);
+  const messagesRef = useRef(messages);
 
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
@@ -97,6 +98,10 @@ export function useSessions({
   useEffect(() => {
     activeRunRef.current = activeRun;
   }, [activeRun]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     if (currentSessionId) {
@@ -162,12 +167,62 @@ export function useSessions({
     return true;
   }, [clearToolActivities, getTerminalRunSnapshot, refreshSessions]);
 
+  const mergePendingAssistantPlaceholder = useCallback((candidateMessages: Message[], sessionId: string) => {
+    const currentActiveRun = activeRunRef.current;
+    if (!currentActiveRun || sessionId !== currentActiveRun.sessionId) {
+      return candidateMessages;
+    }
+
+    if (getTerminalRunSnapshot(candidateMessages, currentActiveRun.runId)) {
+      return candidateMessages;
+    }
+
+    const hasPendingAssistant = candidateMessages.some((message) =>
+      message.role === 'assistant' &&
+      message.metadata?.run?.id === currentActiveRun.runId &&
+      message.metadata?.run?.status === 'pending'
+    );
+    if (hasPendingAssistant) {
+      return candidateMessages;
+    }
+
+    const existingPlaceholder = messagesRef.current.find((message) =>
+      message.id === currentActiveRun.pendingMessageId ||
+      (
+        message.role === 'assistant' &&
+        message.metadata?.run?.id === currentActiveRun.runId &&
+        message.metadata?.run?.status === 'pending'
+      )
+    );
+
+    if (!existingPlaceholder) {
+      return [
+        ...candidateMessages,
+        {
+          id: currentActiveRun.pendingMessageId,
+          role: 'assistant',
+          content: '',
+          created_at: new Date().toISOString(),
+          metadata: {
+            run: {
+              id: currentActiveRun.runId,
+              status: 'pending',
+              scope: 'master',
+            },
+          },
+        },
+      ];
+    }
+
+    return [...candidateMessages, existingPlaceholder];
+  }, [getTerminalRunSnapshot]);
+
   const switchSession = useCallback(async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     currentSessionIdRef.current = sessionId;
     try {
       const res: any = await call('list_messages', { session_id: sessionId, limit: 100 });
-      const nextMessages = res.messages || [];
+      const nextMessages = mergePendingAssistantPlaceholder(res.messages || [], sessionId);
       setMessages(nextMessages);
       const reconciledActiveRun = reconcileActiveRunFromMessages(nextMessages, sessionId);
 
@@ -184,7 +239,7 @@ export function useSessions({
     } catch (error) {
       console.error('Failed to load session messages:', error);
     }
-  }, [call, reconcileActiveRunFromMessages]);
+  }, [call, mergePendingAssistantPlaceholder, reconcileActiveRunFromMessages]);
 
   const refreshCurrentSession = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -198,7 +253,7 @@ export function useSessions({
         return;
       }
 
-      const nextMessages = res.messages || [];
+      const nextMessages = mergePendingAssistantPlaceholder(res.messages || [], sessionId);
       setMessages(nextMessages);
 
       const reconciledActiveRun = reconcileActiveRunFromMessages(nextMessages, sessionId);
@@ -217,7 +272,7 @@ export function useSessions({
     } catch (error) {
       console.error('Failed to refresh current session messages:', error);
     }
-  }, [call, reconcileActiveRunFromMessages]);
+  }, [call, mergePendingAssistantPlaceholder, reconcileActiveRunFromMessages]);
 
   useEffect(() => {
     if (!isConnected) {
@@ -381,7 +436,10 @@ export function useSessions({
           return;
         }
 
-        reconcileActiveRunFromMessages(res.messages || [], activeRun.sessionId);
+        reconcileActiveRunFromMessages(
+          mergePendingAssistantPlaceholder(res.messages || [], activeRun.sessionId),
+          activeRun.sessionId
+        );
       })
       .catch((error) => {
         console.error('Failed to reconcile active run from session refresh:', error);
@@ -390,7 +448,7 @@ export function useSessions({
     return () => {
       cancelled = true;
     };
-  }, [activeRun, call, lastEvent, reconcileActiveRunFromMessages]);
+  }, [activeRun, call, lastEvent, mergePendingAssistantPlaceholder, reconcileActiveRunFromMessages]);
 
   const createNewSession = useCallback(async () => {
     const newId = crypto.randomUUID();

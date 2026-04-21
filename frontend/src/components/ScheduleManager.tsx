@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { CalendarClock, ChevronRight, Power, Save, Trash2 } from 'lucide-react';
+import { CalendarClock, Check, ChevronRight, Power, Save, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { RefreshIconButton } from './RefreshIconButton';
 import { SideDrawer } from './SideDrawer';
@@ -75,6 +75,7 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
     setFormError(null);
     try {
       await updateSchedule(draft);
+      setSelectedSchedule(null);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -183,17 +184,21 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
       >
         {draft && (
           <div className="space-y-5">
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between gap-3 border-b border-white/8 pb-5">
               <button
-                onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
-                className={cn(
-                  'rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] transition-colors',
-                  draft.enabled
-                    ? 'border-green-400/20 bg-green-500/10 text-green-200'
-                    : 'border-white/10 bg-white/[0.03] text-white/45'
-                )}
+                onClick={() => setDeleteTarget(draft)}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-400/20 px-4 py-2 text-xs font-black text-red-200 transition-colors hover:bg-red-500/15"
               >
-                {draft.enabled ? t('schedules.enabled') : t('schedules.disabled')}
+                <Trash2 size={14} />
+                {t('common.delete')}
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-xs font-black text-[#080808] transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Save size={14} />
+                {isSaving ? t('common.saving') : t('common.save')}
               </button>
             </div>
             <Field label={t('schedules.field_name')}>
@@ -203,12 +208,38 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
               <input value={draft.cron} onChange={(event) => setDraft({ ...draft, cron: event.target.value })} className="field-input font-mono" />
               <p className="mt-2 text-[11px] font-medium text-white/28">{t('schedules.cron_hint')}</p>
             </Field>
+            <Field label={t('schedules.field_instruction')}>
+              <textarea value={draft.instruction || ''} onChange={(event) => setDraft({ ...draft, instruction: event.target.value })} className="field-textarea min-h-[180px]" />
+            </Field>
+            <Field label={t('schedules.field_enabled')}>
+              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 transition-colors hover:bg-white/[0.05]">
+                <div>
+                  <div className="text-sm font-bold text-white/84">
+                    {t('schedules.enabled')}
+                  </div>
+                </div>
+                <span
+                  className={cn(
+                    'flex h-6 w-6 items-center justify-center rounded-md border transition-colors',
+                    draft.enabled
+                      ? 'border-green-400/30 bg-green-500/15 text-green-200'
+                      : 'border-white/14 bg-black/20 text-transparent'
+                  )}
+                >
+                  <Check size={14} />
+                </span>
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+                  className="sr-only"
+                  aria-label={t('schedules.field_enabled')}
+                />
+              </label>
+            </Field>
             <Field label={t('schedules.field_timezone')}>
               <input value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })} className="field-input font-mono" />
               <p className="mt-2 text-[11px] font-medium text-white/28">{t('schedules.timezone_hint')}</p>
-            </Field>
-            <Field label={t('schedules.field_instruction')}>
-              <textarea value={draft.instruction || ''} onChange={(event) => setDraft({ ...draft, instruction: event.target.value })} className="field-textarea min-h-[180px]" />
             </Field>
             <div className="grid grid-cols-2 gap-3 text-xs text-white/35">
               <Meta label={t('schedules.field_last_run')} value={formatDate(draft.last_run_at, draft.timezone)} />

@@ -413,6 +413,93 @@ describe('useSessions', () => {
     expect(clearToolActivities).toHaveBeenCalledTimes(2);
   });
 
+  it('preserves the pending assistant bubble when the window regains focus mid-run', async () => {
+    const persistedPendingMessages = [
+      {
+        id: 'user-server-pending-1',
+        role: 'user' as const,
+        content: 'Keep thinking after focus',
+        created_at: '2026-04-15T14:56:00Z',
+        metadata: {
+          run: {
+            id: 'run-focus-pending-1',
+            status: 'pending' as const,
+            scope: 'master',
+          },
+        },
+      },
+    ];
+    let listMessagesCount = 0;
+    const call = vi.fn(async (method: string) => {
+      if (method === 'list_sessions') {
+        return { sessions: [] };
+      }
+      if (method === 'list_messages') {
+        listMessagesCount += 1;
+        return { messages: listMessagesCount === 1 ? [] : persistedPendingMessages };
+      }
+      return {};
+    });
+    const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-focus-pending-1' });
+    const cancelRun = vi.fn();
+    const clearToolActivities = vi.fn();
+    const lastEvent: FerrymanEvent | null = null;
+
+    const { result } = renderHook(() =>
+      useSessions({
+        call,
+        executeInstruction,
+        cancelRun,
+        clearToolActivities,
+        lastEvent,
+        isConnected: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(call).toHaveBeenCalledWith('list_messages', { session_id: 'default', limit: 100 });
+    });
+
+    await act(async () => {
+      await result.current.execute('Keep thinking after focus');
+    });
+
+    expect(result.current.isExecuting).toBe(true);
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[1]).toMatchObject({
+      role: 'assistant',
+      metadata: {
+        run: {
+          id: 'run-focus-pending-1',
+          status: 'pending',
+          scope: 'master',
+        },
+      },
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages[0].id).toBe('user-server-pending-1');
+    });
+
+    expect(result.current.isExecuting).toBe(true);
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[1]).toMatchObject({
+      role: 'assistant',
+      metadata: {
+        run: {
+          id: 'run-focus-pending-1',
+          status: 'pending',
+          scope: 'master',
+        },
+      },
+    });
+    expect(clearToolActivities).toHaveBeenCalledTimes(1);
+  });
+
   it('does not overwrite the currently viewed session when another session run finishes', async () => {
     const sessionTwoMessages = [
       {

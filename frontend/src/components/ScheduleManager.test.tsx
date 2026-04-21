@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
 
 import { ScheduleManager } from './ScheduleManager';
@@ -72,6 +72,7 @@ describe('ScheduleManager', () => {
             'schedules.timezone_hint': 'Timezone hint',
             'schedules.field_timezone': 'Timezone',
             'schedules.field_instruction': 'Instruction',
+            'schedules.field_enabled': 'Enabled Status',
             'schedules.field_total_runs': 'Total Runs',
             'schedules.field_last_run_result': 'Last Run Result',
             'schedules.field_last_run_summary': 'Summary',
@@ -98,6 +99,9 @@ describe('ScheduleManager', () => {
     );
 
     expect(screen.getByDisplayValue('Asia/Shanghai')).toBeInTheDocument();
+    expect(screen.getAllByText('Delete')).toHaveLength(2);
+    expect(screen.getAllByText('Save').length).toBeGreaterThan(0);
+    expect(screen.getByRole('checkbox', { name: 'Enabled Status' })).toBeChecked();
     expect(screen.getByText('Total Runs')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('The last run failed')).toBeInTheDocument();
@@ -147,6 +151,7 @@ describe('ScheduleManager', () => {
             'schedules.timezone_hint': 'Timezone hint',
             'schedules.field_timezone': 'Timezone',
             'schedules.field_instruction': 'Instruction',
+            'schedules.field_enabled': 'Enabled Status',
             'schedules.field_total_runs': 'Total Runs',
             'schedules.field_last_run_result': 'Last Run Result',
             'schedules.field_last_run_summary': 'Summary',
@@ -177,5 +182,153 @@ describe('ScheduleManager', () => {
       undefined,
       expect.objectContaining({ timeZone: 'Asia/Shanghai' })
     );
+  });
+
+  it('closes the details drawer after saving successfully', async () => {
+    const schedule = buildSchedule();
+    const setSelectedSchedule = vi.fn();
+    const updateSchedule = vi.fn().mockResolvedValue(undefined);
+
+    mockedUseSchedules.mockReturnValue({
+      schedules: [schedule],
+      selectedSchedule: schedule,
+      setSelectedSchedule,
+      nextCursor: null,
+      isLoading: false,
+      isLoadingMore: false,
+      error: null,
+      loadSchedules: vi.fn(),
+      selectSchedule: vi.fn(),
+      updateSchedule,
+      deleteSchedule: vi.fn(),
+    });
+
+    render(
+      <ScheduleManager
+        call={vi.fn()}
+        isConnected
+        t={(key) =>
+          ({
+            'schedules.title': 'Schedules',
+            'schedules.subtitle': 'Subtitle',
+            'schedules.refresh': 'Refresh Schedules',
+            'schedules.list_title': 'Schedule List',
+            'schedules.field_cron': 'Cron Expression',
+            'schedules.field_next_run': 'Next Run',
+            'schedules.field_last_run': 'Last Run',
+            'schedules.empty': 'Empty',
+            'schedules.enabled': 'Enabled',
+            'schedules.disabled': 'Paused',
+            'schedules.no_instruction': 'No instruction',
+            'schedules.detail_title': 'Schedule Details',
+            'schedules.field_name': 'Name',
+            'schedules.timezone_hint': 'Timezone hint',
+            'schedules.field_timezone': 'Timezone',
+            'schedules.field_instruction': 'Instruction',
+            'schedules.field_enabled': 'Enabled Status',
+            'schedules.field_total_runs': 'Total Runs',
+            'schedules.field_last_run_result': 'Last Run Result',
+            'schedules.field_last_run_summary': 'Summary',
+            'schedules.field_last_run_error': 'Error',
+            'schedules.field_last_run_id': 'Run ID',
+            'schedules.field_created_at': 'Created',
+            'schedules.field_updated_at': 'Updated',
+            'schedules.last_run_succeeded': 'The last run completed successfully',
+            'schedules.last_run_failed': 'The last run failed',
+            'tasks.identifier': 'Identifier',
+            'common.delete': 'Delete',
+            'common.saving': 'Saving',
+            'common.save': 'Save',
+            'schedules.delete_title': 'Delete Schedule?',
+            'schedules.delete_description': '{name}',
+            'schedules.confirm_delete': 'Delete Schedule',
+            'common.cancel': 'Cancel',
+            'schedules.cron_hint': 'Cron hint',
+            'common.loading': 'Loading',
+            'common.load_more': 'Load more',
+          } as Record<string, string>)[key] ?? key
+        }
+      />
+    );
+
+    fireEvent.click(screen.getAllByText('Save')[0]);
+
+    await waitFor(() => {
+      expect(updateSchedule).toHaveBeenCalledWith(schedule);
+      expect(setSelectedSchedule).toHaveBeenCalledWith(null);
+    });
+  });
+
+  it('keeps the enabled checkbox label text static even when the schedule is paused', () => {
+    const schedule = { ...buildSchedule(), enabled: false };
+
+    mockedUseSchedules.mockReturnValue({
+      schedules: [schedule],
+      selectedSchedule: schedule,
+      setSelectedSchedule: vi.fn(),
+      nextCursor: null,
+      isLoading: false,
+      isLoadingMore: false,
+      error: null,
+      loadSchedules: vi.fn(),
+      selectSchedule: vi.fn(),
+      updateSchedule: vi.fn(),
+      deleteSchedule: vi.fn(),
+    });
+
+    render(
+      <ScheduleManager
+        call={vi.fn()}
+        isConnected
+        t={(key) =>
+          ({
+            'schedules.title': 'Schedules',
+            'schedules.subtitle': 'Subtitle',
+            'schedules.refresh': 'Refresh Schedules',
+            'schedules.list_title': 'Schedule List',
+            'schedules.field_cron': 'Cron Expression',
+            'schedules.field_next_run': 'Next Run',
+            'schedules.field_last_run': 'Last Run',
+            'schedules.empty': 'Empty',
+            'schedules.enabled': 'Enabled',
+            'schedules.disabled': 'Paused',
+            'schedules.no_instruction': 'No instruction',
+            'schedules.detail_title': 'Schedule Details',
+            'schedules.field_name': 'Name',
+            'schedules.timezone_hint': 'Timezone hint',
+            'schedules.field_timezone': 'Timezone',
+            'schedules.field_instruction': 'Instruction',
+            'schedules.field_enabled': 'Enabled Status',
+            'schedules.field_total_runs': 'Total Runs',
+            'schedules.field_last_run_result': 'Last Run Result',
+            'schedules.field_last_run_summary': 'Summary',
+            'schedules.field_last_run_error': 'Error',
+            'schedules.field_last_run_id': 'Run ID',
+            'schedules.field_created_at': 'Created',
+            'schedules.field_updated_at': 'Updated',
+            'schedules.last_run_succeeded': 'The last run completed successfully',
+            'schedules.last_run_failed': 'The last run failed',
+            'tasks.identifier': 'Identifier',
+            'common.delete': 'Delete',
+            'common.saving': 'Saving',
+            'common.save': 'Save',
+            'schedules.delete_title': 'Delete Schedule?',
+            'schedules.delete_description': '{name}',
+            'schedules.confirm_delete': 'Delete Schedule',
+            'common.cancel': 'Cancel',
+            'schedules.cron_hint': 'Cron hint',
+            'common.loading': 'Loading',
+            'common.load_more': 'Load more',
+          } as Record<string, string>)[key] ?? key
+        }
+      />
+    );
+
+    const enabledCheckbox = screen.getByRole('checkbox', { name: 'Enabled Status' });
+    const enabledCard = enabledCheckbox.closest('label');
+
+    expect(enabledCheckbox).not.toBeChecked();
+    expect(enabledCard).not.toBeNull();
+    expect(within(enabledCard as HTMLElement).getByText('Enabled')).toBeInTheDocument();
   });
 });

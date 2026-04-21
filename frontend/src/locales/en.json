@@ -201,6 +201,7 @@
     "field_cron": "Cron Expression",
     "field_timezone": "Timezone",
     "field_instruction": "Instruction",
+    "field_enabled": "Enabled Status",
     "field_last_run": "Last Run",
     "field_next_run": "Next Run",
     "field_total_runs": "Total Runs",

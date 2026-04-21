@@ -31,6 +31,15 @@ UTC_DATETIME_COLUMNS: dict[str, tuple[str, ...]] = {
     "app_configs": ("updated_at",),
 }
 
+# This key is a one-time execution marker for the specific UTC datetime backfill
+# implemented in migrate_datetime_columns_to_explicit_utc_strings().
+#
+# IMPORTANT:
+# - Reuse this key only if the migration logic is unchanged.
+# - If the backfill logic changes in a way that must reprocess existing rows,
+#   create a NEW key (for example, ..._v2) so the migration runs again.
+# - For a different one-time migration, use a different dedicated key instead of
+#   overloading this one.
 UTC_DATETIME_MIGRATION_KEY = "system.utc_datetime_text_migration_v1"
 
 
@@ -89,6 +98,10 @@ def migrate_session_memory_json_payloads() -> None:
 
 def migrate_datetime_columns_to_explicit_utc_strings() -> None:
     """Normalize persisted datetimes to explicit ISO 8601 UTC strings."""
+    # Guard this backfill with a durable marker so startup does not rescan every
+    # datetime column on every launch. If you change the normalization behavior
+    # and need to re-run it for already-migrated databases, bump
+    # UTC_DATETIME_MIGRATION_KEY to a new value.
     try:
         inspector = inspect(engine)
         table_names = set(inspector.get_table_names())

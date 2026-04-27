@@ -120,18 +120,24 @@ Create this second file only when the user explicitly asks for a publishable art
 2. [Contrast-led title]
 3. [Reframing-led or Reader-stakes-led title]
 
-## Lead
-
-[2-4 sentence opening]
-
-## Full Draft
-
-[Publishable article body]
-
 ## Fact Check Notes
 
 - **Claims requiring careful wording**: [List]
 - **Inferences explicitly labeled**: [List]
 - **Primary source URLs**: [List]
 - **Chinese Finalization Check**: [Confirm non-essential Chinese/English spacing has been cleaned up]
+
+====================
+OPERATIONS PUBLISHING ZONE START
+====================
+
+Title:
+[One final title only]
+
+Body:
+[Final copy-paste-ready article body only]
+
+====================
+OPERATIONS PUBLISHING ZONE END
+====================
 ```

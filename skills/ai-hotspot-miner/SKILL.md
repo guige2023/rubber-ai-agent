@@ -255,11 +255,12 @@ If the user explicitly asks for a publishable article, create a second Markdown 
 1. Article Strategy
 2. Title Candidates
 3. Chosen Hook
-4. Full Draft
-5. Fact Check Notes / Source Notes
+4. Fact Check Notes / Source Notes
+5. Operations Publishing Zone
 
 The article draft must be based on the `Recommended Topic` section from the brief unless you explicitly explain why a roundup format is stronger.
 The article should read like a finished editorial deliverable, not like a progress update or a request for more instructions.
+The article draft must end with an `Operations Publishing Zone`, marked in the template as `OPERATIONS PUBLISHING ZONE START` / `OPERATIONS PUBLISHING ZONE END`; this zone may contain only one final title and the final article body, and is the only copy-paste-ready publishing content.
 
 ## Safety & Quality Guardrails
 
@@ -272,3 +273,4 @@ The article should read like a finished editorial deliverable, not like a progre
 7. **Final Handoff**: In your concluding conversational reply to the user, explicitly provide the path or clickable Markdown links to every generated file.
 8. **Do Not Over-Research Weak Leads**: If a lead looks thin after a reasonable first pass, drop it instead of sinking more budget into marginal verification.
 9. **No Service-Language Endings**: Do not end the article deliverable with assistant-style phrases such as asking whether the draft is acceptable or inviting routine confirmation.
+10. **Publishing Zone Hygiene**: The full article body must appear only in the `Operations Publishing Zone`. That zone must not include internal headings, strategy notes, title candidates, source notes, fact-check notes, dates, brand metadata, draft labels, or assistant-style meta commentary.

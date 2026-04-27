@@ -407,7 +407,7 @@ async def test_master_agent_can_recover_from_soft_failed_run_skill(monkeypatch):
 
 # --- test_kernel.py (Execution Flow Mocked) ---
 @pytest.mark.asyncio
-async def test_run_master_agent_mocked(monkeypatch):
+async def test_run_master_agent_mocked(monkeypatch, caplog):
     """
     Test Master Agent execution flow with completely mocked result.
     """
@@ -437,10 +437,20 @@ async def test_run_master_agent_mocked(monkeypatch):
 
     kernel = FerrymanKernel(create_test_settings())
     monkeypatch.setattr(kernel, "_get_master_agent", mock_get_master_agent)
-    
-    response = await kernel.run_master_agent("Please list files", "test-session")
+
+    with caplog.at_level(logging.INFO, logger="app.core.kernel"):
+        response = await kernel.run_master_agent("Please list files", "test-session")
     
     assert "Please list files" in response["payload"]["messages"][0]["content"]
+    run_start_logs = [
+        record.msg["message"]
+        for record in caplog.records
+        if isinstance(record.msg, dict)
+        and record.msg.get("message", {}).get("event") == "agent_run_start"
+    ]
+    assert run_start_logs
+    assert run_start_logs[-1]["instruction"] == "Please list files"
+    assert run_start_logs[-1]["instruction_length"] == len("Please list files")
 
 
 @pytest.mark.asyncio

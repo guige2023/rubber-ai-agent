@@ -127,6 +127,19 @@ function getToolActivityDisplayName(toolName: string, t: (key: string) => string
   return translated !== `tools.${toolName}` ? translated : toolName;
 }
 
+function getHttpUrl(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildToolActivityCopyLine(activity: ToolActivityPayload, t: (key: string) => string) {
   const segments = [getToolActivityDisplayName(activity.tool_name, t)];
 
@@ -500,6 +513,15 @@ export default function App() {
     }
   };
 
+  const handleOpenExternalUrl = useCallback(async (url: string) => {
+    try {
+      await openUrl(url);
+    } catch (error) {
+      console.error('Failed to open external URL:', error);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  }, []);
+
   const handleSaveConfig = async (
     provider: string,
     apiKey: string | undefined,
@@ -825,30 +847,50 @@ export default function App() {
                             <div className="space-y-4">
                               <ThinkingIndicator />
                               {toolActivities.map((activity, idx) => (
-                                 <div key={`${activity.run_id}-${activity.tool_name}-${idx}`} className="flex items-center gap-2 text-[12px] font-mono text-white/50 bg-white/5 px-4 py-2 rounded-xl">
-                                    {activity.phase === 'start' || activity.phase === 'running'
+                                <div key={`${activity.run_id}-${activity.tool_name}-${idx}`} className="flex items-center gap-2 text-[12px] font-mono text-white/50 bg-white/5 px-4 py-2 rounded-xl">
+                                  {(() => {
+                                    const activityUrl = getHttpUrl(activity.input?.url);
+
+                                    return (
+                                      <>
+                                        {activity.phase === 'start' || activity.phase === 'running'
                                         ? <RefreshCw size={12} className="animate-spin text-white/40 shrink-0" />
                                         : activity.phase === 'error'
                                             ? <X size={12} className="text-red-400 shrink-0" />
                                             : <Check size={12} className="text-green-400 shrink-0" />
-                                    }
-                                    <span className="flex-1 truncate">
-                                      {getToolActivityDisplayName(activity.tool_name, t)}
-                                       {activity.input && activity.input.url && <span className="ml-2 text-white/30 truncate font-normal">{activity.input.url}</span>}
-                                       {activity.input && activity.input.skill_name && <span className="ml-2 text-blue-400 font-bold truncate">[{activity.input.skill_name}]</span>}
-                                       {activity.input && activity.input.command && <span className="ml-2 text-orange-400 truncate font-normal">`{activity.input.command}`</span>}
-                                       {activity.input && activity.input.path && (
-                                           <span
-                                               className="ml-2 text-green-400 truncate font-normal"
-                                               title={String(activity.input.path)}
-                                           >
-                                               {String(activity.input.path)}
-                                           </span>
-                                       )}
-                                       {activity.input && activity.input.title && <span className="ml-2 text-white/40 italic truncate">"{activity.input.title}"</span>}
-                                    </span>
-                                    {activity.duration_ms !== undefined && <span className="text-white/20 shrink-0">{activity.duration_ms}ms</span>}
-                                 </div>
+                                        }
+                                        <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
+                                          <span className="shrink-0">{getToolActivityDisplayName(activity.tool_name, t)}</span>
+                                          {activityUrl && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenExternalUrl(activityUrl)}
+                                              className="inline-flex min-w-0 items-center gap-1 truncate text-left font-normal text-sky-300/75 transition-colors hover:text-sky-200"
+                                              title={activityUrl}
+                                              aria-label={`Open ${activityUrl}`}
+                                            >
+                                              <span className="truncate">{activityUrl}</span>
+                                              <ExternalLink size={11} className="shrink-0" />
+                                            </button>
+                                          )}
+                                          {activity.input && activity.input.url && !activityUrl && <span className="truncate font-normal text-white/30">{activity.input.url}</span>}
+                                          {activity.input && activity.input.skill_name && <span className="truncate font-bold text-blue-400">[{activity.input.skill_name}]</span>}
+                                          {activity.input && activity.input.command && <span className="truncate font-normal text-orange-400">`{activity.input.command}`</span>}
+                                          {activity.input && activity.input.path && (
+                                            <span
+                                              className="truncate font-normal text-green-400"
+                                              title={String(activity.input.path)}
+                                            >
+                                              {String(activity.input.path)}
+                                            </span>
+                                          )}
+                                          {activity.input && activity.input.title && <span className="truncate text-white/40 italic">"{activity.input.title}"</span>}
+                                        </span>
+                                        {activity.duration_ms !== undefined && <span className="text-white/20 shrink-0">{activity.duration_ms}ms</span>}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
                               ))}
                             </div>
                           ) : (

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 import App from './App';
 import { useBackendConnection, type ToolActivityPayload } from './hooks/useBackendConnection';
@@ -29,6 +30,7 @@ vi.mock('@tauri-apps/plugin-opener', () => ({
 const mockedUseBackendConnection = vi.mocked(useBackendConnection);
 const mockedUseSessions = vi.mocked(useSessions);
 const mockedUseI18n = vi.mocked(useI18n);
+const mockedOpenUrl = vi.mocked(openUrl);
 
 let mockedMessages: Message[] = [];
 let mockedToolActivities: ToolActivityPayload[] = [];
@@ -40,6 +42,7 @@ describe('App chat interactions', () => {
     mockedMessages = [];
     mockedToolActivities = [];
     clipboardWriteText.mockReset();
+    mockedOpenUrl.mockReset();
     scrollIntoView.mockReset();
 
     const storage = new Map<string, string>();
@@ -273,6 +276,36 @@ describe('App chat interactions', () => {
     expect(screen.getByText('Use the seo-backlink-research skill.')).toBeInTheDocument();
     expect(screen.queryByText('reading_file')).not.toBeInTheDocument();
     expect(screen.queryByText('[seo-backlink-research]')).not.toBeInTheDocument();
+  });
+
+  it('opens tool activity URLs with the system browser opener', async () => {
+    const url = 'https://r.jina.ai/http://itunes.apple.com/search?term=AI%E8%AE%B0%E8%B4%A6&country=CN';
+    mockedOpenUrl.mockResolvedValue(undefined);
+    mockedMessages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        created_at: new Date().toISOString(),
+        metadata: { run: { status: 'pending', scope: 'master' } },
+      },
+    ];
+    mockedToolActivities = [
+      {
+        run_id: 'run-1',
+        tool_name: 'browser_navigate',
+        phase: 'complete',
+        input: { url },
+        duration_ms: 4402,
+      },
+    ];
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: `Open ${url}` }));
+    await waitFor(() => {
+      expect(mockedOpenUrl).toHaveBeenCalledWith(url);
+    });
   });
 
   it('uses the send button as stop while a run is active', async () => {

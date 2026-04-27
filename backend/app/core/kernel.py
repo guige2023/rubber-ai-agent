@@ -907,9 +907,16 @@ class FerrymanKernel:
         """
         The single entry-point called by the JSON-RPC `execute` method.
         """
-        logger.info(f"Master Agent processing session {session_id} (instruction_length={len(instruction)})")
-
         run_id = correlation_id.get() or uuid4().hex
+        logger.info({
+            "message": {
+                "event": "agent_run_start",
+                "session_id": session_id,
+                "run_id": run_id,
+                "instruction": instruction,
+                "instruction_length": len(instruction),
+            }
+        })
         user_message_id: Optional[str] = None
 
         try:

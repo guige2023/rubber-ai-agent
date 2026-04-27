@@ -155,11 +155,11 @@ Titles should make the payoff legible, not merely sound exciting.
 
 ## Chinese Finalization Pass
 
-For Chinese deliverables, do a final cleanup pass before saving:
+For Chinese deliverables, do a final language cleanup pass before saving.
 
 - Remove unnecessary spaces between Chinese and adjacent English words, numbers, or units.
-- Keep spaces only when needed to preserve literal names, model identifiers, commands, code, paths, URLs, or direct quotations.
-- Make the final copy read like native Chinese editorial writing.
+- Keep spaces only when needed to preserve literal names, model identifiers, commands, code, paths, URLs, protocol strings, or direct quotations.
+- Aim for natural Chinese publishing style, not translated-looking spacing.
 
 ## Execution Workflow
 
@@ -205,10 +205,11 @@ Draft the Markdown report with the following structure:
 If the user explicitly asks for a publishable article, create a second Markdown file with:
 1. Article Strategy
 2. Title Candidates
-3. Case Breakdown Draft
-4. Fact Check Notes
+3. Fact Check Notes / Source Notes
+4. Operations Publishing Zone
 
 The article should read like a finished editorial deliverable, not like a progress update.
+The article draft must end with an `Operations Publishing Zone`, marked in the template as `OPERATIONS PUBLISHING ZONE START` / `OPERATIONS PUBLISHING ZONE END`; this zone may contain only one final title and the final article body, and is the only copy-paste-ready publishing content.
 
 ## Safety & Quality Guardrails
 
@@ -218,3 +219,4 @@ The article should read like a finished editorial deliverable, not like a progre
 4. **Do Not Overstate Business Facts**: If revenue, pricing strategy, user numbers, or retention cannot be confirmed, label your statements as interpretation or hypothesis.
 5. **Builder Value**: Every featured case should teach something useful about productization, commercialization, or distribution.
 6. **Final Handoff**: In your concluding reply, provide the path or a clickable Markdown link to every generated file.
+7. **Publishing Zone Hygiene**: The `Operations Publishing Zone` must contain only the copy-paste-ready final title and article body.

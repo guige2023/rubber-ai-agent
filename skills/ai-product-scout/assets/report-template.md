@@ -116,6 +116,7 @@ Create this second file only when the user explicitly asks for a publishable art
 ## Article Strategy
 
 - **Featured Case**: [Product Name]
+- **Chosen Hook**: [Surprise / consequence / contrast / practical implication / pattern reveal]
 - **Core Claim**: [The one idea the reader should remember]
 - **Reader Payoff**: [Why this case matters to builders]
 - **Click Driver**: [Consequence-led / Contrast-led / Reframing-led / Builder-stakes-led]
@@ -127,18 +128,24 @@ Create this second file only when the user explicitly asks for a publishable art
 2. [Contrast-led title]
 3. [Reframing-led or Builder-stakes-led title]
 
-## Lead
-
-[2-4 sentence opening]
-
-## Case Breakdown Draft
-
-[Publishable article body]
-
-## Fact Check Notes
+## Fact Check Notes / Source Notes
 
 - **Claims requiring careful wording**: [List]
 - **Inferences explicitly labeled**: [List]
 - **Primary source URLs**: [List]
 - **Chinese Finalization Check**: [Confirm non-essential Chinese/English spacing has been cleaned up]
+
+====================
+OPERATIONS PUBLISHING ZONE START
+====================
+
+Title:
+[One final title only]
+
+Body:
+[Final copy-paste-ready article body only]
+
+====================
+OPERATIONS PUBLISHING ZONE END
+====================
 ```

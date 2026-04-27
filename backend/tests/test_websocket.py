@@ -483,6 +483,58 @@ def test_persist_canceled_chat_run_updates_existing_run_metadata_only(session):
     }
 
 
+def test_websocket_cancel_run_recovers_persisted_pending_run_after_restart(client, session):
+    session.add(Session(id="session-stale-cancel", title="Stale Cancel"))
+    session.add(
+        Message(
+            session_id="session-stale-cancel",
+            role="user",
+            content="这个run是在sidecar重启前开始的",
+            type="text",
+            metadata_={
+                "run": {
+                    "id": "run-stale-1",
+                    "status": "pending",
+                    "scope": "master",
+                }
+            },
+        )
+    )
+    session.commit()
+
+    with client.websocket_connect(websocket_path()) as websocket:
+        cancel_response, cancel_notifications = send_rpc_until_response(
+            websocket,
+            "cancel_run",
+            {"run_id": "run-stale-1", "session_id": "session-stale-cancel"},
+            request_id=23,
+        )
+
+        assert cancel_response["result"] == {
+            "status": "canceled",
+            "run_id": "run-stale-1",
+            "session_id": "session-stale-cancel",
+        }
+        assert any(
+            event.get("params", {}).get("event") == "chat_final"
+            and event["params"]["payload"]["run_id"] == "run-stale-1"
+            for event in cancel_notifications
+        )
+
+    session.expire_all()
+    message = session.exec(
+        select(Message).where(
+            Message.session_id == "session-stale-cancel",
+            Message.role == "user",
+        )
+    ).one()
+    assert message.metadata_["run"] == {
+        "id": "run-stale-1",
+        "status": "canceled",
+        "scope": "master",
+    }
+
+
 def test_websocket_execute_can_be_canceled_while_socket_stays_responsive(client, monkeypatch):
     blocker = asyncio.Event()
 

@@ -413,6 +413,18 @@ def persist_canceled_chat_run(session_id: str, run_id: str) -> Any:
     )
 
 
+def has_persisted_pending_chat_run(session_id: str, run_id: str) -> bool:
+    with get_session() as db_session:
+        return db_session.exec(
+            select(Message.id).where(
+                Message.session_id == session_id,
+                Message.role == "user",
+                func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                func.json_extract(Message.metadata_, "$.run.status") == "pending",
+            )
+        ).first() is not None
+
+
 async def background_execute_run(
     *,
     context,
@@ -852,6 +864,30 @@ async def cancel_run(context, run_id: str, session_id: Optional[str] = None):
 
     entry = context.app_state.execute_runs.get(run_id)
     if not entry:
+        if session_id and has_persisted_pending_chat_run(session_id, run_id):
+            logger.warning(
+                "Canceling persisted pending run %s for session %s after active run was not found",
+                run_id,
+                session_id,
+            )
+            canceled_event = persist_canceled_chat_run(session_id, run_id)
+            websocket = getattr(context, "request_ws", None)
+            send_lock = getattr(context, "send_lock", None)
+            emit_ws_event = (
+                build_emit_ws_event(websocket, send_lock)
+                if websocket is not None and send_lock is not None
+                else None
+            )
+            if websocket is not None and send_lock is not None:
+                await emit_ws_event(canceled_event)
+            await emit_refresh_event(
+                emit_ws_event,
+                entity="session",
+                action="updated",
+                entity_id=session_id,
+                session_id=session_id,
+            )
+            return Success({"status": "canceled", "run_id": run_id, "session_id": session_id})
         return Success({"status": "not_found", "run_id": run_id})
 
     if session_id and entry["session_id"] != session_id:

@@ -79,6 +79,7 @@
       "getting_task": "Reading task status",
       "updating_task": "Updating task progress",
       "listing_tasks": "Checking task board",
+      "sending_email": "Sending email",
       "listing_skills": "Fetching skills",
       "installing_skill": "Installing new skill",
       "reading_skill": "Reading skill SOP"

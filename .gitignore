@@ -50,6 +50,7 @@ frontend/src-tauri/gen/
 *.pem
 *.key
 *.mobileprovision
+backend/app/assets/defaults/runtime_defaults.json
 
 # Local agent instructions
 AGENTS.md

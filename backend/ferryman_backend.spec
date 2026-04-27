@@ -29,6 +29,7 @@ hiddenimports = sorted(
             "playwright.sync_api",
             "playwright_stealth",
             "pythonjsonlogger.orjson",
+            "resend",
         ]
     )
 )
@@ -37,6 +38,9 @@ datas = []
 datas += collect_data_files("playwright_stealth", includes=["js/**/*.js"])
 datas += collect_data_files("trafilatura", includes=["settings.cfg"])
 datas += collect_data_files("justext", includes=["stoplists/*"])
+runtime_defaults = BACKEND_ROOT / "app" / "assets" / "defaults" / "runtime_defaults.json"
+if runtime_defaults.exists():
+    datas.append((str(runtime_defaults), "app/assets/defaults"))
 for package_name in (
     "genai_prices",
     "pydantic_ai",

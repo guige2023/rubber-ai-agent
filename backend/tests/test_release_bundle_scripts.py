@@ -49,6 +49,14 @@ def test_stage_backend_copy_skills_does_not_inject_smoke_skill(tmp_path, monkeyp
     assert not (skills_dst / smoke_skill_name).exists()
 
 
+def test_pyinstaller_spec_bundles_resend_and_optional_runtime_defaults():
+    spec_text = (REPO_ROOT / "backend" / "ferryman_backend.spec").read_text(encoding="utf-8")
+
+    assert '"resend",' in spec_text.split("hiddenimports = sorted", 1)[1].split("datas = []", 1)[0]
+    assert "runtime_defaults.json" in spec_text
+    assert "app/assets/defaults" in spec_text
+
+
 def test_build_smoke_skills_dir_adds_temp_smoke_skill_only_for_verification(tmp_path):
     verify_module = load_module("verify_release_bundle_test", VERIFY_SCRIPT_PATH)
     packaged_skills_dir = tmp_path / "packaged-skills"

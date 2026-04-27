@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         default="DEBUG",
         validation_alias=AliasChoices("FERRYMAN_LOG_LEVEL", "LOG_LEVEL"),
     )
+    resend_default_from: str = Field(
+        default="noreply@ferryman.app",
+        validation_alias="FERRYMAN_RESEND_DEFAULT_FROM",
+    )
 
     @property
     def user_dir(self) -> Path:
@@ -92,6 +96,44 @@ class Settings(BaseSettings):
             self.bundled_skills_dir,
             self.user_skills_dir,
         )
+
+    @staticmethod
+    def _runtime_defaults_path() -> Path:
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        if frozen_root:
+            return Path(frozen_root) / "app" / "assets" / "defaults" / "runtime_defaults.json"
+        return Path(__file__).resolve().parents[1] / "assets" / "defaults" / "runtime_defaults.json"
+
+    def load_packaged_runtime_defaults(self) -> Dict[str, Any]:
+        defaults_path = self._runtime_defaults_path()
+        if not defaults_path.exists():
+            return {}
+        try:
+            payload = json.loads(defaults_path.read_text(encoding="utf-8"))
+        except (OSError, JSONDecodeError) as exc:
+            logger.warning("Could not load packaged runtime defaults from %s: %s", defaults_path, exc)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def seed_runtime_defaults(self) -> None:
+        """Seed packaged runtime defaults into the local SQLite config store."""
+        payload = self.load_packaged_runtime_defaults()
+        resend_defaults = payload.get("email", {}).get("resend", {})
+        if not isinstance(resend_defaults, dict):
+            resend_defaults = {}
+
+        default_from = str(resend_defaults.get("default_from") or self.resend_default_from).strip()
+        api_key = str(resend_defaults.get("api_key") or "").strip()
+
+        if default_from and not self.get("email.resend.default_from"):
+            self.set("email.resend.default_from", default_from, category="email")
+        if api_key and not self.get("email.resend.api_key"):
+            self.set(
+                "email.resend.api_key",
+                api_key,
+                category="email",
+                metadata={"source": "packaged_runtime_defaults"},
+            )
 
     # --- Runtime Registry Methods (Database Persistent) ---
     # Note: Using local imports inside methods to avoid circular dependencies with db.py

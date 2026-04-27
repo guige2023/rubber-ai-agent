@@ -38,6 +38,7 @@ from app.core.prompts import (
 )
 from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.file import FileToolkit
+from app.core.toolkits.email import EmailToolkit
 from app.core.toolkits.skill import SkillToolkit
 from app.core.toolkits.task import TaskToolkit
 from app.core.toolkits.time import TimeToolkit
@@ -100,6 +101,7 @@ class FerrymanKernel:
         # self.mcp_client: Any = None  # To be initialized later
         self._init_directories(settings)
         init_db()
+        settings.seed_runtime_defaults()
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         """Public access to persisted runtime settings."""
@@ -673,6 +675,7 @@ class FerrymanKernel:
         self._register_toolkit(agent, WebToolkit)
         self._register_toolkit(agent, TaskToolkit)
         self._register_toolkit(agent, TimeToolkit)
+        self._register_toolkit(agent, EmailToolkit)
         self._register_toolkit(agent, CommandToolkit)
         return agent
 

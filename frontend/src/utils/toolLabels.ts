@@ -21,6 +21,9 @@ export const ToolLabels: Record<string, string> = {
     update_task_status: "updating_task",
     list_tasks: "listing_tasks",
 
+    // Email Actions
+    send_email: "sending_email",
+
     // Skill Actions
     list_skills: "listing_skills",
     install_skill: "installing_skill",

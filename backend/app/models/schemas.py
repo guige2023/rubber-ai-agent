@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
 from typing import Optional, Any, Dict, List, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TaskStatus:
@@ -28,6 +28,70 @@ class MCPToolModel(BaseModel):
     description: str
     arguments: Dict[str, Any]
     server_name: str
+
+
+def _normalize_utc_string(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    elif isinstance(value, datetime):
+        parsed = value
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
+class SessionCompactionMemory(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    summary: Optional[str] = None
+    cutoff_created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    guard_until: Optional[str] = None
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        summary = value.strip()
+        return summary or None
+
+    @field_validator("cutoff_created_at", "updated_at", "guard_until", mode="before")
+    @classmethod
+    def normalize_utc_fields(cls, value: Any) -> Optional[str]:
+        try:
+            return _normalize_utc_string(value)
+        except Exception:
+            return None
+
+
+class SessionMemory(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: Literal[1] = 1
+    compaction: SessionCompactionMemory = Field(default_factory=SessionCompactionMemory)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def normalize_schema_version(cls, value: Any) -> Literal[1]:
+        return 1
+
+    @field_validator("compaction", mode="before")
+    @classmethod
+    def normalize_compaction(cls, value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    def as_storage_dict(self) -> Dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
 
 class SessionModel(BaseModel):
     id: str

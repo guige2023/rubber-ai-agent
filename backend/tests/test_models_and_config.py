@@ -7,7 +7,7 @@ from sqlmodel import select, Session as DBSession
 
 import app.core.db as db_module
 from app.models.database import Session, Message, Task, AppConfig
-from app.models.schemas import SessionModel, MessageModel, TaskModel
+from app.models.schemas import SessionMemory, SessionModel, MessageModel, TaskModel
 from app.core.config import ModelListEndpointUnavailable, Settings as config
 
 from app.models.events import (
@@ -91,6 +91,45 @@ def test_pydantic_schema_validation():
     model = MessageModel(**data)
     assert model.role == "assistant"
     assert model.content == "Hi"
+
+
+def test_session_memory_schema_normalizes_compaction_payload():
+    memory = SessionMemory.model_validate(
+        {
+            "schema_version": 1,
+            "unknown": "ignored",
+            "compaction": {
+                "summary": "  compressed history  ",
+                "cutoff_created_at": "2026-04-16T12:00:00+08:00",
+                "updated_at": datetime(2026, 4, 16, 4, 5, tzinfo=timezone.utc),
+                "guard_until": "not-a-date",
+                "extra": "ignored",
+            },
+        }
+    )
+
+    assert memory.as_storage_dict() == {
+        "schema_version": 1,
+        "compaction": {
+            "summary": "compressed history",
+            "cutoff_created_at": "2026-04-16T04:00:00Z",
+            "updated_at": "2026-04-16T04:05:00Z",
+        },
+    }
+
+
+def test_session_memory_schema_tolerates_legacy_shape_mismatches():
+    memory = SessionMemory.model_validate(
+        {
+            "schema_version": 99,
+            "compaction": "legacy freeform memory",
+        }
+    )
+
+    assert memory.as_storage_dict() == {
+        "schema_version": 1,
+        "compaction": {},
+    }
 
 
 def test_event_models_serialization():

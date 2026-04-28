@@ -48,12 +48,13 @@ from app.core.toolkits.web import WebToolkit
 from app.core.tool_results import build_tool_error_result, build_tool_success_result
 from app.core.utils import load_skill_from_directory
 from app.models.database import Session, Message, Task
-from app.models.schemas import SkillModel, TaskStatus, Usage
+from app.models.schemas import SessionMemory, SkillModel, TaskStatus, Usage
 
 logger = logging.getLogger(__name__)
 
 COMPACTION_MEMORY_SCHEMA_VERSION = 1
 COMPACTION_THRESHOLD_TOKENS_DEFAULT = 12000
+COMPACTION_CHUNK_TOKENS_DEFAULT = 48000
 COMPACTION_GUARD_SECONDS_DEFAULT = 60
 TOKEN_ESTIMATE_ENCODING = "o200k_base"
 O200K_BASE_CACHE_KEY = "fb374d419588a4632f3f557e76b4b70aebbca790"
@@ -297,16 +298,22 @@ class FerrymanKernel:
             return max(1, (len(text) + 3) // 4)
 
     @staticmethod
-    def _normalize_session_memory(memory: Any) -> Dict[str, Any]:
-        if isinstance(memory, dict):
-            return dict(memory)
-        return {}
+    def _normalize_session_memory(memory: Any) -> SessionMemory:
+        if isinstance(memory, SessionMemory):
+            return memory
+        if not isinstance(memory, dict):
+            return SessionMemory()
+        return SessionMemory.model_validate(memory)
 
     @staticmethod
     def _parse_utc_timestamp(value: Optional[str]) -> Optional[datetime]:
         if not value:
             return None
-        return FerrymanKernel._ensure_utc_datetime(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        try:
+            return FerrymanKernel._ensure_utc_datetime(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        except Exception:
+            logger.warning("Ignoring invalid session memory timestamp: %r", value)
+            return None
 
     @staticmethod
     def _ensure_utc_datetime(value: datetime) -> datetime:
@@ -328,21 +335,35 @@ class FerrymanKernel:
             total += max(estimate, 0)
         return total
 
+    @staticmethod
+    def _select_compaction_chunk(messages: list[Message], max_tokens: int) -> list[Message]:
+        if max_tokens <= 0:
+            return messages
+
+        chunk: list[Message] = []
+        token_total = 0
+        for message in messages:
+            estimate = max(message.token_estimate, 0)
+            if chunk and token_total + estimate > max_tokens:
+                break
+            chunk.append(message)
+            token_total += estimate
+            if token_total >= max_tokens:
+                break
+        return chunk
+
     def _get_compaction_state(
         self,
         session_obj: Session,
     ) -> tuple[Optional[str], Optional[datetime], Optional[datetime]]:
         memory = self._normalize_session_memory(session_obj.memory)
-        compaction = memory.get("compaction")
-        if not isinstance(compaction, dict):
-            return None, None, None
-
-        summary = compaction.get("summary")
-        cutoff_created_at = self._parse_utc_timestamp(compaction.get("cutoff_created_at"))
-        guard_until = self._parse_utc_timestamp(compaction.get("guard_until"))
-        if not isinstance(summary, str) or not summary.strip():
+        compaction = memory.compaction
+        summary = compaction.summary
+        cutoff_created_at = self._parse_utc_timestamp(compaction.cutoff_created_at)
+        guard_until = self._parse_utc_timestamp(compaction.guard_until)
+        if not summary:
             return None, cutoff_created_at, guard_until
-        return summary.strip(), cutoff_created_at, guard_until
+        return summary, cutoff_created_at, guard_until
 
     def _update_compaction_metadata(
         self,
@@ -354,25 +375,21 @@ class FerrymanKernel:
         clear_guard: bool = False,
     ) -> None:
         memory = self._normalize_session_memory(session_obj.memory)
-        memory["schema_version"] = COMPACTION_MEMORY_SCHEMA_VERSION
-        compaction = memory.get("compaction")
-        if not isinstance(compaction, dict):
-            compaction = {}
-        else:
-            compaction = dict(compaction)
+        compaction = memory.compaction.model_copy()
 
         if summary is not None:
-            compaction["summary"] = summary
+            compaction.summary = summary
         if cutoff_created_at is not None:
-            compaction["cutoff_created_at"] = self._format_utc_timestamp(cutoff_created_at)
-            compaction["updated_at"] = self._format_utc_timestamp(datetime.now(timezone.utc))
+            compaction.cutoff_created_at = self._format_utc_timestamp(cutoff_created_at)
+            compaction.updated_at = self._format_utc_timestamp(datetime.now(timezone.utc))
         if clear_guard:
-            compaction.pop("guard_until", None)
+            compaction.guard_until = None
         elif guard_until is not None:
-            compaction["guard_until"] = self._format_utc_timestamp(guard_until)
+            compaction.guard_until = self._format_utc_timestamp(guard_until)
 
-        memory["compaction"] = compaction
-        session_obj.memory = memory
+        memory.schema_version = COMPACTION_MEMORY_SCHEMA_VERSION
+        memory.compaction = compaction
+        session_obj.memory = memory.as_storage_dict()
         flag_modified(session_obj, "memory")
 
     def _build_compaction_reference(self, summary: str) -> str:
@@ -430,6 +447,7 @@ class FerrymanKernel:
         threshold = int(self.get_setting("system.llm.compaction_threshold_tokens", COMPACTION_THRESHOLD_TOKENS_DEFAULT))
         if threshold <= 0:
             return
+        chunk_tokens = int(self.get_setting("system.llm.compaction_chunk_tokens", COMPACTION_CHUNK_TOKENS_DEFAULT))
         guard_seconds = int(self.get_setting("system.llm.compaction_guard_seconds", COMPACTION_GUARD_SECONDS_DEFAULT))
         now = datetime.now(timezone.utc)
 
@@ -449,12 +467,15 @@ class FerrymanKernel:
             added_tokens_since_compaction = self._ensure_message_token_estimates(messages)
             if added_tokens_since_compaction < threshold:
                 return
+            messages_to_compact = self._select_compaction_chunk(messages, chunk_tokens)
+            if not messages_to_compact:
+                return
 
             summary_input = build_compaction_input(
                 previous_summary=previous_summary,
-                new_messages_json=self._serialize_messages_for_compaction(messages),
+                new_messages_json=self._serialize_messages_for_compaction(messages_to_compact),
             )
-            last_message_created_at = messages[-1].created_at
+            last_message_created_at = messages_to_compact[-1].created_at
 
             self._update_compaction_metadata(
                 session_obj,

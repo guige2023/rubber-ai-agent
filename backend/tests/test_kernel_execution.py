@@ -629,6 +629,43 @@ def test_get_session_messages_respects_microsecond_cutoff():
     assert rendered_tail == ["same-second new user"]
 
 
+def test_get_session_messages_ignores_invalid_memory_timestamps():
+    kernel = FerrymanKernel(create_test_settings())
+    session_id = "session-with-invalid-memory-timestamps"
+
+    with get_session() as db_session:
+        db_session.add(
+            Session(
+                id=session_id,
+                title="",
+                memory={
+                    "schema_version": 1,
+                    "compaction": {
+                        "summary": "compressed history",
+                        "cutoff_created_at": "not-a-date",
+                        "guard_until": "also-not-a-date",
+                    },
+                },
+            )
+        )
+        db_session.add(
+            Message(
+                session_id=session_id,
+                role="user",
+                content="tail user",
+                type="text",
+                token_estimate=5,
+                created_at=datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+            )
+        )
+        db_session.commit()
+
+    history = kernel._get_session_messages(session_id)
+
+    assert history[1].parts[0].content.startswith("[CONTEXT COMPACTION")
+    assert history[2].parts[0].content == "tail user"
+
+
 @pytest.mark.asyncio
 async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
     captured = {}
@@ -917,6 +954,217 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
     assert all(message.token_estimate > 0 for message in legacy_messages)
     assert session_obj is not None
     assert session_obj.memory["compaction"]["summary"].startswith("## Current Goal")
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_session_uses_rolling_chunk_window(monkeypatch):
+    captured = {}
+    session_id = "compaction-chunk-window"
+    base_time = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
+
+    class CompactionUsage:
+        input_tokens = 2
+        output_tokens = 3
+        total_tokens = 5
+
+    class CompactionResult:
+        output = "## Current Goal\ncontinue\n## Completed\nchunk\n## Current State\nstate\n## Unresolved Issues\nnone\n## Pending Work\nnext\n## Exact Identifiers\nid\n## User Preferences and Constraints\npref"
+
+        @staticmethod
+        def usage():
+            return CompactionUsage()
+
+    class CompactionAgent:
+        async def run(self, instruction):
+            captured["input"] = instruction
+            return CompactionResult()
+
+    kernel = FerrymanKernel(create_test_settings())
+    monkeypatch.setattr(kernel, "_get_compaction_agent", lambda: CompactionAgent())
+    monkeypatch.setattr(
+        kernel,
+        "get_setting",
+        lambda key, default=None: (
+            20 if key == "system.llm.compaction_threshold_tokens"
+            else 25 if key == "system.llm.compaction_chunk_tokens"
+            else default
+        ),
+    )
+
+    with get_session() as db_session:
+        db_session.add(Session(id=session_id, title=""))
+        for index in range(4):
+            db_session.add(
+                Message(
+                    session_id=session_id,
+                    role="user" if index % 2 == 0 else "assistant",
+                    content=f"message {index}",
+                    type="text",
+                    token_estimate=10,
+                    created_at=base_time + timedelta(minutes=index),
+                )
+            )
+        db_session.commit()
+
+    await kernel._maybe_compact_session(session_id)
+
+    assert "message 0" in captured["input"]
+    assert "message 1" in captured["input"]
+    assert "message 2" not in captured["input"]
+    assert "message 3" not in captured["input"]
+
+    with get_session() as db_session:
+        session_obj = db_session.get(Session, session_id)
+
+    assert session_obj is not None
+    assert session_obj.memory["compaction"]["cutoff_created_at"] == "2026-04-16T12:01:00Z"
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_session_rolls_forward_after_existing_cutoff(monkeypatch):
+    captured = {}
+    session_id = "compaction-existing-cutoff"
+    base_time = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
+
+    class CompactionUsage:
+        input_tokens = 2
+        output_tokens = 3
+        total_tokens = 5
+
+    class CompactionResult:
+        output = "## Current Goal\ncontinue\n## Completed\nsecond chunk\n## Current State\nstate\n## Unresolved Issues\nnone\n## Pending Work\nnext\n## Exact Identifiers\nid\n## User Preferences and Constraints\npref"
+
+        @staticmethod
+        def usage():
+            return CompactionUsage()
+
+    class CompactionAgent:
+        async def run(self, instruction):
+            captured["input"] = instruction
+            return CompactionResult()
+
+    kernel = FerrymanKernel(create_test_settings())
+    monkeypatch.setattr(kernel, "_get_compaction_agent", lambda: CompactionAgent())
+    monkeypatch.setattr(
+        kernel,
+        "get_setting",
+        lambda key, default=None: (
+            20 if key == "system.llm.compaction_threshold_tokens"
+            else 25 if key == "system.llm.compaction_chunk_tokens"
+            else default
+        ),
+    )
+
+    with get_session() as db_session:
+        db_session.add(
+            Session(
+                id=session_id,
+                title="",
+                memory={
+                    "schema_version": 1,
+                    "compaction": {
+                        "summary": "previous summary",
+                        "cutoff_created_at": "2026-04-16T12:00:00Z",
+                    },
+                },
+            )
+        )
+        for index in range(4):
+            db_session.add(
+                Message(
+                    session_id=session_id,
+                    role="user",
+                    content=f"message {index}",
+                    type="text",
+                    token_estimate=10,
+                    created_at=base_time + timedelta(minutes=index),
+                )
+            )
+        db_session.commit()
+
+    await kernel._maybe_compact_session(session_id)
+
+    assert "previous summary" in captured["input"]
+    assert "message 0" not in captured["input"]
+    assert "message 1" in captured["input"]
+    assert "message 2" in captured["input"]
+    assert "message 3" not in captured["input"]
+
+    with get_session() as db_session:
+        session_obj = db_session.get(Session, session_id)
+
+    assert session_obj is not None
+    assert session_obj.memory["compaction"]["cutoff_created_at"] == "2026-04-16T12:02:00Z"
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_session_includes_single_message_larger_than_chunk(monkeypatch):
+    captured = {}
+    session_id = "compaction-oversized-single-message"
+
+    class CompactionUsage:
+        input_tokens = 2
+        output_tokens = 3
+        total_tokens = 5
+
+    class CompactionResult:
+        output = "## Current Goal\ncontinue\n## Completed\noversized\n## Current State\nstate\n## Unresolved Issues\nnone\n## Pending Work\nnext\n## Exact Identifiers\nid\n## User Preferences and Constraints\npref"
+
+        @staticmethod
+        def usage():
+            return CompactionUsage()
+
+    class CompactionAgent:
+        async def run(self, instruction):
+            captured["input"] = instruction
+            return CompactionResult()
+
+    kernel = FerrymanKernel(create_test_settings())
+    monkeypatch.setattr(kernel, "_get_compaction_agent", lambda: CompactionAgent())
+    monkeypatch.setattr(
+        kernel,
+        "get_setting",
+        lambda key, default=None: (
+            20 if key == "system.llm.compaction_threshold_tokens"
+            else 25 if key == "system.llm.compaction_chunk_tokens"
+            else default
+        ),
+    )
+
+    with get_session() as db_session:
+        db_session.add(Session(id=session_id, title=""))
+        db_session.add(
+            Message(
+                session_id=session_id,
+                role="assistant",
+                content="oversized message",
+                type="text",
+                token_estimate=100,
+                created_at=datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+            )
+        )
+        db_session.add(
+            Message(
+                session_id=session_id,
+                role="user",
+                content="later message",
+                type="text",
+                token_estimate=10,
+                created_at=datetime(2026, 4, 16, 12, 1, tzinfo=timezone.utc),
+            )
+        )
+        db_session.commit()
+
+    await kernel._maybe_compact_session(session_id)
+
+    assert "oversized message" in captured["input"]
+    assert "later message" not in captured["input"]
+
+    with get_session() as db_session:
+        session_obj = db_session.get(Session, session_id)
+
+    assert session_obj is not None
+    assert session_obj.memory["compaction"]["cutoff_created_at"] == "2026-04-16T12:00:00Z"
 
 
 # --- test_prompt_and_usage_limits.py ---

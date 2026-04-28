@@ -15,6 +15,7 @@ from app.models.database import Schedule, Session
 class FakeScheduler:
     def __init__(self) -> None:
         self.jobs: dict[str, SimpleNamespace] = {}
+        self.listeners: list[tuple[object, int]] = []
 
     def add_job(self, func, *, trigger, args, id, replace_existing, **kwargs):
         if id in self.jobs and not replace_existing:
@@ -41,6 +42,9 @@ class FakeScheduler:
         if job_id not in self.jobs:
             raise KeyError(job_id)
         self.jobs.pop(job_id)
+
+    def add_listener(self, callback, mask):
+        self.listeners.append((callback, mask))
 
 
 class StubKernel:
@@ -389,6 +393,74 @@ async def test_scheduler_sync_schedule_replaces_only_existing_catchup_job(sessio
     assert fake_scheduler.get_job(f"{schedule.id}:catchup") is not None
     assert fake_scheduler.get_job(schedule.id) is not first_catchup_job
     assert fake_scheduler.get_job(f"{schedule.id}:catchup") is not first_regular_job
+
+
+def test_scheduler_missed_event_adds_catchup_job_and_refreshes_next_run(session):
+    now = datetime.now(timezone.utc)
+    schedule = Schedule(
+        id="schedule-missed-event",
+        name="Missed event",
+        cron_expression="0 8 * * *",
+        timezone="UTC",
+        enabled=True,
+        args={"instruction": "Run from missed event."},
+        next_run_at=now - timedelta(minutes=20),
+    )
+    session.add(schedule)
+    session.commit()
+
+    fake_scheduler = FakeScheduler()
+    scheduler = FerrymanScheduler(StubKernel(), get_settings())
+    scheduler._scheduler = fake_scheduler
+    next_regular_run_at = now + timedelta(hours=2)
+    fake_scheduler.jobs[schedule.id] = SimpleNamespace(
+        id=schedule.id,
+        next_run_time=next_regular_run_at,
+    )
+
+    scheduler._handle_job_missed_inner(
+        SimpleNamespace(
+            job_id=schedule.id,
+            scheduled_run_time=now - timedelta(minutes=20),
+        )
+    )
+
+    session.expire_all()
+    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    catchup_job = fake_scheduler.get_job(f"{schedule.id}:catchup")
+
+    assert refreshed.next_run_at == next_regular_run_at
+    assert catchup_job is not None
+    assert catchup_job.args == [schedule.id, "catch_up"]
+    assert catchup_job.trigger == "date"
+
+
+def test_scheduler_missed_event_ignores_catchup_jobs(session):
+    now = datetime.now(timezone.utc)
+    schedule = Schedule(
+        id="schedule-catchup-missed-event",
+        name="Catch-up missed event",
+        cron_expression="0 8 * * *",
+        timezone="UTC",
+        enabled=True,
+        args={"instruction": "Do not recurse."},
+        next_run_at=now - timedelta(minutes=20),
+    )
+    session.add(schedule)
+    session.commit()
+
+    fake_scheduler = FakeScheduler()
+    scheduler = FerrymanScheduler(StubKernel(), get_settings())
+    scheduler._scheduler = fake_scheduler
+
+    scheduler._handle_job_missed_inner(
+        SimpleNamespace(
+            job_id=f"{schedule.id}:catchup",
+            scheduled_run_time=now - timedelta(minutes=20),
+        )
+    )
+
+    assert fake_scheduler.get_job(f"{schedule.id}:catchup") is None
 
 
 @pytest.mark.asyncio

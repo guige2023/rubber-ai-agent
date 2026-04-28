@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlmodel import select
@@ -109,6 +110,7 @@ class FerrymanScheduler:
                 "misfire_grace_time": self.settings.get("system.schedule.misfire_grace_time", 300),
             },
         )
+        scheduler.add_listener(self._handle_job_missed, EVENT_JOB_MISSED)
         scheduler.start()
         self._scheduler = scheduler
         self.kernel.schedule_manager = self
@@ -291,6 +293,43 @@ class FerrymanScheduler:
         if not scheduler:
             return None
         return scheduler.get_job(schedule_id)
+
+    def _handle_job_missed(self, event) -> None:
+        try:
+            self._handle_job_missed_inner(event)
+        except Exception:
+            logger.exception("Failed to handle missed schedule job: %s", getattr(event, "job_id", None))
+
+    def _handle_job_missed_inner(self, event) -> None:
+        schedule_id = getattr(event, "job_id", None)
+        if not isinstance(schedule_id, str) or schedule_id.endswith(CATCHUP_JOB_SUFFIX):
+            return
+
+        missed_run_at = self._normalize_utc(getattr(event, "scheduled_run_time", None))
+        if missed_run_at is None:
+            return
+
+        job = self._get_job(schedule_id)
+        next_regular_run_at = self._normalize_utc(job.next_run_time if job else None)
+        if next_regular_run_at is None:
+            return
+
+        with get_session() as session:
+            schedule = session.get(Schedule, schedule_id)
+            if not schedule or not schedule.enabled:
+                return
+            schedule.next_run_at = next_regular_run_at
+            session.add(schedule)
+            session.commit()
+
+        now = datetime.now(timezone.utc)
+        logger.info("Handling missed schedule %s from %s", schedule_id, missed_run_at)
+        self._schedule_catchup_if_needed(
+            schedule_id=schedule_id,
+            missed_run_at=missed_run_at,
+            next_regular_run_at=next_regular_run_at,
+            now=now,
+        )
 
     def _schedule_catchup_if_needed(
             self,

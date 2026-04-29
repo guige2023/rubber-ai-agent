@@ -716,7 +716,11 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
     monkeypatch.setattr(
         kernel,
         "get_setting",
-        lambda key, default=None: 10 if key == "system.llm.compaction_threshold_tokens" else default,
+        lambda key, default=None: (
+            10 if key == "system.llm.compaction_threshold_tokens"
+            else 10 if key == "system.llm.compaction_tail_tokens"
+            else default
+        ),
     )
 
     with get_session() as db_session:
@@ -748,8 +752,10 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
     history = captured["message_history"]
     rendered_history = [message.parts[0].content for message in history[1:]]
     assert rendered_history == ["first user", "first assistant"]
-    assert "follow-up" in captured["compaction_input"]
-    assert "post-compaction reply" in captured["compaction_input"]
+    assert "first user" in captured["compaction_input"]
+    assert "first assistant" in captured["compaction_input"]
+    assert "follow-up" not in captured["compaction_input"]
+    assert "post-compaction reply" not in captured["compaction_input"]
 
     with get_session() as db_session:
         session_obj = db_session.get(Session, session_id)
@@ -799,6 +805,7 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
         lambda key, default=None: (
             10 if key == "system.llm.compaction_threshold_tokens"
             else 60 if key == "system.llm.compaction_guard_seconds"
+            else 10 if key == "system.llm.compaction_tail_tokens"
             else default
         ),
     )
@@ -906,7 +913,11 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
     monkeypatch.setattr(
         kernel,
         "get_setting",
-        lambda key, default=None: 20 if key == "system.llm.compaction_threshold_tokens" else default,
+        lambda key, default=None: (
+            20 if key == "system.llm.compaction_threshold_tokens"
+            else 10 if key == "system.llm.compaction_tail_tokens"
+            else default
+        ),
     )
 
     with get_session() as db_session:
@@ -987,6 +998,7 @@ async def test_maybe_compact_session_uses_rolling_chunk_window(monkeypatch):
         lambda key, default=None: (
             20 if key == "system.llm.compaction_threshold_tokens"
             else 25 if key == "system.llm.compaction_chunk_tokens"
+            else 10 if key == "system.llm.compaction_tail_tokens"
             else default
         ),
     )
@@ -1051,6 +1063,7 @@ async def test_maybe_compact_session_rolls_forward_after_existing_cutoff(monkeyp
         lambda key, default=None: (
             20 if key == "system.llm.compaction_threshold_tokens"
             else 25 if key == "system.llm.compaction_chunk_tokens"
+            else 10 if key == "system.llm.compaction_tail_tokens"
             else default
         ),
     )
@@ -1127,6 +1140,7 @@ async def test_maybe_compact_session_includes_single_message_larger_than_chunk(m
         lambda key, default=None: (
             20 if key == "system.llm.compaction_threshold_tokens"
             else 25 if key == "system.llm.compaction_chunk_tokens"
+            else 10 if key == "system.llm.compaction_tail_tokens"
             else default
         ),
     )
@@ -1165,6 +1179,26 @@ async def test_maybe_compact_session_includes_single_message_larger_than_chunk(m
 
     assert session_obj is not None
     assert session_obj.memory["compaction"]["cutoff_created_at"] == "2026-04-16T12:00:00Z"
+
+
+def test_split_compaction_tail_preserves_recent_messages():
+    base_time = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
+    messages = [
+        Message(
+            session_id="tail-session",
+            role="user",
+            content=f"message {index}",
+            type="text",
+            token_estimate=10,
+            created_at=base_time + timedelta(minutes=index),
+        )
+        for index in range(4)
+    ]
+
+    compactable, tail = FerrymanKernel._split_compaction_tail(messages, tail_tokens=20)
+
+    assert [message.content for message in compactable] == ["message 0", "message 1"]
+    assert [message.content for message in tail] == ["message 2", "message 3"]
 
 
 # --- test_prompt_and_usage_limits.py ---

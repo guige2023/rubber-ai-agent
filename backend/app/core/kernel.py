@@ -57,6 +57,7 @@ COMPACTION_MEMORY_SCHEMA_VERSION = 1
 COMPACTION_THRESHOLD_TOKENS_DEFAULT = 12000
 COMPACTION_CHUNK_TOKENS_DEFAULT = 48000
 COMPACTION_GUARD_SECONDS_DEFAULT = 60
+COMPACTION_TAIL_TOKENS_DEFAULT = 4000
 TOKEN_ESTIMATE_ENCODING = "o200k_base"
 O200K_BASE_CACHE_KEY = "fb374d419588a4632f3f557e76b4b70aebbca790"
 
@@ -358,6 +359,24 @@ class FerrymanKernel:
                 break
         return chunk
 
+    @staticmethod
+    def _split_compaction_tail(messages: list[Message], tail_tokens: int) -> tuple[list[Message], list[Message]]:
+        if tail_tokens <= 0 or not messages:
+            return messages, []
+
+        tail_start = len(messages)
+        token_total = 0
+        for index in range(len(messages) - 1, -1, -1):
+            estimate = max(messages[index].token_estimate, 0)
+            if tail_start < len(messages) and token_total + estimate > tail_tokens:
+                break
+            tail_start = index
+            token_total += estimate
+            if token_total >= tail_tokens:
+                break
+
+        return messages[:tail_start], messages[tail_start:]
+
     def _get_compaction_state(
         self,
         session_obj: Session,
@@ -455,6 +474,7 @@ class FerrymanKernel:
             return
         chunk_tokens = int(self.get_setting("system.llm.compaction_chunk_tokens", COMPACTION_CHUNK_TOKENS_DEFAULT))
         guard_seconds = int(self.get_setting("system.llm.compaction_guard_seconds", COMPACTION_GUARD_SECONDS_DEFAULT))
+        tail_tokens = int(self.get_setting("system.llm.compaction_tail_tokens", COMPACTION_TAIL_TOKENS_DEFAULT))
         now = datetime.now(timezone.utc)
 
         with get_session() as db_session:
@@ -473,7 +493,10 @@ class FerrymanKernel:
             added_tokens_since_compaction = self._ensure_message_token_estimates(messages)
             if added_tokens_since_compaction < threshold:
                 return
-            messages_to_compact = self._select_compaction_chunk(messages, chunk_tokens)
+            compactable_messages, _tail_messages = self._split_compaction_tail(messages, tail_tokens)
+            if not compactable_messages:
+                return
+            messages_to_compact = self._select_compaction_chunk(compactable_messages, chunk_tokens)
             if not messages_to_compact:
                 return
 

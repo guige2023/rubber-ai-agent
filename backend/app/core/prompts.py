@@ -122,6 +122,9 @@ Work that still needs to be done, including unresolved user requests and next st
 ## Exact Identifiers
 Important exact values that must be preserved literally, such as file paths, URLs, config keys, IDs, ports, timestamps, model names, and error messages.
 
+## User-Provided Operational Access Details
+User-provided exact values needed for future tool calls, API access, browser login, or delivery, such as endpoints, keys, accounts, emails, and credential constraints. If none are present, write "None."
+
 ## User Preferences and Constraints
 Important user-stated preferences, rules, restrictions, or style requirements that should continue to be followed.
 """

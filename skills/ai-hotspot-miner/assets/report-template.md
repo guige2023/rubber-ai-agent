@@ -96,7 +96,7 @@ Use the following Markdown structures as the blueprint for your output. Adapt th
 
 ## Article Draft
 
-Create this second file only when the user explicitly asks for a publishable article.
+Use this structure for the publishable article output.
 
 ```md
 # [Article Working Title]

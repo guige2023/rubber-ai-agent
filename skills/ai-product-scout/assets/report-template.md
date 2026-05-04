@@ -104,7 +104,7 @@ Adapt the headings and labels to match the user's requested language and channel
 
 ## Article Draft
 
-Create this second file only when the user explicitly asks for a publishable article.
+Use this structure for the publishable article.
 
 ```md
 # [Case Study Working Title]

@@ -28,10 +28,24 @@ Every successful run produces two Markdown files under `reports/<yyyy-mm-dd>/` u
 1. Research brief: `reports/<yyyy-mm-dd>/ai-hotspot-report-<article_slug>.md`
 2. Publishable article: `reports/<yyyy-mm-dd>/ai-hotspot-article-<article_slug>.md`
 
+If a cover image is generated, save it in the same directory: `reports/<yyyy-mm-dd>/ai-hotspot-cover-<article_slug>.<ext>`.
+
 - `<yyyy-mm-dd>` is the current execution date.
 - `<article_slug>` is a short lowercase ASCII slug based on the recommended topic; use `daily-ai-hotspot` if uncertain.
-- The run is complete only after both files are written with file tools.
-- The final reply must summarize the result and link to both files; never substitute chat output for file output.
+- Generate a cover image only when the user provides usable image generation access or available image tooling.
+- The run is complete only after all required and generated outputs are written with file tools.
+- The final reply must summarize the result and link to every file actually created. Do not claim an output file exists unless it was actually written.
+
+## Cover Quality Standard
+
+When generating a cover image:
+
+- Match the article's core claim, tension, or news signal.
+- Make the visual compelling enough to increase click-through.
+- Use a premium editorial look with strong composition, clear focal point, and polished texture.
+- Prefer one memorable visual idea over literal illustration or busy collage.
+- Avoid generic AI cliches, fake UI clutter, unreadable text, giant numbers, and decorative visuals that do not add meaning.
+- Visual direction: emphasize news signal, urgency, industry shift, conflict, or emerging pattern.
 
 ## Efficiency & Stopping Rules
 

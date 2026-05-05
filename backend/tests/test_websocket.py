@@ -95,10 +95,10 @@ def test_websocket_dispatch_exception_returns_error_and_keeps_connection(client,
 
 
 def test_websocket_llm_and_model_config_flow(client):
-    from app.core.config import Settings
+    from app.core.model_manager import ModelManager
 
-    original_fetcher = Settings._fetch_provider_models
-    original_validator = Settings.validate_provider_config
+    original_fetcher = ModelManager._fetch_provider_models
+    original_validator = ModelManager.validate_provider_config
 
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         if provider == "openai":
@@ -111,13 +111,13 @@ def test_websocket_llm_and_model_config_flow(client):
             return ["doubao-seed-2-0-pro-260215"]
         return []
 
-    def fake_validator(provider: str, api_key: str, base_url: str = "", model: str = ""):
+    def fake_validator(self, provider: str, api_key: str, base_url: str = "", model: str = ""):
         if api_key == "bad-key":
             return "Invalid API key."
         return None
 
-    Settings._fetch_provider_models = staticmethod(fake_fetcher)
-    Settings.validate_provider_config = staticmethod(fake_validator)
+    ModelManager._fetch_provider_models = staticmethod(fake_fetcher)
+    ModelManager.validate_provider_config = fake_validator
 
     with client.websocket_connect(websocket_path()) as websocket:
         try:
@@ -253,8 +253,8 @@ def test_websocket_llm_and_model_config_flow(client):
             response = send_rpc(websocket, "get_available_models", request_id=13)
             assert response["result"]["custom"] == ["custom-chat-model"]
         finally:
-            Settings._fetch_provider_models = original_fetcher
-            Settings.validate_provider_config = original_validator
+            ModelManager._fetch_provider_models = original_fetcher
+            ModelManager.validate_provider_config = original_validator
 
 
 def test_websocket_list_skills(client, monkeypatch):

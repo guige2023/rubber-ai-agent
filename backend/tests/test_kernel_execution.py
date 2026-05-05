@@ -36,7 +36,7 @@ from app.core.context_manager import (
     _get_token_encoder,
     _local_tiktoken_cache_dir,
 )
-from app.core.model_manager import LLMConfigurationError
+from app.core.model_manager import LLMConfigurationError, ModelManager
 from app.core.runtime import FerrymanRuntime
 from app.core.tool_errors import RetryableToolError
 from app.core.toolkits.base import Toolkit
@@ -152,8 +152,8 @@ def assert_error_tool_payload(
 
 def test_create_active_model_uses_openai_provider_for_kimi(monkeypatch):
     settings = create_test_settings()
-    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "kimi:kimi-k2.5")
-    monkeypatch.setattr(Settings, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
+    monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "kimi:kimi-k2.5")
+    monkeypatch.setattr(ModelManager, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
 
     captured = {}
 
@@ -189,9 +189,9 @@ def test_create_active_model_uses_openai_provider_for_kimi(monkeypatch):
 
 def test_create_active_model_supports_custom_kimi_base_url(monkeypatch):
     settings = create_test_settings()
-    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "kimi:kimi-k2.5")
+    monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "kimi:kimi-k2.5")
     monkeypatch.setattr(
-        Settings,
+        ModelManager,
         "get_provider_llm_config",
         lambda self, provider: {"api_key": "sk-test", "base_url": "https://proxy.example.com/v1"},
     )
@@ -228,8 +228,8 @@ def test_create_active_model_supports_custom_kimi_base_url(monkeypatch):
 
 def test_create_active_model_uses_openai_provider_for_doubao(monkeypatch):
     settings = create_test_settings()
-    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "doubao:doubao-seed-2-0-pro-260215")
-    monkeypatch.setattr(Settings, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
+    monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "doubao:doubao-seed-2-0-pro-260215")
+    monkeypatch.setattr(ModelManager, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
 
     captured = {}
 
@@ -258,8 +258,8 @@ def test_create_active_model_uses_openai_provider_for_doubao(monkeypatch):
 
 def test_create_active_model_uses_openai_provider_for_deepseek(monkeypatch):
     settings = create_test_settings()
-    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "deepseek:deepseek-v4-pro")
-    monkeypatch.setattr(Settings, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
+    monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "deepseek:deepseek-v4-pro")
+    monkeypatch.setattr(ModelManager, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
 
     captured = {}
 
@@ -288,9 +288,9 @@ def test_create_active_model_uses_openai_provider_for_deepseek(monkeypatch):
 
 def test_create_active_model_strips_trailing_v1_for_anthropic(monkeypatch):
     settings = create_test_settings()
-    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "anthropic:claude-haiku-4-5-20251001")
+    monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "anthropic:claude-haiku-4-5-20251001")
     monkeypatch.setattr(
-        Settings,
+        ModelManager,
         "get_provider_llm_config",
         lambda self, provider: {
             "api_key": "sk-test",
@@ -325,8 +325,8 @@ def test_create_active_model_strips_trailing_v1_for_anthropic(monkeypatch):
 
 def test_create_active_model_raises_clear_error_when_gemini_api_key_missing(monkeypatch):
     settings = create_test_settings()
-    monkeypatch.setattr(Settings, "get_active_model_id", lambda self: "gemini:gemini-3-flash-preview")
-    monkeypatch.setattr(Settings, "get_provider_llm_config", lambda self, provider: {})
+    monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "gemini:gemini-3-flash-preview")
+    monkeypatch.setattr(ModelManager, "get_provider_llm_config", lambda self, provider: {})
 
     kernel = FerrymanRuntime(settings=settings)
 

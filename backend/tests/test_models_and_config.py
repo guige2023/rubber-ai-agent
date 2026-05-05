@@ -8,7 +8,8 @@ from sqlmodel import select, Session as DBSession
 import app.core.db as db_module
 from app.models.database import Session, Message, Task, AppConfig
 from app.models.schemas import SessionMemory, SessionModel, MessageModel, TaskModel
-from app.core.config import ModelListEndpointUnavailable, Settings as config
+from app.core.config import Settings as config
+from app.core.model_manager import ModelListEndpointUnavailable, ModelManager
 
 from app.models.events import (
     FerrymanEventEnvelope,
@@ -225,7 +226,7 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     )
     config.set("system.llm.active_model", "qwen:qwen-plus", category="system")
 
-    original_fetcher = config._fetch_provider_models
+    original_fetcher = ModelManager._fetch_provider_models
 
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         if provider == "openai":
@@ -240,11 +241,11 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
             return ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-lite-260215"]
         return []
 
-    config._fetch_provider_models = staticmethod(fake_fetcher)
+    ModelManager._fetch_provider_models = staticmethod(fake_fetcher)
     try:
-        models = config.get_available_models()
+        models = ModelManager(config()).get_available_models()
     finally:
-        config._fetch_provider_models = original_fetcher
+        ModelManager._fetch_provider_models = original_fetcher
 
     assert "openai" in models
     assert "gemini" not in models
@@ -266,7 +267,7 @@ def test_available_models_include_openai_anthropic_and_gemini_when_configured():
     config.set("llm.gemini", {"api_key": "sk-gemini"}, category="llm")
     config.set("system.llm.active_model", "openai:gpt-4o", category="system")
 
-    original_fetcher = config._fetch_provider_models
+    original_fetcher = ModelManager._fetch_provider_models
 
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         if provider == "openai":
@@ -277,11 +278,11 @@ def test_available_models_include_openai_anthropic_and_gemini_when_configured():
             return ["gemini-3.1-pro-preview", "gemini-3.1-flash-preview"]
         return []
 
-    config._fetch_provider_models = staticmethod(fake_fetcher)
+    ModelManager._fetch_provider_models = staticmethod(fake_fetcher)
     try:
-        models = config.get_available_models()
+        models = ModelManager(config()).get_available_models()
     finally:
-        config._fetch_provider_models = original_fetcher
+        ModelManager._fetch_provider_models = original_fetcher
 
     assert models["openai"] == ["gpt-4o", "text-embedding-3-large"]
     assert models["anthropic"] == ["claude-sonnet-4-5", "claude-opus-4-1"]
@@ -293,18 +294,18 @@ def test_get_available_models_hides_unconfigured_providers():
     config.set("llm.anthropic", {"api_key": ""}, category="llm")
     config.set("llm.gemini", {"api_key": ""}, category="llm")
 
-    original_fetcher = config._fetch_provider_models
+    original_fetcher = ModelManager._fetch_provider_models
 
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         if provider == "openai":
             return ["gpt-4o"]
         return ["should-not-appear"]
 
-    config._fetch_provider_models = staticmethod(fake_fetcher)
+    ModelManager._fetch_provider_models = staticmethod(fake_fetcher)
     try:
-        models = config.get_available_models()
+        models = ModelManager(config()).get_available_models()
     finally:
-        config._fetch_provider_models = original_fetcher
+        ModelManager._fetch_provider_models = original_fetcher
 
     assert models == {"openai": ["gpt-4o"]}
 
@@ -312,16 +313,16 @@ def test_get_available_models_hides_unconfigured_providers():
 def test_get_available_models_does_not_fallback_on_fetch_error():
     config.set("llm.kimi", {"api_key": "bad-key"}, category="llm")
 
-    original_fetcher = config._fetch_provider_models
+    original_fetcher = ModelManager._fetch_provider_models
 
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         raise RuntimeError("HTTP 401 Unauthorized")
 
-    config._fetch_provider_models = staticmethod(fake_fetcher)
+    ModelManager._fetch_provider_models = staticmethod(fake_fetcher)
     try:
-        models = config.get_available_models()
+        models = ModelManager(config()).get_available_models()
     finally:
-        config._fetch_provider_models = original_fetcher
+        ModelManager._fetch_provider_models = original_fetcher
 
     assert "kimi" not in models
 
@@ -329,16 +330,16 @@ def test_get_available_models_does_not_fallback_on_fetch_error():
 def test_get_available_models_hides_provider_on_transient_fetch_error():
     config.set("llm.gemini", {"api_key": "sk-gemini"}, category="llm")
 
-    original_fetcher = config._fetch_provider_models
+    original_fetcher = ModelManager._fetch_provider_models
 
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         raise TimeoutError("The handshake operation timed out")
 
-    config._fetch_provider_models = staticmethod(fake_fetcher)
+    ModelManager._fetch_provider_models = staticmethod(fake_fetcher)
     try:
-        models = config.get_available_models()
+        models = ModelManager(config()).get_available_models()
     finally:
-        config._fetch_provider_models = original_fetcher
+        ModelManager._fetch_provider_models = original_fetcher
 
     assert "gemini" not in models
 
@@ -350,16 +351,16 @@ def test_get_available_models_returns_saved_custom_model_without_probe():
         category="llm",
     )
 
-    original_probe = config._probe_openai_compatible_chat_model
+    original_probe = ModelManager._probe_openai_compatible_chat_model
 
     def fake_probe(api_key: str, base_url: str, model: str):
         raise AssertionError("get_available_models should not probe custom chat availability")
 
-    config._probe_openai_compatible_chat_model = staticmethod(fake_probe)
+    ModelManager._probe_openai_compatible_chat_model = staticmethod(fake_probe)
     try:
-        models = config.get_available_models()
+        models = ModelManager(config()).get_available_models()
     finally:
-        config._probe_openai_compatible_chat_model = original_probe
+        ModelManager._probe_openai_compatible_chat_model = original_probe
 
     assert models["custom"] == ["my-custom-model"]
 
@@ -368,19 +369,19 @@ def test_validate_provider_config_returns_error_when_fetch_fails(monkeypatch):
     def fake_fetcher(provider: str, api_key: str, base_url: str, list_mode: str):
         raise RuntimeError("HTTP 401 Unauthorized")
 
-    monkeypatch.setattr(config, "_fetch_provider_models", staticmethod(fake_fetcher))
+    monkeypatch.setattr(ModelManager, "_fetch_provider_models", staticmethod(fake_fetcher))
 
-    message = config.validate_provider_config("openai", "bad-key")
+    message = ModelManager(config()).validate_provider_config("openai", "bad-key")
 
     assert message == "API key validation failed: HTTP 401 Unauthorized"
 
 
 def test_validate_provider_config_allows_empty_api_key():
-    assert config.validate_provider_config("openai", "") is None
+    assert ModelManager(config()).validate_provider_config("openai", "") is None
 
 
 def test_validate_provider_config_requires_model_for_custom():
-    assert config.validate_provider_config("custom", "sk-custom", "https://custom.example.com/v1", "") == "Model is required."
+    assert ModelManager(config()).validate_provider_config("custom", "sk-custom", "https://custom.example.com/v1", "") == "Model is required."
 
 
 def test_validate_provider_config_probes_custom_chat_model(monkeypatch):
@@ -391,9 +392,9 @@ def test_validate_provider_config_probes_custom_chat_model(monkeypatch):
         captured["base_url"] = base_url
         captured["model"] = model
 
-    monkeypatch.setattr(config, "_probe_openai_compatible_chat_model", staticmethod(fake_probe))
+    monkeypatch.setattr(ModelManager, "_probe_openai_compatible_chat_model", staticmethod(fake_probe))
 
-    assert config.validate_provider_config("custom", "sk-custom", "https://custom.example.com/v1", "my-custom-model") is None
+    assert ModelManager(config()).validate_provider_config("custom", "sk-custom", "https://custom.example.com/v1", "my-custom-model") is None
     assert captured == {
         "api_key": "sk-custom",
         "base_url": "https://custom.example.com/v1",
@@ -402,11 +403,11 @@ def test_validate_provider_config_probes_custom_chat_model(monkeypatch):
 
 
 def test_get_active_model_id_returns_none_when_unset():
-    assert config().get_active_model_id() is None
+    assert ModelManager(config()).get_active_model_id() is None
 
 
 def test_get_model_readiness_reports_no_runnable_model_when_unconfigured():
-    readiness = config().get_model_readiness()
+    readiness = ModelManager(config()).get_model_readiness()
 
     assert readiness == {
         "ready": False,
@@ -418,7 +419,7 @@ def test_get_model_readiness_reports_no_runnable_model_when_unconfigured():
 def test_get_model_readiness_reports_invalid_active_model_when_selection_missing():
     config.set("llm.openai", {"api_key": "sk-openai"}, category="llm")
 
-    readiness = config().get_model_readiness()
+    readiness = ModelManager(config()).get_model_readiness()
 
     assert readiness == {
         "ready": False,
@@ -430,7 +431,7 @@ def test_get_model_readiness_reports_invalid_active_model_when_selection_missing
 def test_get_model_readiness_reports_missing_api_key_for_selected_provider():
     config.set("system.llm.active_model", "gemini:gemini-3-flash-preview", category="system")
 
-    readiness = config().get_model_readiness()
+    readiness = ModelManager(config()).get_model_readiness()
 
     assert readiness == {
         "ready": False,
@@ -447,7 +448,7 @@ def test_get_model_readiness_reports_ready_for_configured_active_model():
     config.set("llm.openai", {"api_key": "sk-openai"}, category="llm")
     config.set("system.llm.active_model", "openai:gpt-4o", category="system")
 
-    readiness = config().get_model_readiness()
+    readiness = ModelManager(config()).get_model_readiness()
 
     assert readiness == {
         "ready": True,
@@ -457,75 +458,77 @@ def test_get_model_readiness_reports_ready_for_configured_active_model():
 
 
 def test_fetch_provider_models_routes_to_provider_specific_fetchers(monkeypatch):
-    monkeypatch.setattr(config, "_fetch_anthropic_models", staticmethod(lambda api_key, base_url: ["claude-sonnet-4-5"]))
-    monkeypatch.setattr(config, "_fetch_gemini_models", staticmethod(lambda api_key, base_url: ["gemini-3.1-pro-preview"]))
+    monkeypatch.setattr(ModelManager, "_fetch_anthropic_models", staticmethod(lambda api_key, base_url: ["claude-sonnet-4-5"]))
+    monkeypatch.setattr(ModelManager, "_fetch_gemini_models", staticmethod(lambda api_key, base_url: ["gemini-3.1-pro-preview"]))
     monkeypatch.setattr(
-        config,
+        ModelManager,
         "_fetch_openai_compatible_models",
-            staticmethod(
-                lambda api_key, base_url: [
-                    "gpt-4o",
-                    "gpt-5.4-mini-2026-03-17",
-                    "gpt-5.4-nano-2026-03-17",
-                    "gpt-5.4-audio-preview-2026-03-17",
-                    "kimi-k2.5",
-                    "deepseek-v4-pro",
-                    "deepseek-v4-flash",
-                    "deepseek-r1-distill-qwen-32b",
-                    "deepseek-embedding",
-                    "moonshot-v1-8k-vision-preview",
-                    "doubao-seed-2-0-pro-260215",
-                    "doubao-seed-1-6-251015",
-                    "doubao-seed-2-0-code-preview-260215",
+        staticmethod(
+            lambda api_key, base_url: [
+                "gpt-4o",
+                "gpt-5.4-mini-2026-03-17",
+                "gpt-5.4-nano-2026-03-17",
+                "gpt-5.4-audio-preview-2026-03-17",
+                "kimi-k2.5",
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+                "deepseek-r1-distill-qwen-32b",
+                "deepseek-embedding",
+                "moonshot-v1-8k-vision-preview",
+                "doubao-seed-2-0-pro-260215",
+                "doubao-seed-1-6-251015",
+                "doubao-seed-2-0-code-preview-260215",
                 "doubao-seedream-4-0-250828",
             ]
         ),
     )
 
-    assert config._fetch_provider_models(
+    assert ModelManager._fetch_provider_models(
         "anthropic",
         "sk-a",
         "https://api.anthropic.com/v1",
         "anthropic",
     ) == ["claude-sonnet-4-5"]
-    assert config._fetch_provider_models(
+    assert ModelManager._fetch_provider_models(
         "gemini",
         "sk-g",
         "https://generativelanguage.googleapis.com",
         "gemini",
     ) == ["gemini-3.1-pro-preview"]
-    assert config._fetch_provider_models(
+    assert ModelManager._fetch_provider_models(
         "openai",
         "sk-o",
         "https://api.openai.com/v1",
         "openai_compatible",
     ) == ["gpt-5.4-mini-2026-03-17", "gpt-5.4-nano-2026-03-17"]
-    assert config._fetch_provider_models(
+    assert ModelManager._fetch_provider_models(
         "deepseek",
         "sk-ds",
         "https://api.deepseek.com",
         "openai_compatible",
     ) == ["deepseek-v4-pro", "deepseek-v4-flash"]
-    assert config._fetch_provider_models(
+    assert ModelManager._fetch_provider_models(
         "kimi",
         "sk-k",
         "https://api.moonshot.cn/v1",
         "openai_compatible",
     ) == ["kimi-k2.5"]
-    assert config._fetch_provider_models(
+    assert ModelManager._fetch_provider_models(
         "doubao",
         "sk-d",
         "https://ark.cn-beijing.volces.com/api/v3",
         "openai_compatible",
     ) == ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-code-preview-260215"]
+
+
 def test_fetch_provider_models_marks_missing_models_endpoint_as_unavailable(monkeypatch):
     def raise_not_found(api_key: str, base_url: str):
         raise HTTPError(base_url, 404, "Not Found", hdrs=None, fp=None)
 
-    monkeypatch.setattr(config, "_fetch_openai_compatible_models", staticmethod(raise_not_found))
+    monkeypatch.setattr(ModelManager, "_fetch_openai_compatible_models", staticmethod(raise_not_found))
 
     with pytest.raises(ModelListEndpointUnavailable):
-        config._fetch_provider_models(
+        ModelManager._fetch_provider_models(
             "qwen",
             "sk-qwen",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -542,9 +545,9 @@ def test_fetch_anthropic_models_falls_back_to_bearer_auth(monkeypatch):
             raise HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
         return {"data": [{"id": "claude-sonnet-4-6"}]}
 
-    monkeypatch.setattr(config, "_http_get_json", staticmethod(fake_http_get_json))
+    monkeypatch.setattr(ModelManager, "_http_get_json", staticmethod(fake_http_get_json))
 
-    assert config._fetch_anthropic_models("sk-anthropic", "https://proxy.example.com/v1") == ["claude-sonnet-4-6"]
+    assert ModelManager._fetch_anthropic_models("sk-anthropic", "https://proxy.example.com/v1") == ["claude-sonnet-4-6"]
     assert attempts == [
         {
             "x-api-key": "sk-anthropic",
@@ -562,10 +565,10 @@ def test_fetch_anthropic_models_marks_non_json_response_as_unavailable(monkeypat
     def fake_http_get_json(url: str, headers=None, query=None):
         raise JSONDecodeError("Expecting value", "", 0)
 
-    monkeypatch.setattr(config, "_http_get_json", staticmethod(fake_http_get_json))
+    monkeypatch.setattr(ModelManager, "_http_get_json", staticmethod(fake_http_get_json))
 
     with pytest.raises(ModelListEndpointUnavailable):
-        config._fetch_anthropic_models("sk-anthropic", "https://proxy.example.com/v1")
+        ModelManager._fetch_anthropic_models("sk-anthropic", "https://proxy.example.com/v1")
 
 
 def test_probe_openai_compatible_chat_model_uses_chat_completions_endpoint(monkeypatch):
@@ -578,9 +581,9 @@ def test_probe_openai_compatible_chat_model_uses_chat_completions_endpoint(monke
         captured["query"] = query
         return {"id": "chatcmpl-test"}
 
-    monkeypatch.setattr(config, "_http_post_json", staticmethod(fake_http_post_json))
+    monkeypatch.setattr(ModelManager, "_http_post_json", staticmethod(fake_http_post_json))
 
-    config._probe_openai_compatible_chat_model(
+    ModelManager._probe_openai_compatible_chat_model(
         "sk-custom",
         "https://custom.example.com/v1",
         "my-custom-model",
@@ -603,7 +606,7 @@ def test_probe_openai_compatible_chat_model_uses_chat_completions_endpoint(monke
 
 
 def test_filter_chat_model_ids_excludes_non_chat_entries():
-    filtered = config._filter_chat_model_ids([
+    filtered = ModelManager._filter_chat_model_ids([
         "gpt-4o",
         "text-embedding-3-large",
         "whisper-1",
@@ -614,7 +617,7 @@ def test_filter_chat_model_ids_excludes_non_chat_entries():
 
 
 def test_filter_gemini_models_keeps_only_llm_entries():
-    filtered = config._filter_gemini_models([
+    filtered = ModelManager._filter_gemini_models([
         {
             "name": "models/gemini-2.0-flash-001",
             "baseModelId": "gemini-2.0-flash",
@@ -656,7 +659,7 @@ def test_filter_gemini_models_keeps_only_llm_entries():
 
 
 def test_filter_qwen_models_keeps_only_qwen_family_entries():
-    filtered = config._filter_qwen_models([
+    filtered = ModelManager._filter_qwen_models([
         "MiniMax-M2.1",
         "deepseek-v3.1",
         "glm-4.7",
@@ -696,7 +699,7 @@ def test_filter_qwen_models_keeps_only_qwen_family_entries():
 
 
 def test_filter_kimi_models_keeps_latest_three_supported_chat_models():
-    filtered = config._filter_kimi_models([
+    filtered = ModelManager._filter_kimi_models([
         "kimi-k2.6",
         "kimi-k2.5",
         "kimi-k2-thinking",
@@ -718,7 +721,7 @@ def test_filter_kimi_models_keeps_latest_three_supported_chat_models():
 
 
 def test_filter_deepseek_models_prioritizes_current_chat_models():
-    filtered = config._filter_deepseek_models([
+    filtered = ModelManager._filter_deepseek_models([
         "deepseek-reasoner",
         "deepseek-v4-flash",
         "deepseek-embedding",
@@ -737,7 +740,7 @@ def test_filter_deepseek_models_prioritizes_current_chat_models():
 
 
 def test_filter_doubao_models_keeps_latest_supported_chat_family():
-    filtered = config._filter_doubao_models([
+    filtered = ModelManager._filter_doubao_models([
         "doubao-seed-2-0-code-preview-260215",
         "doubao-seed-1-6-251015",
         "doubao-seed-2-1-mini-260415",

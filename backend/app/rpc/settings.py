@@ -10,17 +10,19 @@ from app.core.config import get_settings
 @method
 async def get_llm_configs(context):
     """Return consolidated API configurations for supported providers."""
-    providers = get_settings().get_llm_provider_catalog()
+    settings = get_settings()
+    providers = context.runtime.model_manager.get_llm_provider_catalog()
 
     results = []
     for provider, metadata in providers.items():
-        stored_config: dict[str, str] = get_settings().get(f"llm.{provider}", {})
+        raw_config = settings.get(f"llm.{provider}", {})
+        stored_config = raw_config if isinstance(raw_config, dict) else {}
 
         results.append({
             "provider": provider,
-            "api_key": stored_config.get("api_key", ""),
-            "base_url": stored_config.get("base_url", ""),
-            "model": stored_config.get("model", ""),
+            "api_key": str(stored_config.get("api_key", "")),
+            "base_url": str(stored_config.get("base_url", "")),
+            "model": str(stored_config.get("model", "")),
             "metadata": {
                 "label": metadata.get("label", provider.capitalize()),
                 "placeholder_base_url": metadata.get("placeholder_base_url", ""),
@@ -42,7 +44,9 @@ async def set_llm_config(
 ):
     """Update the consolidated config object for a provider."""
     key = f"llm.{provider}"
-    current_config = get_settings().get(key, {})
+    settings = get_settings()
+    raw_config = settings.get(key, {})
+    current_config = raw_config if isinstance(raw_config, dict) else {}
 
     if api_key is not None:
         current_config["api_key"] = api_key
@@ -52,40 +56,39 @@ async def set_llm_config(
         current_config["model"] = model.strip() if model.strip() else ""
 
     validation_error = await asyncio.to_thread(
-        get_settings().validate_provider_config,
+        context.runtime.model_manager.validate_provider_config,
         provider,
-        current_config.get("api_key", ""),
-        current_config.get("base_url", ""),
-        current_config.get("model", ""),
+        str(current_config.get("api_key", "")),
+        str(current_config.get("base_url", "")),
+        str(current_config.get("model", "")),
     )
     if validation_error:
         return Success({"status": "error", "message": validation_error})
 
-    get_settings().set(key, current_config, category="llm")
+    settings.set(key, current_config, category="llm")
     return Success({"status": "success"})
 
 
 @method
 async def get_active_model(context):
     """Return the currently active model identifier."""
-    return Success(get_settings().get_active_model_id())
+    return Success(context.runtime.model_manager.get_active_model_id())
 
 
 @method
 async def get_model_readiness(context):
     """Return whether Ferryman has a usable active model for chat."""
-    return Success(get_settings().get_model_readiness())
+    return Success(context.runtime.model_manager.get_model_readiness())
 
 
 @method
 async def set_active_model(context, model: str):
     """Update the active model globally."""
-    get_settings().set("system.llm.active_model", model, category="system")
+    context.runtime.model_manager.set_active_model(model)
     return Success({"status": "success"})
 
 
 @method
 async def get_available_models(context):
     """Return the mapped candidate models for the UI select."""
-    return Success(await asyncio.to_thread(get_settings().get_available_models))
-
+    return Success(await asyncio.to_thread(context.runtime.model_manager.get_available_models))

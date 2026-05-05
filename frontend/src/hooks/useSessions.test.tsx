@@ -28,6 +28,7 @@ describe('useSessions', () => {
       configurable: true,
       value: localStorageMock,
     });
+    localStorageMock.setItem('last_session_id', 'session-1');
   });
 
   afterEach(() => {
@@ -61,7 +62,7 @@ describe('useSessions', () => {
       await result.current.stopActiveRun();
     });
 
-    expect(cancelRun).toHaveBeenCalledWith('run-optimistic-cancel-1', 'default');
+    expect(cancelRun).toHaveBeenCalledWith('run-optimistic-cancel-1', 'session-1');
     expect(result.current.isExecuting).toBe(false);
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0]).toMatchObject({
@@ -112,7 +113,7 @@ describe('useSessions', () => {
     lastEvent = {
       namespace: 'agent',
       event: 'chat_final',
-      session_id: 'default',
+      session_id: 'session-1',
       ts: '2026-04-15T14:30:00Z',
       payload: {
         run_id: 'run-cancel-1',
@@ -174,10 +175,14 @@ describe('useSessions', () => {
       await result.current.execute('Finish this run');
     });
 
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[0].id).toBeUndefined();
+    expect(result.current.messages[1].id).toBeUndefined();
+
     lastEvent = {
       namespace: 'agent',
       event: 'chat_final',
-      session_id: 'default',
+      session_id: 'session-1',
       ts: '2026-04-15T14:35:00Z',
       payload: {
         run_id: 'run-success-1',
@@ -345,12 +350,12 @@ describe('useSessions', () => {
     lastEvent = {
       namespace: 'data',
       event: 'refresh',
-      session_id: 'default',
+      session_id: 'session-1',
       ts: '2026-04-15T14:41:10Z',
       payload: {
         entity: 'session',
         action: 'updated',
-        entity_id: 'default',
+        entity_id: 'session-1',
       },
     };
     rerender();
@@ -403,7 +408,19 @@ describe('useSessions', () => {
       },
     ];
     let listMessagesCount = 0;
-    const call = vi.fn(async (method: string) => {
+    const call = vi.fn(async (method: string, params?: any) => {
+      if (method === 'get_session' && params?.session_id === 'session-1') {
+        return {
+          status: 'success',
+          session: {
+            id: 'session-1',
+            title: 'Session 1',
+            updated_at: '2026-04-15T14:50:00Z',
+            input_tokens: 0,
+            output_tokens: 0,
+          },
+        };
+      }
       if (method === 'list_sessions') {
         return { sessions: [] };
       }
@@ -430,7 +447,7 @@ describe('useSessions', () => {
     );
 
     await waitFor(() => {
-      expect(call).toHaveBeenCalledWith('list_messages', { session_id: 'default', limit: 20 });
+      expect(call).toHaveBeenCalledWith('list_messages', { session_id: 'session-1', limit: 20 });
     });
 
     await act(async () => {
@@ -474,7 +491,19 @@ describe('useSessions', () => {
       },
     ];
     let listMessagesCount = 0;
-    const call = vi.fn(async (method: string) => {
+    const call = vi.fn(async (method: string, params?: any) => {
+      if (method === 'get_session' && params?.session_id === 'session-1') {
+        return {
+          status: 'success',
+          session: {
+            id: 'session-1',
+            title: 'Session 1',
+            updated_at: '2026-04-15T14:55:00Z',
+            input_tokens: 0,
+            output_tokens: 0,
+          },
+        };
+      }
       if (method === 'list_sessions') {
         return { sessions: [] };
       }
@@ -501,7 +530,7 @@ describe('useSessions', () => {
     );
 
     await waitFor(() => {
-      expect(call).toHaveBeenCalledWith('list_messages', { session_id: 'default', limit: 20 });
+      expect(call).toHaveBeenCalledWith('list_messages', { session_id: 'session-1', limit: 20 });
     });
 
     await act(async () => {
@@ -561,8 +590,8 @@ describe('useSessions', () => {
         return {
           sessions: [
             {
-              id: 'default',
-              title: 'Default',
+              id: 'session-1',
+              title: 'session-1',
               updated_at: '2026-04-15T14:00:00Z',
               input_tokens: 0,
               output_tokens: 0,
@@ -595,7 +624,7 @@ describe('useSessions', () => {
     );
 
     await act(async () => {
-      await result.current.execute('Finish in the default session');
+      await result.current.execute('Finish in the session-1 session');
     });
 
     await act(async () => {
@@ -608,14 +637,14 @@ describe('useSessions', () => {
     lastEvent = {
       namespace: 'agent',
       event: 'chat_final',
-      session_id: 'default',
+      session_id: 'session-1',
       ts: '2026-04-15T14:45:00Z',
       payload: {
         run_id: 'run-cross-session-1',
         messages: [
           {
             role: 'assistant',
-            content: 'Default session finished.',
+            content: 'session-1 session finished.',
             metadata: {
               run: {
                 id: 'run-cross-session-1',
@@ -717,5 +746,209 @@ describe('useSessions', () => {
     });
     expect(result.current.messages).toEqual([...olderMessages, ...latestMessages]);
     expect(result.current.hasOlderMessages).toBe(false);
+  });
+
+  it('creates new chat sessions using the backend returned id', async () => {
+    const call = vi.fn(async (method: string) => {
+      if (method === 'create_session') {
+        return { id: 'backend-shortuuid-1', title: '' };
+      }
+      if (method === 'list_sessions') {
+        return {
+          sessions: [
+            {
+              id: 'backend-shortuuid-1',
+              title: '',
+              updated_at: '2026-04-15T14:00:00Z',
+              input_tokens: 0,
+              output_tokens: 0,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+    const executeInstruction = vi.fn();
+    const cancelRun = vi.fn();
+    const clearToolActivities = vi.fn();
+
+    const { result } = renderHook(() =>
+      useSessions({
+        call,
+        executeInstruction,
+        cancelRun,
+        clearToolActivities,
+        lastEvent: null,
+      })
+    );
+
+    await act(async () => {
+      await result.current.createNewSession();
+    });
+
+    expect(call).toHaveBeenCalledWith('create_session', {});
+    expect(result.current.currentSessionId).toBe('backend-shortuuid-1');
+  });
+
+  it('bootstraps an empty client by creating a backend session', async () => {
+    localStorage.removeItem('last_session_id');
+    const call = vi.fn(async (method: string) => {
+      if (method === 'list_sessions') {
+        return { sessions: [] };
+      }
+      if (method === 'create_session') {
+        return { id: 'bootstrap-shortuuid-1', title: '' };
+      }
+      return {};
+    });
+    const executeInstruction = vi.fn();
+    const cancelRun = vi.fn();
+    const clearToolActivities = vi.fn();
+
+    const { result } = renderHook(() =>
+      useSessions({
+        call,
+        executeInstruction,
+        cancelRun,
+        clearToolActivities,
+        lastEvent: null,
+        isConnected: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.currentSessionId).toBe('bootstrap-shortuuid-1');
+    });
+    expect(call).toHaveBeenCalledWith('create_session', {});
+  });
+
+  it('restores last_session_id by fetching the exact session before falling back to the paged list', async () => {
+    localStorage.setItem('last_session_id', 'session-stored');
+    const storedSession = {
+      id: 'session-stored',
+      title: 'Stored Session',
+      updated_at: '2026-04-15T15:00:00Z',
+      input_tokens: 7,
+      output_tokens: 5,
+    };
+    const storedMessages = [
+      {
+        id: 'stored-message-1',
+        role: 'assistant' as const,
+        content: 'Restored.',
+        created_at: '2026-04-15T15:01:00Z',
+      },
+    ];
+    const call = vi.fn(async (method: string, params?: any) => {
+      if (method === 'get_session' && params?.session_id === 'session-stored') {
+        return { status: 'success', session: storedSession };
+      }
+      if (method === 'list_messages' && params?.session_id === 'session-stored') {
+        return { messages: storedMessages };
+      }
+      if (method === 'list_sessions') {
+        return {
+          sessions: [
+            {
+              id: 'another-session',
+              title: 'Another Session',
+              updated_at: '2026-04-15T15:02:00Z',
+              input_tokens: 0,
+              output_tokens: 0,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+    const executeInstruction = vi.fn();
+    const cancelRun = vi.fn();
+    const clearToolActivities = vi.fn();
+
+    const { result } = renderHook(() =>
+      useSessions({
+        call,
+        executeInstruction,
+        cancelRun,
+        clearToolActivities,
+        lastEvent: null,
+        isConnected: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.currentSessionId).toBe('session-stored');
+      expect(result.current.messages).toEqual(storedMessages);
+    });
+
+    expect(call).toHaveBeenCalledWith('get_session', { session_id: 'session-stored' });
+    expect(call).toHaveBeenCalledWith('list_sessions', { limit: 50 });
+    expect(result.current.sessions.map((session) => session.id)).toEqual(['session-stored', 'another-session']);
+    expect(result.current.currentUsage).toEqual({
+      input_tokens: 7,
+      output_tokens: 5,
+      total_tokens: 12,
+    });
+  });
+
+  it('falls back to the session list when stored last_session_id no longer exists', async () => {
+    localStorage.setItem('last_session_id', 'stale-session');
+    const listedMessages = [
+      {
+        id: 'listed-message-1',
+        role: 'assistant' as const,
+        content: 'Listed session loaded.',
+        created_at: '2026-04-15T15:06:00Z',
+      },
+    ];
+    const call = vi.fn(async (method: string, params?: any) => {
+      if (method === 'get_session' && params?.session_id === 'stale-session') {
+        return { status: 'error', message: 'Session not found' };
+      }
+      if (method === 'list_sessions') {
+        return {
+          sessions: [
+            {
+              id: 'listed-session',
+              title: 'Listed Session',
+              updated_at: '2026-04-15T15:05:00Z',
+              input_tokens: 2,
+              output_tokens: 3,
+            },
+          ],
+        };
+      }
+      if (method === 'list_messages' && params?.session_id === 'listed-session') {
+        return { messages: listedMessages };
+      }
+      return {};
+    });
+    const executeInstruction = vi.fn();
+    const cancelRun = vi.fn();
+    const clearToolActivities = vi.fn();
+
+    const { result } = renderHook(() =>
+      useSessions({
+        call,
+        executeInstruction,
+        cancelRun,
+        clearToolActivities,
+        lastEvent: null,
+        isConnected: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.currentSessionId).toBe('listed-session');
+      expect(result.current.messages).toEqual(listedMessages);
+    });
+
+    expect(call).toHaveBeenCalledWith('get_session', { session_id: 'stale-session' });
+    expect(call).toHaveBeenCalledWith('list_sessions', { limit: 50 });
+    expect(result.current.currentUsage).toEqual({
+      input_tokens: 2,
+      output_tokens: 3,
+      total_tokens: 5,
+    });
   });
 });

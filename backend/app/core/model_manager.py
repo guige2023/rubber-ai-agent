@@ -759,6 +759,18 @@ class ModelManager:
         return ModelManager._dedupe_preserve_order([item[3] for item in selected])[:6]
 
     @staticmethod
+    def _extract_model_ids(payload: dict[str, object]) -> list[str]:
+        data = payload.get("data", [])
+        model_ids: list[str] = []
+        for item in data if isinstance(data, list) else []:
+            model_id = item.get("id") if isinstance(item, dict) else None
+            if isinstance(model_id, str):
+                normalized = model_id.strip()
+                if normalized:
+                    model_ids.append(normalized)
+        return model_ids
+
+    @staticmethod
     def _fetch_openai_compatible_models(api_key: str, base_url: str) -> list[str]:
         payload = ModelManager._http_get_json(
             ModelManager._build_openai_compatible_models_url(base_url),
@@ -767,13 +779,7 @@ class ModelManager:
                 "Content-Type": "application/json",
             },
         )
-        model_ids = []
-        data = payload.get("data", [])
-        for item in data if isinstance(data, list) else []:
-            model_id = item.get("id") if isinstance(item, dict) else None
-            if isinstance(model_id, str):
-                model_ids.append(model_id.strip())
-        return model_ids
+        return ModelManager._extract_model_ids(payload)
 
     @staticmethod
     def _fetch_anthropic_models(api_key: str, base_url: str) -> list[str]:
@@ -808,13 +814,7 @@ class ModelManager:
                 raise last_error
             raise ModelListEndpointUnavailable("Anthropic models endpoint did not return JSON")
 
-        model_ids = []
-        data = payload.get("data", [])
-        for item in data if isinstance(data, list) else []:
-            model_id = item.get("id") if isinstance(item, dict) else None
-            if isinstance(model_id, str):
-                model_ids.append(model_id.strip())
-        return ModelManager._filter_chat_model_ids(model_ids)
+        return ModelManager._filter_chat_model_ids(ModelManager._extract_model_ids(payload))
 
     @staticmethod
     def _fetch_gemini_models(api_key: str, base_url: str) -> list[str]:

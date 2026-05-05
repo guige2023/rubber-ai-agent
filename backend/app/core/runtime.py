@@ -112,11 +112,14 @@ class FerrymanRuntime:
         self,
         instruction: str,
         session_id: str,
+        *,
+        run_id: str,
         emit_event_cb: Optional[Callable[["FerrymanEventEnvelope"], Awaitable[None]]] = None,
     ) -> dict[str, object]:
         deps = self.create_agent_deps(session_id=session_id, emit_event_cb=emit_event_cb)
         return await self.agent_manager.run_master_agent(
             instruction=instruction,
             session_id=session_id,
+            run_id=run_id,
             deps=deps,
         )

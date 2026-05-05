@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import shortuuid
 from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -202,7 +203,11 @@ class ScheduleManager:
         )
 
         try:
-            result = await self.runtime.run_master_agent(instruction, session_id=schedule_id)
+            result = await self.runtime.run_master_agent(
+                instruction,
+                session_id=schedule_id,
+                run_id=shortuuid.uuid(),
+            )
             finished_at = datetime.now(timezone.utc)
             last_run_result = self._build_last_run_result(
                 result,

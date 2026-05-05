@@ -7,20 +7,30 @@ from typing import Optional
 from jsonrpcserver import Success, method
 from sqlmodel import select
 
-from app.core.db import get_session
+from app.core.db import get_session as get_db_session
 from app.models.database import Message, Session, Task
 from app.rpc.pagination import fetch_datetime_cursor_page
 
 logger = logging.getLogger(__name__)
 
 
+def serialize_session(session: Session) -> dict[str, object]:
+    return {
+        "id": session.id,
+        "title": session.title,
+        "updated_at": session.updated_at.isoformat(),
+        "input_tokens": session.input_tokens,
+        "output_tokens": session.output_tokens,
+    }
+
+
 @method
-async def create_session(context, session_id: Optional[str] = None, title: Optional[str] = None):
+async def create_session(context, title: Optional[str] = None):
     """Create a new chat session."""
-    logger.info(f"🆕 Creating new session: {title} (ID: {session_id})")
-    with get_session() as db_session:
+    logger.info(f"🆕 Creating new session: {title}")
+    with get_db_session() as db_session:
         normalized_title = title or ""
-        new_session = Session(id=session_id, title=normalized_title) if session_id else Session(title=normalized_title)
+        new_session = Session(title=normalized_title)
         db_session.add(new_session)
         db_session.commit()
         db_session.refresh(new_session)
@@ -28,10 +38,20 @@ async def create_session(context, session_id: Optional[str] = None, title: Optio
 
 
 @method
+async def get_session(context, session_id: str):
+    """Return one chat session by id."""
+    with get_db_session() as db_session:
+        session_obj = db_session.get(Session, session_id)
+        if not session_obj:
+            return Success({"status": "error", "message": "Session not found"})
+        return Success({"status": "success", "session": serialize_session(session_obj)})
+
+
+@method
 async def delete_session(context, session_id: str):
     """Delete a session and its associated messages/tasks."""
     logger.info(f"🗑️ Deleting session: {session_id}")
-    with get_session() as db_session:
+    with get_db_session() as db_session:
         session_obj = db_session.get(Session, session_id)
         if not session_obj:
             return Success({"status": "error", "message": "Session not found"})
@@ -52,7 +72,7 @@ async def delete_session(context, session_id: str):
 async def update_session(context, session_id: str, title: str):
     """Update a session's title."""
     logger.info(f"📝 Updating session {session_id} title to: {title}")
-    with get_session() as db_session:
+    with get_db_session() as db_session:
         session_obj = db_session.get(Session, session_id)
         if not session_obj:
             return Success({"status": "error", "message": "Session not found"})
@@ -67,7 +87,7 @@ async def update_session(context, session_id: str, title: str):
 async def list_sessions(context, cursor: Optional[str] = None, limit: int = 20):
     """List chat sessions with cursor-based pagination."""
     logger.debug(f"Listing sessions (cursor: {cursor}, limit: {limit})")
-    with get_session() as db_session:
+    with get_db_session() as db_session:
         sessions_list, next_cursor = fetch_datetime_cursor_page(
             db_session,
             select(Session),
@@ -78,13 +98,7 @@ async def list_sessions(context, cursor: Optional[str] = None, limit: int = 20):
         )
 
         return Success({
-            "sessions": [{
-                "id": session.id,
-                "title": session.title,
-                "updated_at": session.updated_at.isoformat(),
-                "input_tokens": session.input_tokens,
-                "output_tokens": session.output_tokens,
-            } for session in sessions_list],
+            "sessions": [serialize_session(session) for session in sessions_list],
             "next_cursor": next_cursor,
         })
 
@@ -94,7 +108,7 @@ async def list_messages(context, session_id: str, cursor: Optional[str] = None, 
     """Return messages for a session with pagination."""
     logger.debug(f"Fetching messages for session: {session_id} (cursor: {cursor})")
 
-    with get_session() as db_session:
+    with get_db_session() as db_session:
         messages_list, next_cursor = fetch_datetime_cursor_page(
             db_session,
             select(Message).where(Message.session_id == session_id, Message.role.in_(("user", "assistant"))),
@@ -141,4 +155,3 @@ async def get_session_insights(
             timezone_name=timezone,
         )
     )
-

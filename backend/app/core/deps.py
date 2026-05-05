@@ -4,7 +4,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
-from uuid import uuid4
+
+import shortuuid
 
 if TYPE_CHECKING:
     from app.core.agent_manager import AgentManager
@@ -38,7 +39,7 @@ class AgentDeps:
         if self.emit_event_cb:
             from app.models.events import FerrymanEventEnvelope, EventNamespace, ToolActivityPayload, ToolPhase
             self._tool_event_seq += 1
-            event_id = uuid4().hex
+            event_id = shortuuid.uuid()
             payload = ToolActivityPayload(
                 run_id=run_id,
                 event_id=event_id,

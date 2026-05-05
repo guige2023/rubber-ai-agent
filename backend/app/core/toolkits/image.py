@@ -5,8 +5,8 @@ import base64
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
-from uuid import uuid4
 
+import shortuuid
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import RunContext
 
@@ -53,8 +53,8 @@ class ImageToolkit(Toolkit):
             normalized_path = output_path.strip()
         else:
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            short_id = uuid4().hex[:8]
-            normalized_path = f"generated/image-{timestamp}-{short_id}.{output_format}"
+            image_id = shortuuid.uuid()
+            normalized_path = f"generated/image-{timestamp}-{image_id}.{output_format}"
 
         try:
             first_path = FileToolkit.resolve_session_path(

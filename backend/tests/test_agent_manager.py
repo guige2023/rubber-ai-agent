@@ -63,6 +63,7 @@ async def test_agent_manager_run_master_agent_persists_success(session, tmp_path
     response = await runtime.agent_manager.run_master_agent(
         "hello",
         "s1",
+        run_id="run-agent-success-1",
         deps=runtime.create_agent_deps(session_id="s1"),
     )
 
@@ -82,6 +83,8 @@ async def test_agent_manager_run_master_agent_persists_success(session, tmp_path
         select(Message).where(Message.session_id == "s1").order_by(Message.created_at)
     ).all()
     assert [message.role for message in messages] == ["user", "assistant"]
+    assert messages[0].metadata_["run"]["id"] == "run-agent-success-1"
+    assert messages[1].metadata_["run"]["id"] == "run-agent-success-1"
     assert messages[0].metadata_["run"]["status"] == "success"
     assert messages[1].content == "agent-ok"
     runtime.context_manager.maybe_compact_session.assert_awaited_once_with("s1")
@@ -98,6 +101,7 @@ async def test_agent_manager_run_master_agent_includes_exception_cause(session, 
     response = await runtime.agent_manager.run_master_agent(
         "send the report",
         "s-cause",
+        run_id="run-agent-fail-1",
         deps=runtime.create_agent_deps(session_id="s-cause"),
     )
 
@@ -154,6 +158,7 @@ async def test_agent_manager_continues_after_tool_argument_validation_error(
     response = await runtime.agent_manager.run_master_agent(
         "send the report",
         "s-validation",
+        run_id="run-agent-validation-1",
         deps=runtime.create_agent_deps(session_id="s-validation"),
     )
 

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Optional
-from uuid import uuid4
 
-from asgi_correlation_id import correlation_id
 from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.usage import UsageLimits
@@ -73,10 +71,10 @@ class AgentManager:
         instruction: str,
         session_id: str,
         *,
+        run_id: str,
         deps: AgentDeps,
     ) -> dict[str, object]:
         """Run the master agent for one user instruction."""
-        run_id = correlation_id.get() or uuid4().hex
         logger.info({
             "message": {
                 "event": "agent_run_start",

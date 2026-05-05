@@ -23,6 +23,11 @@ class SessionManager:
     """
 
     @staticmethod
+    def session_exists(session_id: str) -> bool:
+        with get_session() as db_session:
+            return db_session.get(Session, session_id) is not None
+
+    @staticmethod
     def ensure_session(
             session_id: str,
             *,

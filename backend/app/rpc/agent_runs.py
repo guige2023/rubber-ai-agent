@@ -4,9 +4,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from uuid import uuid4
 
-from asgi_correlation_id import correlation_id
+import shortuuid
 from jsonrpcserver import Success, method
 from sqlalchemy import func
 from sqlmodel import desc, select
@@ -270,12 +269,12 @@ async def background_execute_run(
     emit_event_cb,
 ) -> None:
     app_state = context.app_state
-    correlation_token = correlation_id.set(run_id)
     try:
         try:
             result = await context.runtime.run_master_agent(
                 instruction=instruction,
                 session_id=session_id,
+                run_id=run_id,
                 emit_event_cb=emit_event_cb,
             )
         except Exception as exc:
@@ -321,7 +320,6 @@ async def background_execute_run(
         await emit_event_cb(canceled_event)
         raise
     finally:
-        correlation_id.reset(correlation_token)
         app_state.execute_runs.pop(run_id, None)
         if app_state.session_run_index.get(session_id) == run_id:
             app_state.session_run_index.pop(session_id, None)
@@ -338,9 +336,16 @@ async def background_execute_run(
 
 
 @method
-async def execute(context, instruction: str, session_id: str = "default"):
+async def execute(context, instruction: str, session_id: Optional[str] = None):
     """Start a background Agent run and return immediately with its run_id."""
     if context and hasattr(context, "runtime"):
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return Success({"status": "error", "message": "Session is required"})
+        if not context.runtime.session_manager.session_exists(normalized_session_id):
+            return Success({"status": "error", "message": "Session not found"})
+
+        session_id = normalized_session_id
         active_run_id = context.app_state.session_run_index.get(session_id)
         if active_run_id:
             active_entry = context.app_state.execute_runs.get(active_run_id)
@@ -357,7 +362,7 @@ async def execute(context, instruction: str, session_id: str = "default"):
         if websocket is None or send_lock is None:
             return Success({"status": "error", "message": "WebSocket context unavailable"})
 
-        run_id = uuid4().hex
+        run_id = shortuuid.uuid()
         emit_ws_event = build_emit_ws_event(websocket, send_lock)
         task = asyncio.create_task(
             background_execute_run(
@@ -429,4 +434,3 @@ async def cancel_run(context, run_id: str, session_id: Optional[str] = None):
 
     task.cancel()
     return Success({"status": "canceling", "run_id": run_id, "session_id": entry["session_id"]})
-

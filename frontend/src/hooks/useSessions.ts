@@ -53,8 +53,6 @@ interface UseSessionsArgs {
 type ActiveRun = {
   runId: string;
   sessionId: string;
-  userMessageId: string;
-  pendingMessageId: string;
 };
 
 type TerminalRunSnapshot = {
@@ -80,7 +78,7 @@ export function useSessions({
 }: UseSessionsArgs) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string>(() => localStorage.getItem('last_session_id') || 'default');
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => localStorage.getItem('last_session_id') || '');
   const [currentUsage, setCurrentUsage] = useState<Usage>({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
   const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -92,6 +90,7 @@ export function useSessions({
   const messagesRef = useRef(messages);
   const olderMessagesCursorRef = useRef<string | null>(olderMessagesCursor);
   const isLoadingOlderMessagesRef = useRef(isLoadingOlderMessages);
+  const hasInitializedSessionRef = useRef(false);
 
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
@@ -120,15 +119,34 @@ export function useSessions({
   useEffect(() => {
     if (currentSessionId) {
       localStorage.setItem('last_session_id', currentSessionId);
+    } else {
+      localStorage.removeItem('last_session_id');
     }
   }, [currentSessionId]);
 
   const refreshSessions = useCallback(async () => {
     try {
       const res: any = await call('list_sessions', { limit: 50 });
-      setSessions(res.sessions || []);
+      const nextSessions = (res.sessions || []) as Session[];
+      sessionsRef.current = nextSessions;
+      setSessions(nextSessions);
+      return nextSessions;
     } catch (error) {
       console.error('Failed to list sessions:', error);
+      return [] as Session[];
+    }
+  }, [call]);
+
+  const getSessionById = useCallback(async (sessionId: string) => {
+    try {
+      const res: any = await call('get_session', { session_id: sessionId });
+      if (res?.status !== 'success' || !res?.session) {
+        return null;
+      }
+      return res.session as Session;
+    } catch (error) {
+      console.error('Failed to get session:', error);
+      return null;
     }
   }, [call]);
 
@@ -201,17 +219,13 @@ export function useSessions({
     }
 
     const existingPlaceholder = messagesRef.current.find((message) =>
-      message.id === currentActiveRun.pendingMessageId ||
-      (
-        message.role === 'assistant' &&
-        message.metadata?.run?.id === currentActiveRun.runId &&
-        message.metadata?.run?.status === 'pending'
-      )
+      message.role === 'assistant' &&
+      message.metadata?.run?.id === currentActiveRun.runId &&
+      message.metadata?.run?.status === 'pending'
     );
 
     if (!existingPlaceholder) {
       const pendingPlaceholder: Message = {
-        id: currentActiveRun.pendingMessageId,
         role: 'assistant',
         content: '',
         created_at: new Date().toISOString(),
@@ -302,6 +316,14 @@ export function useSessions({
       return;
     }
 
+    if (!hasInitializedSessionRef.current) {
+      return;
+    }
+
+    if (!currentSessionIdRef.current) {
+      return;
+    }
+
     refreshCurrentSession().catch((error) => {
       console.error('Failed to refresh current session on connect:', error);
     });
@@ -380,9 +402,13 @@ export function useSessions({
       setMessages((prev) => {
         if (runStatus === 'canceled') {
           return prev
-            .filter((message) => message.id !== activeRun.pendingMessageId)
+            .filter((message) => !(
+              message.role === 'assistant' &&
+              message.metadata?.run?.id === activeRun.runId &&
+              message.metadata?.run?.status === 'pending'
+            ))
             .map((message) => (
-              message.id === activeRun.userMessageId
+              message.role === 'user' && message.metadata?.run?.id === activeRun.runId
                 ? {
                     ...message,
                     metadata: {
@@ -404,7 +430,7 @@ export function useSessions({
         }
 
         return prev.map((message) => {
-          if (message.id === activeRun.userMessageId) {
+          if (message.role === 'user' && message.metadata?.run?.id === activeRun.runId) {
             return {
               ...message,
               metadata: {
@@ -414,7 +440,11 @@ export function useSessions({
             };
           }
 
-          if (message.id === activeRun.pendingMessageId) {
+          if (
+            message.role === 'assistant' &&
+            message.metadata?.run?.id === activeRun.runId &&
+            message.metadata?.run?.status === 'pending'
+          ) {
             return {
               ...message,
               content: latestAssistantResponse,
@@ -474,33 +504,41 @@ export function useSessions({
   }, [activeRun, call, lastEvent, mergePendingAssistantPlaceholder, reconcileActiveRunFromMessages]);
 
   const createNewSession = useCallback(async () => {
-    const newId = crypto.randomUUID();
-    setCurrentSessionId(newId);
-    setMessages([]);
-    setOlderMessagesCursor(null);
-    setCurrentUsage({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
-
     try {
-      await call('create_session', { session_id: newId });
+      const res: any = await call('create_session', {});
+      const newId = String(res?.id || '').trim();
+      if (!newId) {
+        throw new Error('Backend did not return a session id');
+      }
+      setCurrentSessionId(newId);
+      currentSessionIdRef.current = newId;
+      setMessages([]);
+      setOlderMessagesCursor(null);
+      setCurrentUsage({ input_tokens: 0, output_tokens: 0, total_tokens: 0 });
       await refreshSessions();
+      return newId;
     } catch (error) {
       console.error('Failed to create session:', error);
+      return currentSessionIdRef.current;
     }
-
-    return newId;
   }, [call, refreshSessions]);
 
   const deleteSession = useCallback(async (sessionId: string) => {
     try {
       await call('delete_session', { session_id: sessionId });
-      await refreshSessions();
+      const remainingSessions = (await refreshSessions()).filter((session) => session.id !== sessionId);
       if (currentSessionId === sessionId) {
-        await switchSession('default');
+        const nextSessionId = remainingSessions[0]?.id;
+        if (nextSessionId) {
+          await switchSession(nextSessionId);
+        } else {
+          await createNewSession();
+        }
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
     }
-  }, [call, currentSessionId, refreshSessions, switchSession]);
+  }, [call, createNewSession, currentSessionId, refreshSessions, switchSession]);
 
   const execute = useCallback(async (instruction: string): Promise<ExecuteResult> => {
     const trimmedInstruction = instruction.trim();
@@ -512,6 +550,9 @@ export function useSessions({
     }
 
     const targetSessionId = currentSessionId;
+    if (!targetSessionId) {
+      return { status: 'error', message: translateStatic('chat.run_failed') };
+    }
     setIsSubmitting(true);
 
     try {
@@ -532,14 +573,11 @@ export function useSessions({
       }
 
       const nowIso = new Date().toISOString();
-      const userMessageId = crypto.randomUUID();
-      const pendingMessageId = crypto.randomUUID();
 
       clearToolActivities();
       setMessages((prev) => [
         ...prev,
         {
-          id: userMessageId,
           role: 'user',
           content: trimmedInstruction,
           created_at: nowIso,
@@ -552,14 +590,13 @@ export function useSessions({
           },
         },
         {
-          id: pendingMessageId,
           role: 'assistant',
           content: '',
           created_at: nowIso,
           metadata: { run: { id: runId, status: 'pending', scope: 'master' } },
         },
       ]);
-      const nextActiveRun = { runId, sessionId: targetSessionId, userMessageId, pendingMessageId };
+      const nextActiveRun = { runId, sessionId: targetSessionId };
       activeRunRef.current = nextActiveRun;
       setActiveRun(nextActiveRun);
       return { status: 'started', runId };
@@ -571,15 +608,82 @@ export function useSessions({
     }
   }, [activeRun, clearToolActivities, currentSessionId, executeInstruction, isSubmitting]);
 
+  useEffect(() => {
+    if (!isConnected || hasInitializedSessionRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const initializeSession = async () => {
+      const storedSessionId = localStorage.getItem('last_session_id') || currentSessionIdRef.current;
+      if (storedSessionId) {
+        const restoredSession = await getSessionById(storedSessionId);
+        if (cancelled) {
+          return;
+        }
+
+        if (restoredSession) {
+          const listedSessions = await refreshSessions();
+          if (cancelled) {
+            return;
+          }
+
+          const sourceSessions = listedSessions.length > 0 ? listedSessions : sessionsRef.current;
+          const nextSessions = sourceSessions.some((session) => session.id === restoredSession.id)
+            ? sourceSessions.map((session) => session.id === restoredSession.id ? restoredSession : session)
+            : [restoredSession, ...sourceSessions];
+          sessionsRef.current = nextSessions;
+          setSessions(nextSessions);
+          hasInitializedSessionRef.current = true;
+          await switchSession(restoredSession.id);
+          return;
+        }
+
+        if (currentSessionIdRef.current === storedSessionId) {
+          currentSessionIdRef.current = '';
+          setCurrentSessionId('');
+        }
+      }
+
+      const listedSessions = await refreshSessions();
+      if (cancelled) {
+        return;
+      }
+
+      const targetSessionId = listedSessions[0]?.id;
+      hasInitializedSessionRef.current = true;
+
+      if (targetSessionId) {
+        await switchSession(targetSessionId);
+        return;
+      }
+
+      await createNewSession();
+    };
+
+    initializeSession().catch((error) => {
+      console.error('Failed to initialize session:', error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [createNewSession, getSessionById, isConnected, refreshSessions, switchSession]);
+
   const stopActiveRun = useCallback(async () => {
     const runToStop = activeRunRef.current;
     if (!runToStop) return;
 
     if (currentSessionIdRef.current === runToStop.sessionId) {
       setMessages((prev) => prev
-        .filter((message) => message.id !== runToStop.pendingMessageId)
+        .filter((message) => !(
+          message.role === 'assistant' &&
+          message.metadata?.run?.id === runToStop.runId &&
+          message.metadata?.run?.status === 'pending'
+        ))
         .map((message) => (
-          message.id === runToStop.userMessageId
+          message.role === 'user' && message.metadata?.run?.id === runToStop.runId
             ? {
                 ...message,
                 metadata: {

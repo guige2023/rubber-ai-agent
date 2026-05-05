@@ -367,7 +367,11 @@ async def test_agent_execution_closure(monkeypatch):
         
     monkeypatch.setattr(kernel.agent_manager, "get_master_agent", mock_get_master_agent)
 
-    result = await kernel.run_master_agent("Help me list files", session_id="test_session")
+    result = await kernel.run_master_agent(
+        "Help me list files",
+        session_id="test_session",
+        run_id="run-kernel-list-files",
+    )
     
     payload_messages = result.get("payload", {}).get("messages", [])
     assert len(payload_messages) > 0, "Agent failed to return messages"
@@ -430,7 +434,11 @@ async def test_master_agent_can_recover_from_soft_failed_run_skill(monkeypatch):
     mock_model = FunctionModel(mock_agent_logic)
     monkeypatch.setattr(kernel.model_manager, "create_active_model", lambda: mock_model)
 
-    result = await kernel.run_master_agent("Use the skill first", session_id="test_session")
+    result = await kernel.run_master_agent(
+        "Use the skill first",
+        session_id="test_session",
+        run_id="run-kernel-skill-recovery",
+    )
 
     payload_messages = result.get("payload", {}).get("messages", [])
     assert len(payload_messages) > 0, "Agent failed to return messages"
@@ -471,7 +479,11 @@ async def test_run_master_agent_mocked(monkeypatch, caplog):
     monkeypatch.setattr(kernel.agent_manager, "get_master_agent", mock_get_master_agent)
 
     with caplog.at_level(logging.INFO, logger="app.core.agent_manager"):
-        response = await kernel.run_master_agent("Please list files", "test-session")
+        response = await kernel.run_master_agent(
+            "Please list files",
+            "test-session",
+            run_id="run-kernel-mocked",
+        )
     
     assert "Please list files" in response["payload"]["messages"][0]["content"]
     run_start_logs = [
@@ -514,7 +526,11 @@ async def test_run_master_agent_history_keeps_system_prompt_and_token_estimates(
     kernel = FerrymanRuntime(create_test_settings())
     monkeypatch.setattr(kernel.agent_manager, "get_master_agent", lambda session_id: MockAgent())
 
-    await kernel.run_master_agent("Please list files", "test-session")
+    await kernel.run_master_agent(
+        "Please list files",
+        "test-session",
+        run_id="run-kernel-history",
+    )
 
     history = captured["message_history"]
     assert isinstance(history[0], ModelRequest)
@@ -777,7 +793,7 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
         )
         db_session.commit()
 
-    await kernel.run_master_agent("follow-up", session_id)
+    await kernel.run_master_agent("follow-up", session_id, run_id="run-kernel-follow-up")
 
     history = captured["message_history"]
     rendered_history = [message.parts[0].content for message in history[1:]]
@@ -862,7 +878,7 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
         )
         db_session.commit()
 
-    response = await kernel.run_master_agent("fresh request", session_id)
+    response = await kernel.run_master_agent("fresh request", session_id, run_id="run-kernel-fresh")
 
     assert response["payload"]["messages"][0]["content"] == "normal reply"
     assert captured["compaction_calls"] == 1
@@ -970,7 +986,7 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
         )
         db_session.commit()
 
-    await kernel.run_master_agent("hi", session_id)
+    await kernel.run_master_agent("hi", session_id, run_id="run-kernel-hi")
 
     assert captured["compaction_calls"] == 1
 
@@ -1348,7 +1364,7 @@ async def test_agent_deps_emit_tool_event():
     assert isinstance(event_env.payload, ToolActivityPayload)
     assert event_env.payload.run_id == "xyz"
     assert isinstance(event_env.payload.event_id, str)
-    assert event_env.payload.event_id
+    assert len(event_env.payload.event_id) == 22
     assert event_env.payload.seq == 1
     assert event_env.payload.tool_name == "test_tool"
     assert event_env.payload.phase == ToolPhase.COMPLETE

@@ -122,8 +122,6 @@ class BrowserController:
                 return path
 
         executable_names: tuple[str, ...] = ("google-chrome", "chrome", "chromium", "chromium-browser")
-        # PyCharm may misfire here with a pre-3.12 Windows PathLike compatibility warning.
-        # noinspection PyCompatibility
         for executable_name in executable_names:
             found = shutil.which(executable_name)
             if found:
@@ -211,7 +209,7 @@ class BrowserController:
 
     @staticmethod
     def _count_interactive_snapshot_ids(snapshot: str) -> int:
-        return len(re.findall(r"\[\d+\]", snapshot or ""))
+        return len(re.findall(r"\[\d+]", snapshot or ""))
 
     def _attach_page_observers(self, page) -> None:
         page.on("console", self._record_console_message)
@@ -222,9 +220,9 @@ class BrowserController:
         for page in self._browser_context.pages:
             self._attach_page_observers(page)
 
-        def handle_new_page(page) -> None:
-            self._page = page
-            self._attach_page_observers(page)
+        def handle_new_page(new_page) -> None:
+            self._page = new_page
+            self._attach_page_observers(new_page)
 
         self._browser_context.on("page", handle_new_page)
 
@@ -601,9 +599,9 @@ class BrowserController:
 
     async def screenshot(self, selector: str = None, output_dir: str | Path | None = None) -> BinaryImage:
         """Takes a screenshot of the page or a specific element and returns it as a model-consumable image."""
-        import uuid
+        import shortuuid
         selector = self._normalize_selector(selector)
-        filename = f"screenshot_{uuid.uuid4().hex[:8]}.png"
+        filename = f"screenshot_{shortuuid.uuid()}.png"
         logger.info(f"Taking screenshot of {selector if selector else 'page'}")
         target_dir = Path(output_dir) if output_dir is not None else Path("/tmp")
         target_dir.mkdir(parents=True, exist_ok=True)

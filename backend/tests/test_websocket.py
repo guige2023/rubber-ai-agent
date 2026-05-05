@@ -48,6 +48,11 @@ def send_rpc_until_response(websocket, method: str, params: dict | None = None, 
         notifications.append(message)
 
 
+def persist_session(db_session, session_id: str, title: str | None = None) -> None:
+    db_session.add(Session(id=session_id, title=title or session_id))
+    db_session.commit()
+
+
 def test_websocket_rejects_invalid_token(client):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(websocket_path("wrong-token")):
@@ -342,8 +347,10 @@ def test_websocket_backend_log_endpoints(client, monkeypatch):
         }
 
 
-def test_websocket_execute_starts_background_run_and_emits_final_event(client, monkeypatch):
-    async def fake_run_master_agent(instruction: str, session_id: str, emit_event_cb=None):
+def test_websocket_execute_starts_background_run_and_emits_final_event(client, monkeypatch, session):
+    persist_session(session, "session-1")
+
+    async def fake_run_master_agent(instruction: str, session_id: str, *, run_id: str, emit_event_cb=None):
         await asyncio.sleep(0)
         return {
             "namespace": "agent",
@@ -351,7 +358,7 @@ def test_websocket_execute_starts_background_run_and_emits_final_event(client, m
             "session_id": session_id,
             "ts": "2026-04-09T00:00:00Z",
             "payload": {
-                "run_id": "run-10",
+                "run_id": run_id,
                 "messages": [{"role": "assistant", "content": "处理完成"}],
                 "usage": {"input_tokens": 12, "output_tokens": 34, "total_tokens": 46}
             }
@@ -369,6 +376,7 @@ def test_websocket_execute_starts_background_run_and_emits_final_event(client, m
         assert response["result"]["status"] == "started"
         assert response["result"]["session_id"] == "session-1"
         assert isinstance(response["result"]["run_id"], str)
+        assert len(response["result"]["run_id"]) == 22
 
         event = notifications[0] if notifications else json.loads(websocket.receive_text())
         assert event["method"] == "ferryman_event"
@@ -378,7 +386,7 @@ def test_websocket_execute_starts_background_run_and_emits_final_event(client, m
             "session_id": "session-1",
             "ts": "2026-04-09T00:00:00Z",
             "payload": {
-                "run_id": "run-10",
+                "run_id": response["result"]["run_id"],
                 "messages": [{"role": "assistant", "content": "处理完成"}],
                 "usage": {"input_tokens": 12, "output_tokens": 34, "total_tokens": 46}
             }
@@ -386,7 +394,9 @@ def test_websocket_execute_starts_background_run_and_emits_final_event(client, m
 
 
 def test_websocket_execute_emits_failed_terminal_event_on_unexpected_background_error(client, monkeypatch, session):
-    async def fake_run_master_agent(instruction: str, session_id: str, emit_event_cb=None):
+    persist_session(session, "session-background-fail")
+
+    async def fake_run_master_agent(instruction: str, session_id: str, *, run_id: str, emit_event_cb=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(app.state.runtime, "run_master_agent", fake_run_master_agent)
@@ -399,6 +409,7 @@ def test_websocket_execute_emits_failed_terminal_event_on_unexpected_background_
             request_id=11,
         )
         run_id = response["result"]["run_id"]
+        assert len(run_id) == 22
         assert response["result"] == {
             "status": "started",
             "run_id": run_id,
@@ -559,10 +570,11 @@ def test_websocket_cancel_run_recovers_persisted_pending_run_after_restart(clien
     }
 
 
-def test_websocket_execute_can_be_canceled_while_socket_stays_responsive(client, monkeypatch):
+def test_websocket_execute_can_be_canceled_while_socket_stays_responsive(client, monkeypatch, session):
+    persist_session(session, "session-cancel")
     blocker = asyncio.Event()
 
-    async def fake_run_master_agent(instruction: str, session_id: str, emit_event_cb=None):
+    async def fake_run_master_agent(instruction: str, session_id: str, *, run_id: str, emit_event_cb=None):
         await blocker.wait()
         return {
             "namespace": "agent",
@@ -586,6 +598,7 @@ def test_websocket_execute_can_be_canceled_while_socket_stays_responsive(client,
             request_id=20,
         )
         run_id = start_response["result"]["run_id"]
+        assert len(run_id) == 22
         assert start_response["result"] == {
             "status": "started",
             "run_id": run_id,
@@ -631,10 +644,11 @@ def test_websocket_execute_can_be_canceled_while_socket_stays_responsive(client,
         }
 
 
-def test_websocket_execute_returns_busy_when_session_already_has_active_run(client, monkeypatch):
+def test_websocket_execute_returns_busy_when_session_already_has_active_run(client, monkeypatch, session):
+    persist_session(session, "session-busy")
     blocker = asyncio.Event()
 
-    async def fake_run_master_agent(instruction: str, session_id: str, emit_event_cb=None):
+    async def fake_run_master_agent(instruction: str, session_id: str, *, run_id: str, emit_event_cb=None):
         await blocker.wait()
         return {
             "namespace": "agent",
@@ -658,6 +672,7 @@ def test_websocket_execute_returns_busy_when_session_already_has_active_run(clie
             request_id=30,
         )
         run_id = start_response["result"]["run_id"]
+        assert len(run_id) == 22
         assert start_response["result"] == {
             "status": "started",
             "run_id": run_id,
@@ -690,17 +705,44 @@ def test_websocket_execute_returns_busy_when_session_already_has_active_run(clie
         }
 
 
+def test_websocket_execute_requires_existing_session(client):
+    with client.websocket_connect(websocket_path()) as websocket:
+        missing_param_response = send_rpc(
+            websocket,
+            "execute",
+            {"instruction": "hello"},
+            request_id=33,
+        )
+        assert missing_param_response["result"] == {
+            "status": "error",
+            "message": "Session is required",
+        }
+
+        missing_session_response = send_rpc(
+            websocket,
+            "execute",
+            {"instruction": "hello", "session_id": "missing-session"},
+            request_id=34,
+        )
+        assert missing_session_response["result"] == {
+            "status": "error",
+            "message": "Session not found",
+        }
+
+
 def test_websocket_create_session_without_title_defaults_to_empty_string(client, session):
     with client.websocket_connect(websocket_path()) as websocket:
         response = send_rpc(
             websocket,
             "create_session",
-            {"session_id": "session-untitled"},
+            {},
             request_id=10,
         )
-        assert response["result"] == {"id": "session-untitled", "title": ""}
+        created_id = response["result"]["id"]
+        assert response["result"] == {"id": created_id, "title": ""}
+        assert len(created_id) == 22
 
-    created = session.get(Session, "session-untitled")
+    created = session.get(Session, created_id)
     assert created is not None
     assert created.title == ""
 
@@ -768,15 +810,34 @@ def test_websocket_session_message_and_task_flows(client, session):
         response = send_rpc(
             websocket,
             "create_session",
-            {"session_id": "session-new", "title": "Brand New"},
+            {"title": "Brand New"},
             request_id=11,
         )
-        assert response["result"] == {"id": "session-new", "title": "Brand New"}
+        created_session_id = response["result"]["id"]
+        assert response["result"] == {"id": created_session_id, "title": "Brand New"}
+        assert len(created_session_id) == 22
 
         response = send_rpc(websocket, "list_sessions", {"limit": 10}, request_id=12)
         sessions = response["result"]["sessions"]
-        assert [item["id"] for item in sessions][:2] == ["session-new", "session-1"]
+        assert [item["id"] for item in sessions][:2] == [created_session_id, "session-1"]
         assert response["result"]["next_cursor"] is None
+
+        response = send_rpc(
+            websocket,
+            "get_session",
+            {"session_id": "session-1"},
+            request_id=121,
+        )
+        assert response["result"] == {
+            "status": "success",
+            "session": {
+                "id": "session-1",
+                "title": "Session One",
+                "updated_at": now.isoformat(),
+                "input_tokens": 11,
+                "output_tokens": 7,
+            },
+        }
 
         response = send_rpc(
             websocket,
@@ -1358,7 +1419,7 @@ def test_scheduler_runs_due_schedule_during_app_lifespan(session, monkeypatch):
 
     calls: list[dict[str, str]] = []
 
-    async def fake_run_master_agent(self, instruction: str, session_id: str, emit_event_cb=None):
+    async def fake_run_master_agent(self, instruction: str, session_id: str, *, run_id: str, emit_event_cb=None):
         calls.append({"instruction": instruction, "session_id": session_id})
         return {"status": "success"}
 

@@ -57,7 +57,7 @@ class StubKernel:
         self.calls: list[dict[str, str]] = []
         self.schedule_manager = None
 
-    async def run_master_agent(self, instruction: str, session_id: str):
+    async def run_master_agent(self, instruction: str, session_id: str, *, run_id: str):
         self.calls.append({"instruction": instruction, "session_id": session_id})
         return {
             "namespace": "agent",
@@ -76,7 +76,7 @@ class StubKernel:
 
 
 class FailingKernel(StubKernel):
-    async def run_master_agent(self, instruction: str, session_id: str):
+    async def run_master_agent(self, instruction: str, session_id: str, *, run_id: str):
         self.calls.append({"instruction": instruction, "session_id": session_id})
         raise RuntimeError("scheduler failure")
 

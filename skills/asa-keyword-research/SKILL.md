@@ -1,61 +1,42 @@
 ---
 name: asa-keyword-research
-description: Expert ASA strategy engine. Builds keyword matrices, identifies Search Popularity, and structures campaigns from App Store URLs.
-version: 0.1.4
+description: Expert ASA engine for keyword mining, popularity validation, and ROI-based campaign structuring.
+version: 0.1.5
 author: Ferryman
 updated: 2026-05-05
 ---
 
 # ASA Keyword Research
 
-Expert persona: Senior ASA Performance Marketer. Goal: Design high-conversion, ROI-positive campaign architectures.
+**Quality Goal**: Deliver high-conversion Target CPA redlines and copy-paste ready campaign structures.
 
-## Primary Directive
-1. **Analyze**: Identify category, competitors, and exact Monthly/Annual pricing from URL.
-2. **Mine**: Extract keywords via `qimai_keyword_detail.py` (Tier 1) and `app_store_suggester.py` (Tier 2).
-3. **Model**: Generate tiered ROI forecasts focusing on **Target CPA (Install)**.
-4. **Structure**: Cluster keywords (Brand/Generic/Competitor) into campaigns.
-5. **Package**: Deliver Strategy MD and Executable CSV.
-
-## Output Contract
-- **Strategy Report**: `reports/asa-strategy-<app_slug>-<date>.md`
-- **Keyword CSV**: `reports/asa-keywords-<app_slug>-<date>.csv`
-- **Rule**: Link both files in final reply. Completeness requires full financial and keyword data.
-
-## Quality Standards
-1. **Target CPA Focus**: Output financial ceilings (Target CPA), not tactical bids (CPT).
-2. **Actionable Layout**: Group by `Campaign -> Ad Group`.
-3. **Copy-Paste Formatting**: 
-    - **Exact Match**: `[word1], [word2]` (Brackets required).
-    - **Broad Match**: `word1, word2` (No brackets).
-4. **Fidelity**: No hallucinated popularity. Every popularity score must have a `popularity_source`.
-5. **Commission Transparency**: Compare 15% Small Biz vs 30% Standard fees across 3 tiers (Cons./Real./Opt.).
-
-## Keyword Heuristics
-Prioritize top 50 based on:
-- **Intent**: JTBD phrases (e.g., "voice to do").
-- **Cross-Competitor**: High frequency in 3+ top rivals' ASO lists.
-- **Real-time Hints**: Top-ranked Apple Search Suggestions.
-- **Negative Alpha**: Filter out high-traffic noise (e.g., "free").
-
-## ROI & Payback Model (Productivity Base)
-Target CPA (Install) = `Monthly Net * Total Payments * 0.9 * Install-to-Paid Rate * 0.7`.
-
-| Scenario | Total Payments | Install-to-Paid | ROI Expectation |
-| :--- | :--- | :--- | :--- |
-| **Conservative** | 2.5x | 5% | High margin, safe |
-| **Realistic** | **4.5x** | **10%** | **Primary Benchmark** |
-| **Optimistic** | 6.0x | 15% | Aggressive growth |
+## Execution SOP
+1. **Product Audit**: Visit URL (construct `https://apps.apple.com/app/id<ID>` if App ID given). Extract category and exact Monthly/Annual pricing.
+2. **Rival Discovery**: Run `app_store_search.py --term <seed> --limit 5` for 3+ core seeds to identify top organic rivals.
+3. **Intelligence Mining**:
+   - **Reverse Lookup**: Run `qimai_keyword_detail.py --appid <Rival_ID>` for top 3 rivals to fetch real-world popularity (0-100).
+   - **Semantic Scan**: Run `app_store_suggester.py --term <seed>` for Apple's real-time intent suggestions.
+4. **Keyword Selection (Heuristics)**: Prioritize Top 50 based on:
+   - **JTBD Intent**: Problem-solving phrases (e.g., "voice to do").
+   - **Cross-Rival Alpha**: High frequency across 3+ rivals' lists.
+   - **Fidelity**: Validated `popularity_source` only (No AI hallucination).
+   - **Negative Filter**: Remove high-traffic low-intent noise (e.g., "free", "games").
+5. **ROI Modeling**: Focus on **Target CPA (Install)** using **Monthly SKU**.
+   - **Formula**: `CPA = Monthly_Net * Total_Payments * 0.9 * Install_to_Paid_Rate * 0.7`.
+   - **Matrix**: Contrast 15% Small Biz vs 30% Standard fees across [Cons. (5% Pay)/Real. (10% Pay)/Opt. (15% Pay)] tiers.
+6. **Packaging**: Cluster into `Brand / Generic / Competitor / Discovery`. Deliver MD Strategy and Executable CSV with brackets `[]` for Exact Match.
 
 ## Campaign Architecture
-- **Brand**: Defense, Exact Match.
-- **Generic**: Feature clusters, Exact Match.
-- **Competitor**: Rival conquesting, Exact Match.
-- **Discovery**: Core seeds, Broad Match, Search Match OFF.
+| Type | Match | Logic |
+| :--- | :--- | :--- |
+| **Brand** | Exact | Own name defense. |
+| **Generic**| Exact | Feature clusters (e.g., "AI Voice"). |
+| **Competitor**| Exact | Rival conquesting. |
+| **Discovery** | Broad | Core seeds; Search Match OFF. |
 
-## CSV Output Contract
-Fields: `row_type`, `campaign_name`, `ad_group_name`, `keyword`, `match_type`, `negative_keyword`, `negative_match_type`, `negative_scope`, `search_match_enabled`, `country_or_region`, `normalized_popularity_0_100`, `popularity_source`, `raw_popularity`, `normalization_method`, `intent`, `competitor_tier`, `target_cpa`, `daily_budget`, `notes`
+## CSV Contract
+Columns: `row_type`, `campaign_name`, `ad_group_name`, `keyword`, `match_type`, `negative_keyword`, `negative_match_type`, `negative_scope`, `search_match_enabled`, `country_or_region`, `normalized_popularity_0_100`, `popularity_source`, `raw_popularity`, `normalization_method`, `intent`, `competitor_tier`, `target_cpa`, `daily_budget`, `notes`
 
 ## Final Pass
-- **Language**: Match user prompt language.
-- **Chinese Typography**: No spaces between Chinese characters and English words/numbers.
+- **Action**: Provide clickable links in final reply.
+- **Typography**: No spaces between Chinese and English/Numbers.

@@ -5,7 +5,7 @@ description: >
   keyword mining, search popularity validation, Target CPA estimation, campaign
   and ad group structuring, or executable ASA keyword CSV generation for an
   App Store app.
-version: 0.1.9
+version: 0.1.10
 author: Ferryman
 updated: 2026-05-06
 ---
@@ -16,7 +16,7 @@ updated: 2026-05-06
 
 ## Execution SOP
 1. **Context**: Identify **Target Country (<CC>)** as ISO 2-letter uppercase (e.g. US, CN).
-2. **Standardize Net**: Use the single purchase price for the selected paid SKU. Exclude trial/intro/lifetime prices.
+2. **Standardize Net**: Select the primary recurring SKU in this order: Weekly > Monthly > Annual. Use that SKU's single transaction price as `Price`; do not convert Annual to Monthly or blend multiple SKUs. Exclude trial/intro/lifetime prices from the primary model.
    - `Net_LTV = Price * Total_Payments * (1 - Apple_Fee)`.
 3. **Rival Discovery**: Run `app_store_search.py --term <seed> --country <CC> --limit 5` (uppercase) for 3+ core seeds.
 4. **Intelligence Mining**:
@@ -35,6 +35,7 @@ updated: 2026-05-06
    - `normalization_method`: Set to `apple_suggestion_rank_no_score`.
 2. **Country Alignment**: Use uppercase for App Store scripts, lowercase for QiMai.
 3. **Category Integrity**: Do not use Productivity defaults for other categories. State selected benchmarks in the report.
+4. **SKU Discipline**: Non-primary recurring SKUs and lifetime SKUs may be reported as sensitivity scenarios only. Do not invent SKU mix weights unless the user provides actual purchase distribution data.
 
 ## Category Benchmarks (Reference Only)
 | Category | Install-to-Paid Rate (Cons/Real/Opt) | Lifecycle Payments (Cons/Real/Opt) |

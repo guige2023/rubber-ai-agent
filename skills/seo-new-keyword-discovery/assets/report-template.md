@@ -37,7 +37,7 @@ Use this Markdown structure as the blueprint for final reports. Adapt heading la
 
 ## 3. Validated Shortlist
 
-| # | Keyword | Demand Evidence | SERP Weakness | Intent | Page Type | Score | Decision |
+| # | Keyword | Demand Evidence | SERP Weakness | Product Gate | Decision Rationale | Score | Decision |
 |:--|:--|:--|:--|:--|:--|:--|:--|
 | 1 | | | | | | | |
 
@@ -46,12 +46,15 @@ Use this Markdown structure as the blueprint for final reports. Adapt heading la
 ### 4.1 [Keyword]
 
 - **Decision**: [build_now / build_light / observe / reject]
-- **Score**: [x/30]
+- **Score**: [x/45]
 - **Intent**: [intent]
 - **Recommended Page Type**: [page type]
 - **Demand Evidence**: [specific evidence]
 - **SERP Weakness**: [specific weakness this page can exploit]
-- **Minimum Useful Page Scope**: [what must be built for a genuinely useful page]
+- **Product Gate**: [AI intensity / frequency / data flywheel / monetization]
+- **Decision Rationale**: [one concrete go or no-go judgment based on evidence]
+- **Kill Criteria**: [conditions that would make this a no-go]
+- **Minimum Useful Page**: [what must be built for a genuinely useful page]
 - **Title Tag Draft**: [title]
 - **H1 Draft**: [H1]
 - **Expansion Path**: [long-tail, multilingual, related tools, comparison, templates]
@@ -74,15 +77,16 @@ Use this Markdown structure as the blueprint for final reports. Adapt heading la
 | Step | Owner | Success Standard |
 |:--|:--|:--|
 | Build test page | | Indexed and receives impressions |
-| Monitor GSC | | Impressions appear within [time window] |
+| Monitor indexing and impressions | | Page is indexed and receives impressions within [time window] |
 | Expand cluster | | Supporting terms show demand |
 
 ## Appendix: Methodology & Sources
 
 - **Trend Data**: [Google Trends / heuristic fallback]
 - **SERP Data**: [Search date and market]
-- **Demand Signals**: [autocomplete, PAA, GSC, community, directories]
+- **Demand Signals**: [autocomplete, PAA, public discussions, directories]
 - **Competition Signals**: [SERP page type, Title/H1 match, freshness, backlinks if available]
+- **Blocked Sources**: [none / blocked_by_verification / limited_serp_access]
 - **Limitations**: [blocked sources, unavailable paid-tool metrics, uncertainty]
 
 > Estimates are based on public signals unless paid-tool data is explicitly cited.

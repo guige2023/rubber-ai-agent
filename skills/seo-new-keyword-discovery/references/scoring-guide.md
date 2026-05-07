@@ -9,22 +9,25 @@ Each dimension is scored from 1 to 5.
 | Dimension | 1 | 3 | 5 |
 |:--|:--|:--|:--|
 | Freshness | Old, mature, fully covered | Some recent mentions or renewed interest | Clearly rising, newly named, or recently discussed across sources |
-| Demand | No visible search or community signal | One credible signal, weak or ambiguous | Multiple demand signals such as Trends, autocomplete, PAA, GSC, or repeated community mentions |
+| Demand | No visible search or public discussion signal | One credible signal, weak or ambiguous | Multiple demand signals such as Trends, autocomplete, PAA, public discussions, or product-directory momentum |
 | SERP Weakness | Strong brands and high-quality exact-match pages dominate | Mixed SERP with some weak or off-intent results | Obvious opening: thin pages, forums, subdomains, old content, poor Title/H1 match, or missing tool/page |
 | Buildability | Requires heavy product, data, authority, or original research | Buildable with moderate content or light tooling | Can ship a useful page/tool quickly with available resources |
 | Expansion | One-off query with no obvious cluster | Some related long-tails or adjacent pages | Clear matrix potential: templates, variants, languages, comparisons, or related tools |
-| Monetization Fit | No clear value capture | Indirect value through traffic or brand | Clear ads, affiliate, lead, SaaS, directory, or product conversion path |
+| AI Intensity | AI is incidental or cosmetic | AI improves output quality | AI is the core product value |
+| Usage Frequency | Mostly one-off use | Occasional repeat use | Recurring workflow or multi-session need |
+| Data Flywheel | User data does not improve product | Some personalization possible | Inputs/results can improve quality, templates, recommendations, or retention |
+| Monetization Clarity | No clear value capture | Indirect value through traffic or brand | Clear ads, affiliate, credits, subscription, leads, or upgrade path |
 
-Total possible score: 30.
+Total possible score: 45.
 
 ## Decision Bands
 
 | Total | Default Decision | Meaning |
 |:--|:--|:--|
-| 24-30 | `build_now` | Strong enough to recommend immediate page/tool creation |
-| 18-23 | `build_light` | Worth a small test page or narrow MVP, then monitor |
-| 12-17 | `observe` | Interesting but not validated enough |
-| 6-11 | `reject` | Too weak, too competitive, or poor fit |
+| 36-45 | `build_now` | Strong keyword and product opportunity |
+| 27-35 | `build_light` | Worth a narrow MVP, then monitor |
+| 18-26 | `observe` | Interesting but not validated enough |
+| 9-17 | `reject` | Too weak, too competitive, or poor fit |
 
 ## Priority Labels
 
@@ -45,8 +48,7 @@ Use compact labels in CSV/report tables:
 - `trends_spike`: Visible spike but durability unclear.
 - `autocomplete`: Google autocomplete suggests the query or variant.
 - `paa`: People Also Ask exposes adjacent questions.
-- `gsc`: Google Search Console data provided by the user.
-- `community`: credible community discussion or repeated mentions.
+- `public_discussion`: credible public discussion or repeated mentions.
 - `product_directory`: directory/ranking/launch platform signal.
 - `competitor_page`: competitor page suggests active SEO targeting.
 - `no_visible_signal`: no meaningful demand signal found.
@@ -62,6 +64,50 @@ Use compact labels in CSV/report tables:
 - `missing_tool`: tool-shaped query lacks a good interactive tool.
 - `weak_brand_serp`: no dominant authoritative brand result.
 - `strong_serp`: SERP looks hard to beat.
+- `limited_serp_access`: SERP access was blocked or incomplete.
+
+## SERP Audit Checklist
+
+Record concise evidence for:
+
+- Result type: homepage, inner page, forum, directory, hosted subdomain, or official source.
+- Title/H1/URL match: exact, partial, missing, or unknown.
+- Intent match: strong, mixed, or off-intent.
+- Content quality: useful, thin, outdated, or missing tool.
+- Authority signal: strong brand, medium site, weak site, or unknown.
+- KD/DR/backlinks: record only if actually available.
+
+## Product Gate
+
+Before scoring, judge:
+
+- AI intensity: Is AI essential to the value?
+- Usage frequency: Will users return?
+- Data flywheel: Do user inputs/results improve product quality or retention?
+- Monetization clarity: Is the value capture path obvious?
+
+Failing two or more means no `build_now`.
+
+## Decision Rationale
+
+Write one evidence-specific verdict, not generic pros and cons. Examples:
+
+- `build_light because SERP has exact demand but generic pages are crowded; only a KDP-printable sub-niche has a plausible opening.`
+- `reject because the keyword is high-volume but AI is cosmetic, usage is one-off, and SERP is dominated by mature exact-match tools.`
+
+## Kill Criteria
+
+Reject or downgrade if:
+
+- intent is official, login, download, or support;
+- trend is a one-day spike;
+- SERP is dominated by official or high-authority exact-match pages;
+- useful page requires unavailable product/data;
+- no monetization or strategic value exists;
+- AI is not central to the product;
+- usage is one-off and no retention loop exists;
+- user data cannot improve the product experience;
+- only a low-quality SEO page can be produced.
 
 ## Red Flags
 
@@ -76,8 +122,7 @@ Downgrade or reject even if the numeric score is high:
 
 ## Example Scoring
 
-| Keyword | Freshness | Demand | SERP Weakness | Buildability | Expansion | Monetization | Total | Decision |
-|:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| `example ai generator` | 4 | 4 | 4 | 5 | 4 | 4 | 25 | `build_now` |
-| `example product login` | 3 | 5 | 1 | 1 | 1 | 1 | 12 | `reject` due to navigational intent |
-| `new game name unblocked` | 5 | 3 | 4 | 4 | 3 | 3 | 22 | `build_light` |
+| Keyword | Freshness | Demand | SERP | Build | Expansion | AI | Frequency | Data | Monetization | Total | Decision |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| `workflow ai generator` | 4 | 4 | 4 | 4 | 4 | 5 | 4 | 4 | 4 | 37 | `build_now` |
+| `one-off ai novelty` | 4 | 4 | 3 | 4 | 2 | 2 | 1 | 1 | 2 | 23 | `observe` |

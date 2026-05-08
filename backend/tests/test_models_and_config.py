@@ -261,6 +261,19 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     assert models["custom"] == ["my-custom-model"]
 
 
+def test_llm_provider_catalog_preserves_settings_display_order():
+    assert list(ModelManager.get_llm_provider_catalog()) == [
+        "kimi",
+        "gemini",
+        "deepseek",
+        "qwen",
+        "openai",
+        "anthropic",
+        "doubao",
+        "custom",
+    ]
+
+
 def test_available_models_include_openai_anthropic_and_gemini_when_configured():
     config.set("llm.openai", {"api_key": "sk-openai"}, category="llm")
     config.set("llm.anthropic", {"api_key": "sk-anthropic"}, category="llm")

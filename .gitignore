@@ -1,6 +1,8 @@
 # Reference repositories
 references/
 !skills/*/references/
+docs/
+reports/
 
 # Backend
 __pycache__/

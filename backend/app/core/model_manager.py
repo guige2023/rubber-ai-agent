@@ -53,6 +53,15 @@ class ModelManager:
     def get_llm_provider_catalog() -> dict[str, dict[str, object]]:
         """Returns the provider metadata used by the settings UI and model registry."""
         return {
+            "kimi": {
+                "label": "Kimi",
+                "placeholder_base_url": "https://api.moonshot.cn/v1",
+                "list_mode": "openai_compatible",
+                "models": [
+                    "kimi-k2.6",
+                    "kimi-k2.5",
+                ],
+            },
             "gemini": {
                 "label": "Gemini",
                 "placeholder_base_url": "https://generativelanguage.googleapis.com",
@@ -61,6 +70,27 @@ class ModelManager:
                     "gemini-3.1-pro-preview",
                     "gemini-3.1-flash-lite-preview",
                     "gemini-3-flash-preview",
+                ],
+            },
+            "deepseek": {
+                "label": "DeepSeek",
+                "placeholder_base_url": "https://api.deepseek.com",
+                "list_mode": "openai_compatible",
+                "models": [
+                    "deepseek-v4-pro",
+                    "deepseek-v4-flash",
+                ],
+            },
+            "qwen": {
+                "label": "Qwen",
+                "placeholder_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "list_mode": "openai_compatible",
+                "models": [
+                    "qwen3.6-plus",
+                    "qwen-max",
+                    "qwen-plus",
+                    "qwen3.5-plus",
+                    "qwen3.5-omni-plus",
                 ],
             },
             "openai": {
@@ -85,41 +115,6 @@ class ModelManager:
                     "claude-sonnet-4.6",
                     "claude-haiku-4.5",
                     "claude-3-5-sonnet-latest",
-                ],
-            },
-            "qwen": {
-                "label": "Qwen",
-                "placeholder_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "list_mode": "openai_compatible",
-                "models": [
-                    "qwen3.6-plus",
-                    "qwen-max",
-                    "qwen-plus",
-                    "qwen3.5-plus",
-                    "qwen3.5-omni-plus",
-                ],
-            },
-            "deepseek": {
-                "label": "DeepSeek",
-                "placeholder_base_url": "https://api.deepseek.com",
-                "list_mode": "openai_compatible",
-                "models": [
-                    "deepseek-v4-pro",
-                    "deepseek-v4-flash",
-                ],
-            },
-            "kimi": {
-                "label": "Kimi",
-                "placeholder_base_url": "https://api.moonshot.cn/v1",
-                "list_mode": "openai_compatible",
-                "models": [
-                    "kimi-k2.6",
-                    "kimi-k2.5",
-                    "kimi-k2-thinking",
-                    "kimi-k2-thinking-turbo",
-                    "kimi-k2-0905-preview",
-                    "kimi-k2-turbo-preview",
-                    "moonshot-v1-128k",
                 ],
             },
             "doubao": {

@@ -221,8 +221,12 @@ async def run_bundle_smoke_test() -> dict[str, object]:
     workspace = runtime.get_session_workspace(session_id)
     base_ctx = SimpleNamespace(deps=runtime.create_agent_deps(session_id=session_id), usage=Usage())
     report: dict[str, object] = {"root_dir": str(settings.root_dir), "checks": []}
+    scheduler_started = False
 
     try:
+        await runtime.schedule_manager.start()
+        scheduler_started = True
+
         runtime.skill_manager.scan_skills()
         report["checks"].append({"name": "scan_skills", "count": len(runtime.skill_manager.skills)})
         _require(bool(runtime.skill_manager.skills), "No skills were loaded from the bundled skill directories.")
@@ -382,6 +386,8 @@ async def run_bundle_smoke_test() -> dict[str, object]:
 
         return report
     finally:
+        if scheduler_started:
+            await runtime.schedule_manager.shutdown()
         await runtime.browser_manager.shutdown()
 
 

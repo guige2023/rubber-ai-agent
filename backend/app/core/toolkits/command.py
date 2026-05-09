@@ -1,5 +1,6 @@
 import asyncio
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -22,6 +23,16 @@ def _coerce_args(v: object) -> list[str] | None:
         except (json.JSONDecodeError, ValueError):
             return v
     return v
+
+
+def _parse_stdout(stdout: str) -> object:
+    text = stdout.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
 
 
 class CommandToolkit(Toolkit):
@@ -71,25 +82,34 @@ class CommandToolkit(Toolkit):
         ctx: RunContext[AgentDeps],
         script_name: str,
         args: Annotated[list[str] | None, BeforeValidator(_coerce_args)] = None,
-        timeout_ms: int = 10000,
-    ) -> dict:
+        timeout_ms: int = 60000,
+    ) -> object:
         """Run a script from the current skill's `scripts/` directory.
 
         The script runs with the current session workspace as its working
-        directory. Returns a structured result with command, exit code,
-        timeout status, stdout, and stderr.
+        directory. Successful scripts return parsed stdout when it is JSON,
+        plain stdout text otherwise, or None for empty stdout. Execution
+        failures return a lightweight diagnostic object with the command,
+        error, and any stdout result produced before failure.
         """
         resolved_args = args or []
         script_path = CommandToolkit._resolve_script_path(ctx, script_name)
         workspace_dir = get_workspace(ctx.deps)
         command = CommandToolkit._build_command(script_path, resolved_args)
 
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(workspace_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        cmd = shlex.join(command)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(workspace_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except Exception as e:
+            return {
+                "cmd": cmd,
+                "error": str(e),
+            }
 
         timed_out = False
         try:
@@ -102,14 +122,24 @@ class CommandToolkit(Toolkit):
             process.kill()
             stdout, stderr = await process.communicate()
 
-        result = {
-            "ok": process.returncode == 0 and not timed_out,
-            "script_name": script_name,
-            "command": command,
-            "cwd": str(workspace_dir),
-            "exit_code": process.returncode,
-            "timed_out": timed_out,
-            "stdout": stdout.decode("utf-8", errors="replace"),
-            "stderr": stderr.decode("utf-8", errors="replace"),
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        parsed_stdout = _parse_stdout(stdout_text)
+
+        if process.returncode == 0 and not timed_out:
+            return parsed_stdout
+
+        if timed_out:
+            error = f"Script timed out after {timeout_ms}ms."
+        elif stderr_text.strip():
+            error = stderr_text.strip()
+        else:
+            error = f"Script exited with code {process.returncode}."
+
+        result: dict[str, object] = {
+            "cmd": cmd,
+            "error": error,
         }
+        if parsed_stdout is not None:
+            result["result"] = parsed_stdout
         return result

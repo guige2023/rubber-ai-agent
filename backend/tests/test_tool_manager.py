@@ -9,7 +9,6 @@ from pydantic_ai.exceptions import ModelRetry, SkipToolExecution
 from app.core.config import Settings
 from app.core.runtime import FerrymanRuntime
 from app.core.tool_activity_payload import compact_tool_event_text, summarize_tool_input_value
-from app.core.tool_results import build_tool_success_result
 from app.core.tool_manager import (
     FerrymanToolValidationCapability,
     ToolManager,
@@ -62,34 +61,6 @@ def test_compact_tool_event_text_truncates_and_redacts_structured_output():
     assert "redacted" in text
     assert len(text) <= 180
     assert text.endswith("...")
-
-
-def test_run_skill_script_result_is_compacted_before_returning_to_model():
-    result = build_tool_success_result(
-        "run_skill_script",
-        {
-            "ok": True,
-            "script_name": "fetch_stock_data.py",
-            "command": ["/usr/bin/python", "/skill/scripts/fetch_stock_data.py"],
-            "cwd": "/workspace/session",
-            "exit_code": 0,
-            "timed_out": False,
-            "stdout": "A" * 5000,
-            "stderr": "Connected to socket\n" + "B" * 1200,
-        },
-    )
-
-    payload = parse_tool_return(result)
-    data = payload["data"]
-
-    assert payload["status"] == "success"
-    assert "command" not in data
-    assert data["stdout_chars"] == 5000
-    assert data["stdout_truncated"] is True
-    assert len(data["stdout"]) == 4000
-    assert data["stderr_chars"] > 800
-    assert data["stderr_truncated"] is True
-    assert len(data["stderr"]) == 800
 
 
 @pytest.mark.asyncio
@@ -172,11 +143,8 @@ async def test_tool_validation_capability_returns_tool_error_for_validation_fail
         )
 
     payload = parse_tool_return(exc_info.value.result)
-    assert payload["status"] == "error"
     assert payload["tool_name"] == "send_email"
-    assert payload["error"]["type"] == "tool_validation_error"
-    assert payload["error"]["retryable"] is True
-    assert payload["error"]["message"] == "attachments must be an array"
+    assert payload["error"] == "attachments must be an array"
 
 
 @pytest.mark.asyncio
@@ -201,9 +169,8 @@ async def test_tool_manager_registers_wrapped_tool_without_emitting_ui_events(tm
     result = await registered_tool(ctx, arg1="ok")
     payload = parse_tool_return(result)
 
-    assert payload["status"] == "success"
     assert payload["tool_name"] == "dummy_tool"
-    assert payload["data"] == "Processed ok"
+    assert payload["result"] == "Processed ok"
     mock_emit.assert_not_awaited()
 
 
@@ -228,6 +195,5 @@ async def test_tool_manager_soft_fails_model_retry_on_last_attempt(tmp_path):
     result = await registered_tool(ctx)
     payload = parse_tool_return(result)
 
-    assert payload["status"] == "error"
     assert payload["tool_name"] == "retry_tool"
-    assert payload["error"]["type"] == "model_retry_exhausted"
+    assert payload["error"] == "bad arguments"

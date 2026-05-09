@@ -302,7 +302,7 @@ async def test_skill_creator_draft_publish_lifecycle_stays_in_allowed_paths():
     )
     draft_dir = workspace / "demo-skill"
 
-    assert init_result["ok"] is True
+    assert Path(init_result).resolve() == draft_dir.resolve()
     assert draft_dir.exists()
     assert "SKILL.md" in await FileToolkit.list_files(creator_ctx, "demo-skill")
 
@@ -325,6 +325,52 @@ async def test_skill_creator_draft_publish_lifecycle_stays_in_allowed_paths():
         skill_name="demo-skill",
     ))
     assert "SKILL.md" in await FileToolkit.list_files(published_ctx, str(published_dir))
+
+
+@pytest.mark.asyncio
+async def test_run_skill_script_returns_parsed_stdout_and_ignores_success_stderr():
+    create_mock_skill("script_skill", "Script skill desc", TEST_BUNDLED_SKILLS)
+    scripts_dir = TEST_BUNDLED_SKILLS / "script_skill" / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (scripts_dir / "json_result.py").write_text(
+        "import json\nimport sys\nsys.stderr.write('debug noise\\n')\nprint(json.dumps({'value': 42}))\n",
+        encoding="utf-8",
+    )
+    kernel = FerrymanRuntime(create_test_settings())
+    kernel.skill_manager.scan_skills()
+    ctx = SimpleNamespace(deps=kernel.create_agent_deps(
+        session_id="skill-session",
+        run_id="run-script-json-result",
+        skill_name="script_skill",
+    ))
+
+    result = await CommandToolkit.run_skill_script(ctx, "json_result.py")
+
+    assert result == {"value": 42}
+
+
+@pytest.mark.asyncio
+async def test_run_skill_script_returns_lightweight_failure_with_cmd_and_optional_result():
+    create_mock_skill("script_skill", "Script skill desc", TEST_BUNDLED_SKILLS)
+    scripts_dir = TEST_BUNDLED_SKILLS / "script_skill" / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (scripts_dir / "fails.py").write_text(
+        "import json\nimport sys\nprint(json.dumps({'partial': True}))\nsys.stderr.write('boom\\n')\nsys.exit(2)\n",
+        encoding="utf-8",
+    )
+    kernel = FerrymanRuntime(create_test_settings())
+    kernel.skill_manager.scan_skills()
+    ctx = SimpleNamespace(deps=kernel.create_agent_deps(
+        session_id="skill-session",
+        run_id="run-script-failure",
+        skill_name="script_skill",
+    ))
+
+    result = await CommandToolkit.run_skill_script(ctx, "fails.py")
+
+    assert "fails.py" in result["cmd"]
+    assert result["error"] == "boom"
+    assert result["result"] == {"partial": True}
 
 
 # --- Script Level Tests (Creator Scripts) ---

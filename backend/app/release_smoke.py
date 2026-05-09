@@ -291,14 +291,12 @@ async def run_bundle_smoke_test() -> dict[str, object]:
             await CommandToolkit.run_skill_script(bundled_skill_ctx, "verify_bundle_resources.py"),
             label="run_skill_script(verify_bundle_resources.py)",
         )
-        _require(bundled_script_result["ok"] is True, f"Bundled skill resource script failed: {bundled_script_result}")
-        bundled_payload = json.loads(bundled_script_result["stdout"])
         _require(
-            bundled_payload == {
+            bundled_script_result == {
                 "asset": "Ferryman bundled skill asset check.",
                 "reference": "# Bundle Smoke Reference\nFerryman bundled skill reference check.",
             },
-            f"Bundled skill script returned unexpected payload: {bundled_payload}",
+            f"Bundled skill script returned unexpected payload: {bundled_script_result}",
         )
         report["checks"].append({"name": "bundled_skill_resources"})
 
@@ -325,8 +323,7 @@ async def run_bundle_smoke_test() -> dict[str, object]:
             await CommandToolkit.run_skill_script(skill_ctx, "echo.py"),
             label="run_skill_script(echo.py)",
         )
-        _require(command_result["ok"] is True, f"run_skill_script failed: {command_result}")
-        _require("bundle-smoke-script" in command_result["stdout"], f"Unexpected script stdout: {command_result}")
+        _require(command_result.get("source") == "bundle-smoke-script", f"Unexpected script stdout: {command_result}")
 
         original_build_skill_agent = runtime.agent_manager.build_skill_agent
 

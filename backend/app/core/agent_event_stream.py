@@ -78,7 +78,7 @@ def _tool_result_phase(result: ToolReturnPart | RetryPromptPart) -> str:
         return "error"
 
     payload = _parse_tool_return_content(result.content)
-    if isinstance(payload, dict) and payload.get("status") == "error":
+    if isinstance(payload, dict) and "error" in payload:
         return "error"
 
     return "complete"
@@ -90,28 +90,7 @@ def _tool_result_output(result: ToolReturnPart | RetryPromptPart) -> str | None:
 
     payload = _parse_tool_return_content(result.content)
     if isinstance(payload, dict):
-        status = payload.get("status")
-        error = payload.get("error")
-        data = payload.get("data")
-        summary = payload.get("summary")
-
-        if status == "error":
-            error_message = (
-                error.get("message")
-                if isinstance(error, dict)
-                else str(error)
-                if error
-                else None
-            )
-            if error_message and error_message not in {"Tool reported failure."}:
-                return compact_tool_event_text(error_message)
-            return (
-                compact_tool_event_text(data)
-                or compact_tool_event_text(error_message)
-                or compact_tool_event_text(summary)
-            )
-
-        return compact_tool_event_text(data) or compact_tool_event_text(summary)
+        return compact_tool_event_text(payload)
 
     return compact_tool_event_text(result.content)
 

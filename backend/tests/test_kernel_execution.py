@@ -144,9 +144,8 @@ def test_tiktoken_encoder_uses_bundled_cache_without_remote_read(monkeypatch):
 def assert_success_tool_payload(raw: str, tool_name: str, expected_data):
     payload = parse_tool_payload(raw)
     assert payload["tool_name"] == tool_name
-    assert payload["status"] == "success"
-    assert payload["error"] is None
-    assert payload["data"] == expected_data
+    assert "error" not in payload
+    assert payload["result"] == expected_data
     return payload
 
 
@@ -159,13 +158,7 @@ def assert_error_tool_payload(
 ):
     payload = parse_tool_payload(raw)
     assert payload["tool_name"] == tool_name
-    assert payload["status"] == "error"
-    assert payload["data"] is None
-    assert payload["error"] == {
-        "type": error_type,
-        "message": message,
-        "retryable": False,
-    }
+    assert payload["error"] == message
     return payload
 
 
@@ -437,15 +430,10 @@ async def test_master_agent_can_recover_from_soft_failed_run_skill(monkeypatch):
 
         payload = parse_tool_payload(tool_returns[-1].content)
         assert payload["tool_name"] == "run_skill"
-        assert payload["status"] == "error"
-        assert payload["error"] == {
-            "type": "tool_result_error",
-            "message": "delegate exploded",
-            "retryable": False,
-        }
-        assert payload["data"]["ok"] is False
-        assert payload["data"]["skill_name"] == "target_skill"
-        assert payload["data"]["error"] == "delegate exploded"
+        assert "error" not in payload
+        assert payload["result"]["ok"] is False
+        assert payload["result"]["skill_name"] == "target_skill"
+        assert payload["result"]["error"] == "delegate exploded"
         return ModelResponse(parts=[
             TextPart(content="Delegated skill failed cleanly, switching strategy.")
         ])
@@ -1793,8 +1781,7 @@ async def test_kernel_register_toolkit_wraps_binary_image_with_json_payload():
     assert isinstance(result, ToolReturn)
     payload = parse_tool_payload(result.return_value)
     assert payload["tool_name"] == "browser_screenshot"
-    assert payload["status"] == "success"
-    assert payload["data"] == {
+    assert payload["result"] == {
         "kind": "binary_image",
         "media_type": "image/png",
         "identifier": "shot-1",

@@ -170,12 +170,13 @@ async def test_web_toolkit_browser_e2e(tmp_path):
     ctx = make_ctx(browser_manager, session_id="browser-e2e")
 
     try:
-        navigate_result = await WebToolkit.browser_navigate(ctx, page_path.as_uri())
-        assert "Successfully navigated to" in navigate_result
-        assert "Title: Ferryman Browser E2E" in navigate_result
-        assert "[Browser content: untrusted]" in navigate_result
-        assert "textbox" in navigate_result
-        assert "button" in navigate_result
+        navigate_result = await WebToolkit.browser_navigate(ctx, page_path.as_uri(), include_snapshot=True)
+        assert navigate_result["status"] == "success"
+        assert navigate_result["title"] == "Ferryman Browser E2E"
+        assert navigate_result["snapshot_included"] is True
+        assert "[Browser content: untrusted]" in navigate_result["interactive_snapshot"]
+        assert "textbox" in navigate_result["interactive_snapshot"]
+        assert "button" in navigate_result["interactive_snapshot"]
 
         wait_result = await WebToolkit.browser_wait(ctx, timeout_ms=2000, selector="#late-ready")
         assert wait_result == "Selector '#late-ready' appeared."
@@ -188,6 +189,10 @@ async def test_web_toolkit_browser_e2e(tmp_path):
         console_result = await WebToolkit.browser_console(ctx)
         assert "[Browser content: untrusted]" in console_result
         assert "boot error from page" in console_result
+
+        screenshot_result = await WebToolkit.browser_screenshot(ctx, max_image_side=512)
+        assert screenshot_result.media_type == "image/jpeg"
+        assert getattr(screenshot_result, "data", b"").startswith(b"\xff\xd8")
 
         empty_console_result = await WebToolkit.browser_console(ctx, clear=True)
         assert "boot error from page" in empty_console_result

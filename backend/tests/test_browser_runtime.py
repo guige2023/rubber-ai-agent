@@ -1,5 +1,6 @@
 import os
 import tempfile
+import base64
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,52 @@ def test_browser_cleanup_keeps_process_singleton_files_when_owner_is_alive(tmp_p
     assert removed == []
     assert (profile_dir / "SingletonLock").is_symlink()
     assert (profile_dir / "SingletonCookie").exists()
+
+
+@pytest.mark.asyncio
+async def test_browser_screenshot_captures_scaled_jpeg(tmp_path):
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def send(self, method, params=None):
+            self.calls.append((method, params))
+            if method == "Page.getLayoutMetrics":
+                return {"contentSize": {"width": 3000, "height": 1200}}
+            if method == "Page.captureScreenshot":
+                return {
+                    "data": base64.b64encode(b"fake-jpeg").decode("ascii")
+                }
+            raise AssertionError(method)
+
+        async def detach(self):
+            self.calls.append(("detach", None))
+
+    class FakeContext:
+        def __init__(self):
+            self.client = FakeClient()
+
+        async def new_cdp_session(self, page):
+            return self.client
+
+    class FakePage:
+        pass
+
+    controller = BrowserController()
+    controller._browser_context = FakeContext()
+    controller._page = FakePage()
+
+    image = await controller.screenshot(output_dir=tmp_path)
+
+    assert image.media_type == "image/jpeg"
+    saved_files = list(tmp_path.glob("screenshot_*.jpg"))
+    assert len(saved_files) == 1
+    assert saved_files[0].read_bytes() == b"fake-jpeg"
+    capture_call = controller._browser_context.client.calls[1]
+    assert capture_call[0] == "Page.captureScreenshot"
+    assert capture_call[1]["format"] == "jpeg"
+    assert capture_call[1]["quality"] == 80
+    assert capture_call[1]["clip"]["scale"] == pytest.approx(1536 / 3000)
 
 
 @pytest.mark.asyncio
@@ -340,13 +387,65 @@ async def test_browser_navigate_returns_wrapped_snapshot_after_retry(monkeypatch
     monkeypatch.setattr(controller, "_update_visual_status", fake_update_status)
     monkeypatch.setattr(controller, "_get_aria_snapshot_raw", fake_snapshot)
 
+    payload = await controller.navigate("https://example.com", include_snapshot=True)
+
+    assert payload["status"] == "success"
+    assert payload["url"] == "https://example.com/final"
+    assert payload["title"] == "Example Domain"
+    assert payload["resource_type"] == "unknown"
+    assert payload["interactive_element_count"] == 1
+    assert payload["snapshot_included"] is True
+    assert "[Browser content: untrusted]" in payload["interactive_snapshot"]
+    assert '- button "Read more" [1]' in payload["interactive_snapshot"]
+    assert sleeps == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_browser_navigate_defaults_to_lightweight_status(monkeypatch):
+    class FakeResponse:
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+    class FakePage:
+        url = "https://example.com/final"
+
+        async def goto(self, url, wait_until="domcontentloaded", timeout=30000):
+            return FakeResponse()
+
+        async def title(self):
+            return "Example Domain"
+
+        async def evaluate(self, script):
+            return 3
+
+    controller = BrowserController()
+    controller._page = FakePage()
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    async def fake_update_status(message):
+        return None
+
+    async def fail_snapshot():
+        raise AssertionError("navigate should not build a snapshot by default")
+
+    monkeypatch.setattr("app.core.browser.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(controller, "_update_visual_status", fake_update_status)
+    monkeypatch.setattr(controller, "_get_aria_snapshot_raw", fail_snapshot)
+
     payload = await controller.navigate("https://example.com")
 
-    assert "Successfully navigated to https://example.com/final" in payload
-    assert "Title: Example Domain" in payload
-    assert "[Browser content: untrusted]" in payload
-    assert '- button "Read more" [1]' in payload
-    assert sleeps == [2, 1]
+    assert payload == {
+        "status": "success",
+        "url": "https://example.com/final",
+        "title": "Example Domain",
+        "resource_type": "html",
+        "interactive_element_count": 3,
+        "snapshot_included": False,
+    }
+    assert sleeps == [2]
 
 
 @pytest.mark.asyncio

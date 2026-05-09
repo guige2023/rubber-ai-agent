@@ -49,6 +49,10 @@ CHROME_PROCESS_SINGLETON_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 
+CONSOLE_TAIL_LIMIT = 40
+SCREENSHOT_MAX_SIDE = 1536
+SCREENSHOT_JPEG_QUALITY = 80
+
 
 class BrowserActionError(RuntimeError):
     """Raised when a browser action fails due to page/runtime conditions."""
@@ -318,6 +322,64 @@ class BrowserController:
     def _count_interactive_snapshot_ids(snapshot: str) -> int:
         return len(re.findall(r"\[\d+]", snapshot or ""))
 
+    @staticmethod
+    def _classify_resource_type(content_type: str | None, url: str) -> str:
+        normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
+        normalized_url = (url or "").split("?", 1)[0].split("#", 1)[0].lower()
+
+        if normalized_type.startswith("image/") or normalized_url.endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg")
+        ):
+            return "image"
+        if normalized_type == "application/pdf" or normalized_url.endswith(".pdf"):
+            return "pdf"
+        if normalized_type in {"application/json", "text/json"} or normalized_url.endswith(".json"):
+            return "text"
+        if normalized_type.startswith("text/") and normalized_type != "text/html":
+            return "text"
+        if normalized_type in {"text/html", "application/xhtml+xml"}:
+            return "html"
+        return "unknown"
+
+    async def _get_interactive_element_count_raw(self) -> int:
+        """Return a lightweight count of visible interactive elements."""
+        js_script = """
+        () => {
+            const interactiveSelector = [
+                'a[href]',
+                'button',
+                'input',
+                'select',
+                'textarea',
+                '[role="button"]',
+                '[role="link"]',
+                '[role="textbox"]',
+                '[role="checkbox"]',
+                '[role="radio"]',
+                '[role="combobox"]',
+                '[role="menuitem"]',
+                '[tabindex]:not([tabindex="-1"])'
+            ].join(',');
+            const isVisible = (el) => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.display !== 'none' &&
+                    style.visibility !== 'hidden' &&
+                    rect.width > 0 &&
+                    rect.height > 0;
+            };
+            return Array.from(document.querySelectorAll(interactiveSelector))
+                .filter(isVisible)
+                .length;
+        }
+        """
+        try:
+            count = await self._page.evaluate(js_script)
+            return max(0, int(count or 0))
+        except Exception as exc:  # pragma: no cover - defensive fallback for odd documents
+            logger.debug(f"Failed to count interactive elements: {exc}")
+            return 0
+
     def _attach_page_observers(self, page) -> None:
         page.on("console", self._record_console_message)
         page.on("pageerror", self._record_page_error)
@@ -549,28 +611,46 @@ class BrowserController:
     # RISC Web Actions (Exposed to the Agent as Tools)
     # -------------------------------------------------------------------------
 
-    async def navigate(self, url: str) -> str:
+    async def navigate(self, url: str, include_snapshot: bool = False) -> dict[str, object]:
         """Navigates to the given URL and waits for it to load."""
         await self._update_visual_status(f"Navigating to {url}...")
         logger.info(f"Navigating to {url}")
         try:
-            await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            response = await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
             # Add a small semantic wait for frameworks to catch up
             await asyncio.sleep(2)
             title = await self._page.title()
+            final_url = self._page.url
+            content_type = response.headers.get("content-type") if response else None
+            resource_type = self._classify_resource_type(content_type, final_url)
 
-            snapshot = ""
-            for attempt in range(2):
-                snapshot = await self._get_aria_snapshot_raw()
-                if self._count_interactive_snapshot_ids(snapshot) > 0 or attempt == 1:
-                    break
-                await asyncio.sleep(1)
+            if include_snapshot:
+                snapshot = ""
+                for attempt in range(2):
+                    snapshot = await self._get_aria_snapshot_raw()
+                    if self._count_interactive_snapshot_ids(snapshot) > 0 or attempt == 1:
+                        break
+                    await asyncio.sleep(1)
+                interactive_element_count = self._count_interactive_snapshot_ids(snapshot)
+                return {
+                    "status": "success",
+                    "url": final_url,
+                    "title": title or "(untitled)",
+                    "resource_type": resource_type,
+                    "interactive_element_count": interactive_element_count,
+                    "snapshot_included": True,
+                    "interactive_snapshot": wrap_browser_content(snapshot),
+                }
 
-            return (
-                f"Successfully navigated to {self._page.url}\n"
-                f"Title: {title or '(untitled)'}\n"
-                f"Interactive snapshot:\n{wrap_browser_content(snapshot)}"
-            )
+            interactive_element_count = await self._get_interactive_element_count_raw()
+            return {
+                "status": "success",
+                "url": final_url,
+                "title": title or "(untitled)",
+                "resource_type": resource_type,
+                "interactive_element_count": interactive_element_count,
+                "snapshot_included": False,
+            }
         except PlaywrightError as e:
             logger.exception(f"Failed to navigate to {url}")
             raise BrowserActionError(f"Failed to navigate: {str(e)}") from e
@@ -689,8 +769,13 @@ class BrowserController:
         if not self._console_messages:
             return wrap_browser_content("No browser console messages captured.")
 
+        entries = list(self._console_messages)
+        omitted_count = max(0, len(entries) - CONSOLE_TAIL_LIMIT)
         lines: list[str] = []
-        for entry in self._console_messages:
+        if omitted_count:
+            lines.append(f"[... {omitted_count} older console messages omitted]")
+
+        for entry in entries[-CONSOLE_TAIL_LIMIT:]:
             location = ""
             if entry["url"]:
                 location = f" ({entry['url']}"
@@ -704,20 +789,86 @@ class BrowserController:
 
         return wrap_browser_content("\n".join(lines))
 
-    async def screenshot(self, selector: str = None, output_dir: str | Path | None = None) -> BinaryImage:
-        """Takes a screenshot of the page or a specific element and returns it as a model-consumable image."""
+    async def _capture_scaled_jpeg_screenshot(
+        self,
+        output_path: Path,
+        *,
+        selector: str | None = None,
+        max_image_side: int = SCREENSHOT_MAX_SIDE,
+        quality: int = SCREENSHOT_JPEG_QUALITY,
+    ) -> None:
+        max_image_side = max(1, int(max_image_side))
+        quality = max(1, min(100, int(quality)))
+        client = await self._browser_context.new_cdp_session(self._page)
+        try:
+            if selector:
+                locator = self._page.locator(selector).first()
+                await locator.scroll_into_view_if_needed(timeout=5000)
+                box = await locator.bounding_box(timeout=5000)
+                if not box:
+                    raise BrowserActionError(f"Element has no visible bounding box: {selector}")
+                scroll = await self._page.evaluate("() => ({ x: window.scrollX, y: window.scrollY })")
+                clip = {
+                    "x": max(0, float(box["x"]) + float(scroll.get("x", 0))),
+                    "y": max(0, float(box["y"]) + float(scroll.get("y", 0))),
+                    "width": max(1, float(box["width"])),
+                    "height": max(1, float(box["height"])),
+                }
+            else:
+                metrics = await client.send("Page.getLayoutMetrics")
+                content_size = metrics.get("contentSize", {})
+                clip = {
+                    "x": 0,
+                    "y": 0,
+                    "width": max(1, float(content_size.get("width") or 1)),
+                    "height": max(1, float(content_size.get("height") or 1)),
+                }
+
+            longest_side = max(clip["width"], clip["height"])
+            scale = min(1.0, max_image_side / longest_side)
+            result = await client.send(
+                "Page.captureScreenshot",
+                {
+                    "format": "jpeg",
+                    "quality": quality,
+                    "captureBeyondViewport": True,
+                    "clip": {
+                        **clip,
+                        "scale": scale,
+                    },
+                },
+            )
+            import base64
+
+            image_data = result.get("data")
+            if not isinstance(image_data, str) or not image_data:
+                raise BrowserActionError("Screenshot capture returned no image data.")
+            output_path.write_bytes(base64.b64decode(image_data))
+        finally:
+            await client.detach()
+
+    async def screenshot(
+        self,
+        selector: str = None,
+        output_dir: str | Path | None = None,
+        max_image_side: int = SCREENSHOT_MAX_SIDE,
+        quality: int = SCREENSHOT_JPEG_QUALITY,
+    ) -> BinaryImage:
+        """Takes a scaled JPEG screenshot and returns it as a model-consumable image."""
         import shortuuid
         selector = self._normalize_selector(selector)
-        filename = f"screenshot_{shortuuid.uuid()}.png"
+        filename = f"screenshot_{shortuuid.uuid()}.jpg"
         logger.info(f"Taking screenshot of {selector if selector else 'page'}")
         target_dir = Path(output_dir) if output_dir is not None else Path("/tmp")
         target_dir.mkdir(parents=True, exist_ok=True)
         p = target_dir / filename
         try:
-            if selector:
-                await self._page.locator(selector).screenshot(path=str(p))
-            else:
-                await self._page.screenshot(path=str(p), full_page=True)
+            await self._capture_scaled_jpeg_screenshot(
+                p,
+                selector=selector,
+                max_image_side=max_image_side,
+                quality=quality,
+            )
             # PyCharm mis-infers the inherited classmethod on pydantic dataclasses here.
             # noinspection PyUnresolvedReferences,PyTypeChecker
             return BinaryImage.from_path(str(p))
@@ -735,7 +886,7 @@ class BrowserController:
             # Clear first, then type
             # Using fill for cleaner interaction in automated contexts
             await self._page.fill(selector, text)
-            return f"Successfully typed '{text}' into '{selector}'"
+            return f"Successfully typed {len(text)} characters into '{selector}'"
         except PlaywrightError as e:
             logger.exception(f"Failed to type in '{selector}'")
             raise BrowserActionError(f"Failed to type in '{selector}': {str(e)}") from e

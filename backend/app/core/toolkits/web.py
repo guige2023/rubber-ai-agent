@@ -42,13 +42,20 @@ class WebToolkit(Toolkit):
         ]
 
     @staticmethod
-    async def browser_navigate(ctx: RunContext[AgentDeps], url: str, headless: Optional[bool] = None) -> str:
-        """Open a URL and return a compact interactive snapshot.
+    async def browser_navigate(
+        ctx: RunContext[AgentDeps],
+        url: str,
+        headless: Optional[bool] = None,
+        include_snapshot: bool = False,
+    ) -> dict[str, object]:
+        """Open a URL and return lightweight page status.
 
         Set `headless=False` when the browser should stay visible to the user.
+        Set `include_snapshot=True` only when you immediately need clickable
+        or typeable element IDs; otherwise call `browser_aria_snapshot` later.
         """
         browser = await WebToolkit._get_browser(ctx, headless=headless)
-        return await _run_browser_action(lambda: browser.navigate(url))
+        return await _run_browser_action(lambda: browser.navigate(url, include_snapshot=include_snapshot))
 
     @staticmethod
     async def browser_get_distilled_dom(ctx: RunContext[AgentDeps]) -> str:
@@ -112,12 +119,24 @@ class WebToolkit(Toolkit):
         return await _run_browser_action(lambda: browser.get_console_messages(clear=clear))
 
     @staticmethod
-    async def browser_screenshot(ctx: RunContext[AgentDeps], selector: Optional[str] = None) -> BinaryImage:
-        """Capture a page or element screenshot.
+    async def browser_screenshot(
+        ctx: RunContext[AgentDeps],
+        selector: Optional[str] = None,
+        max_image_side: int = 1536,
+        quality: int = 80,
+    ) -> BinaryImage:
+        """Capture a compressed JPEG page or element screenshot.
 
-        Saves the image under the session workspace and returns it as
-        `BinaryImage`.
+        The screenshot is scaled so its longest side is at most `max_image_side`
+        pixels before being returned as `BinaryImage`.
         """
         browser = await WebToolkit._get_browser(ctx)
         screenshot_dir = get_workspace(ctx.deps) / "screenshots"
-        return await _run_browser_action(lambda: browser.screenshot(selector, output_dir=screenshot_dir))
+        return await _run_browser_action(
+            lambda: browser.screenshot(
+                selector,
+                output_dir=screenshot_dir,
+                max_image_side=max_image_side,
+                quality=quality,
+            )
+        )

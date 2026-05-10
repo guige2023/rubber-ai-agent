@@ -79,7 +79,7 @@ def test_prompt_builder_builds_runtime_augmented_instruction(tmp_path):
 async def test_agent_manager_run_master_agent_persists_success(session, tmp_path, monkeypatch):
     runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
     mock_agent = MockAgent()
-    monkeypatch.setattr(runtime.agent_manager, "get_master_agent", lambda session_id: mock_agent)
+    monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id: mock_agent)
     monkeypatch.setattr(runtime.context_manager, "maybe_compact_session", AsyncMock())
 
     response = await runtime.agent_manager.run_master_agent(
@@ -118,7 +118,7 @@ async def test_agent_manager_run_master_agent_persists_success(session, tmp_path
 @pytest.mark.asyncio
 async def test_agent_manager_run_master_agent_includes_exception_cause(session, tmp_path, monkeypatch):
     runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
-    monkeypatch.setattr(runtime.agent_manager, "get_master_agent", lambda session_id: FailingAgent())
+    monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id: FailingAgent())
 
     response = await runtime.agent_manager.run_master_agent(
         "send the report",

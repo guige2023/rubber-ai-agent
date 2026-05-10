@@ -133,7 +133,7 @@ def _replace_file_input_with_resolved_path(
     input_summary: dict[str, object],
 ) -> None:
     raw_path_value: object = None
-    if tool_name in {"read_file", "write_file"}:
+    if tool_name in {"read_file", "read_skill_file", "write_file"}:
         raw_path_value = input_summary.get("file_path")
     elif tool_name == "list_files":
         raw_path_value = input_summary.get("directory", ".")
@@ -143,7 +143,13 @@ def _replace_file_input_with_resolved_path(
 
     raw_path = raw_path_value
     try:
-        if tool_name in {"read_file", "list_files"}:
+        if tool_name == "read_skill_file":
+            resolved_path = FileToolkit.resolve_current_skill_resource_path(
+                deps,
+                raw_path,
+                deps.skill_name,
+            )
+        elif tool_name in {"read_file", "list_files"}:
             resolved_path = FileToolkit.resolve_read_path(
                 deps,
                 deps.session_id,
@@ -153,7 +159,6 @@ def _replace_file_input_with_resolved_path(
         else:
             resolved_path = FileToolkit.resolve_session_path(
                 deps,
-                deps.session_id,
                 raw_path,
             )
         input_summary.pop("file_path", None)

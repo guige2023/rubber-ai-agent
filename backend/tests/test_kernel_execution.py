@@ -374,10 +374,10 @@ async def test_agent_execution_closure(monkeypatch):
 
     mock_model = streaming_function_model(mock_agent_logic)
     
-    def mock_get_master_agent(session_id: str):
+    def mock_build_master_agent(session_id: str):
         return Agent(model=mock_model, system_prompt="You are a test agent.")
         
-    monkeypatch.setattr(kernel.agent_manager, "get_master_agent", mock_get_master_agent)
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", mock_build_master_agent)
 
     result = await kernel.run_master_agent(
         "Help me list files",
@@ -479,11 +479,11 @@ async def test_run_master_agent_mocked(monkeypatch, caplog):
         async def run(self, instruction, deps=None, message_history=None, usage_limits=None, **kwargs):
             return MockResult("Master Agent executed: " + instruction)
 
-    def mock_get_master_agent(session_id: str):
+    def mock_build_master_agent(session_id: str):
         return MockAgent()
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "get_master_agent", mock_get_master_agent)
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", mock_build_master_agent)
 
     with caplog.at_level(logging.INFO, logger="app.core.agent_manager"):
         response = await kernel.run_master_agent(
@@ -531,7 +531,7 @@ async def test_run_master_agent_history_keeps_system_prompt_and_token_estimates(
             return MockResult()
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "get_master_agent", lambda session_id: MockAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda session_id: MockAgent())
 
     await kernel.run_master_agent(
         "Please list files",
@@ -766,7 +766,7 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
             return CompactionResult()
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "get_master_agent", lambda current_session_id: MasterAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -850,7 +850,7 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
             raise RuntimeError("compaction backend unavailable")
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "get_master_agent", lambda current_session_id: MasterAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: FailingCompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -959,7 +959,7 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
             return CompactionResult()
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "get_master_agent", lambda current_session_id: MasterAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (

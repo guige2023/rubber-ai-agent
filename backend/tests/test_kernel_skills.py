@@ -89,6 +89,23 @@ def create_mock_skill_with_script(name: str, desc: str, directory: Path):
     (scripts_dir / "fetch.py").write_text("print('ok')\n", encoding="utf-8")
 
 
+def create_mock_skill_with_resources(name: str, desc: str, directory: Path):
+    create_mock_skill(name, desc, directory)
+    skill_dir = directory / name
+    assets_dir = skill_dir / "assets"
+    references_dir = skill_dir / "references"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    references_dir.mkdir(parents=True, exist_ok=True)
+    (assets_dir / "report-template.md").write_text(
+        "# Report Template\n",
+        encoding="utf-8",
+    )
+    (references_dir / "case-rubric.md").write_text(
+        "# Case Rubric\n",
+        encoding="utf-8",
+    )
+
+
 def create_draft_skill(skill_dir: Path, name: str = "draft-skill"):
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
@@ -159,6 +176,87 @@ async def test_skill_context_can_list_its_own_bundled_scripts():
     result = await FileToolkit.list_files(ctx, str(skill.path / "scripts"))
 
     assert "fetch.py" in result
+
+
+@pytest.mark.asyncio
+async def test_read_skill_file_reads_current_skill_resource():
+    create_mock_skill_with_resources(
+        "bundled_skill",
+        "Bundled skill desc",
+        TEST_BUNDLED_SKILLS,
+    )
+    kernel = FerrymanRuntime(create_test_settings())
+    kernel.skill_manager.scan_skills()
+
+    ctx = SimpleNamespace(deps=kernel.create_agent_deps(
+        session_id="skill-session",
+        run_id="run-skill-read-resource",
+        skill_name="bundled_skill",
+    ))
+
+    result = await FileToolkit.read_skill_file(ctx, "assets/report-template.md")
+
+    assert result == "# Report Template\n"
+
+
+@pytest.mark.asyncio
+async def test_read_skill_file_requires_skill_context():
+    create_mock_skill_with_resources(
+        "bundled_skill",
+        "Bundled skill desc",
+        TEST_BUNDLED_SKILLS,
+    )
+    kernel = FerrymanRuntime(create_test_settings())
+    kernel.skill_manager.scan_skills()
+
+    ctx = SimpleNamespace(deps=kernel.create_agent_deps(
+        session_id="skill-session",
+        run_id="run-skill-read-resource-without-skill",
+    ))
+
+    with pytest.raises(ModelRetry, match="Invalid skill resource path"):
+        await FileToolkit.read_skill_file(ctx, "assets/report-template.md")
+
+
+@pytest.mark.asyncio
+async def test_read_skill_file_rejects_absolute_paths():
+    create_mock_skill_with_resources(
+        "bundled_skill",
+        "Bundled skill desc",
+        TEST_BUNDLED_SKILLS,
+    )
+    kernel = FerrymanRuntime(create_test_settings())
+    kernel.skill_manager.scan_skills()
+
+    ctx = SimpleNamespace(deps=kernel.create_agent_deps(
+        session_id="skill-session",
+        run_id="run-skill-read-absolute-resource",
+        skill_name="bundled_skill",
+    ))
+    absolute_path = str(
+        TEST_BUNDLED_SKILLS / "bundled_skill" / "assets" / "report-template.md"
+    )
+
+    with pytest.raises(ModelRetry, match="Invalid skill resource path"):
+        await FileToolkit.read_skill_file(ctx, absolute_path)
+
+
+def test_runtime_augmented_instruction_includes_current_skill_dir():
+    create_mock_skill_with_resources(
+        "bundled_skill",
+        "Bundled skill desc",
+        TEST_BUNDLED_SKILLS,
+    )
+    kernel = FerrymanRuntime(create_test_settings())
+    kernel.skill_manager.scan_skills()
+
+    prompt = kernel.prompt_builder.build_runtime_augmented_instruction(
+        "Run it",
+        "skill-session",
+        skill_name="bundled_skill",
+    )
+
+    assert f"- Current Skill Dir: {TEST_BUNDLED_SKILLS / 'bundled_skill'}" in prompt
 
 
 @pytest.mark.asyncio

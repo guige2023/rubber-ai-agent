@@ -48,15 +48,18 @@ class AgentManager:
             deps_type=AgentDeps,
             capabilities=self._tool_manager.get_capabilities(),
         )
-        self._tool_manager.register_default_toolkits(agent)
         return agent
 
     def build_skill_agent(self, skill_name: str) -> Agent:
         """Create a skill-scoped agent with the skill instructions injected."""
-        return self.build_agent(self._prompt_builder.build_skill_system_prompt(skill_name))
+        agent = self.build_agent(self._prompt_builder.build_skill_system_prompt(skill_name))
+        self._tool_manager.register_skill_toolkits(agent)
+        return agent
 
-    def get_master_agent(self, session_id: str) -> Agent:
-        return self.build_agent(self._prompt_builder.build_system_prompt(session_id))
+    def build_master_agent(self, session_id: str) -> Agent:
+        agent = self.build_agent(self._prompt_builder.build_system_prompt(session_id))
+        self._tool_manager.register_master_toolkits(agent)
+        return agent
 
     def _get_request_limit(self) -> int:
         value = self._settings.get("system.llm.request_limit", 100)
@@ -100,7 +103,7 @@ class AgentManager:
             )
             user_message_id = user_msg.id
 
-            master_agent = self.get_master_agent(session_id)
+            master_agent = self.build_master_agent(session_id)
             request_limit = self._get_request_limit()
             augmented_instruction = self._prompt_builder.build_runtime_augmented_instruction(instruction, session_id)
             if logger.isEnabledFor(logging.DEBUG):

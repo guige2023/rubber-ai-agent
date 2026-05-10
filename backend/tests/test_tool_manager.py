@@ -63,6 +63,19 @@ def test_compact_tool_event_text_truncates_and_redacts_structured_output():
     assert text.endswith("...")
 
 
+def test_read_skill_file_is_only_registered_for_skill_agents():
+    tool_manager = ToolManager()
+
+    master_agent = Agent("test")
+    tool_manager.register_master_toolkits(master_agent)
+
+    skill_agent = Agent("test")
+    tool_manager.register_skill_toolkits(skill_agent)
+
+    assert "read_skill_file" not in master_agent._function_toolset.tools
+    assert "read_skill_file" in skill_agent._function_toolset.tools
+
+
 @pytest.mark.asyncio
 async def test_tool_validation_capability_normalizes_json_string_array_args():
     capability = FerrymanToolValidationCapability()

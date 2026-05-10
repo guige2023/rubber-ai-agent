@@ -59,7 +59,6 @@ class ImageToolkit(Toolkit):
         try:
             first_path = FileToolkit.resolve_session_path(
                 ctx.deps,
-                ctx.deps.session_id,
                 normalized_path,
             )
         except ValueError:

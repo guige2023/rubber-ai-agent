@@ -79,6 +79,7 @@ Before acting, briefly decide the next step that best follows these instructions
 - Self-Documenting Output (Burn-after-reading): Your internal tool logs are temporary. Your final response to the Master Agent MUST contain all extracted data, results, and a concise summary.
 - Language: Respond in the same language as the instruction provided to you.
 - When replying in Chinese, never add spaces between Chinese and English or numbers unless required to preserve literal text.
+- Use `read_skill_file` for skill file references.
 - Workspace Discipline: When creating files for this run, prefer the active session workspace unless the user explicitly requests a different location.
 - For any files or reports created during this run, provide an absolute local path formatted as a clickable Markdown link, e.g. `[View Report](/Users/name/workspaces/id/reports/report.md)`.
 - Never claim a file/report path unless you actually created it during this run using a tool that writes that file.
@@ -182,16 +183,27 @@ class PromptBuilder:
             session_id=session_id,
         )
 
-    def build_runtime_augmented_instruction(self, instruction: str, session_id: str) -> str:
+    def build_runtime_augmented_instruction(
+        self,
+        instruction: str,
+        session_id: str,
+        *,
+        skill_name: str | None = None,
+    ) -> str:
         now = datetime.now().astimezone()
         timezone_name = now.tzname() or str(now.tzinfo) or "Unknown"
         current_date = now.date().isoformat()
         workspace_dir = self._get_session_workspace(session_id)
+        skill_context = ""
+        if skill_name and skill_name in self._skill_manager.skills:
+            skill_dir = self._skill_manager.skills[skill_name].path
+            skill_context = f"- Current Skill Dir: {skill_dir}\n"
         return (
             "Runtime Context:\n"
             f"- Host OS: {platform.system()}\n"
             f"- Root Dir: {self._settings.root_dir}\n"
             f"- Session Workspace: {workspace_dir}\n"
+            f"{skill_context}"
             f"- Current Date: {current_date}\n"
             f"- Time Zone: {timezone_name}\n\n"
             "Current Request:\n"

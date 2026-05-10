@@ -67,7 +67,11 @@ class SkillToolkit(Toolkit):
             # and request budgeting are shared across the master agent and delegated skills.
             skill_agent = agent_manager.build_skill_agent(skill_name)
             request_limit = _coerce_request_limit(get_setting_value(ctx.deps, "system.llm.request_limit", 100))
-            augmented_instruction = prompt_builder.build_runtime_augmented_instruction(instruction, session_id)
+            augmented_instruction = prompt_builder.build_runtime_augmented_instruction(
+                instruction,
+                session_id,
+                skill_name=skill_name,
+            )
             skill_deps = replace(ctx.deps, skill_name=skill_name)
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug({

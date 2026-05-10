@@ -166,9 +166,13 @@ class ToolManager:
     def __init__(self, default_toolkits: Sequence[type[Toolkit]] = DEFAULT_TOOLKITS) -> None:
         self._default_toolkits = default_toolkits
 
-    def register_default_toolkits(self, agent: Agent) -> None:
+    def register_master_toolkits(self, agent: Agent) -> None:
         for toolkit_class in self._default_toolkits:
             self.register_toolkit(agent, toolkit_class)
+
+    def register_skill_toolkits(self, agent: Agent) -> None:
+        self.register_master_toolkits(agent)
+        agent.tool(self.wrap_tool(FileToolkit.read_skill_file))
 
     @staticmethod
     def get_capabilities() -> list[AbstractCapability[AgentDeps]]:

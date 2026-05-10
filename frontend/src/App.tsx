@@ -199,6 +199,15 @@ function isAssistantPendingMessage(message: Message): boolean {
   return message.role === 'assistant' && getMessageRunStatus(message) === 'pending';
 }
 
+function getMessageToolActivities(message: Message, toolActivities: ToolActivityPayload[]) {
+  const runId = message.metadata?.run?.id;
+  if (!isAssistantPendingMessage(message) || !runId) {
+    return [];
+  }
+
+  return toolActivities.filter((activity) => activity.run_id === runId);
+}
+
 function getUserRunStatusLabel(message: Message, t: (key: string) => string): string | null {
   if (message.role !== 'user') {
     return null;
@@ -937,7 +946,8 @@ export default function App() {
                   <div ref={chatContentRef} className={cn(CHAT_RAIL_CLASS, "flex flex-col gap-8")}>
                     {messages.map((msg, i) => {
                       const messageKey = msg.id || `${msg.role}-${i}`;
-                      const copyText = getMessageCopyText(msg, toolActivities, t);
+                      const messageToolActivities = getMessageToolActivities(msg, toolActivities);
+                      const copyText = getMessageCopyText(msg, messageToolActivities, t);
                       const isCopied = copiedMessageKey === messageKey;
                       const timestampLabel = formatMessageTimestamp(msg.created_at);
                       const userRunStatusLabel = getUserRunStatusLabel(msg, t);
@@ -972,7 +982,7 @@ export default function App() {
                           {isAssistantPendingMessage(msg) ? (
                             <div className="space-y-4">
                               <ThinkingIndicator />
-                              {toolActivities.map((activity, idx) => {
+                              {messageToolActivities.map((activity, idx) => {
                                 const activityKey = getToolActivityKey(activity, idx);
                                 const activityUrl = getHttpUrl(activity.input?.url);
                                 const canExpandOutput = Boolean(

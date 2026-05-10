@@ -15,6 +15,7 @@ export interface Usage {
 }
 
 export interface ToolActivityPayload {
+  session_id?: string;
   run_id: string;
   event_id?: string;
   seq?: number;
@@ -52,6 +53,7 @@ export function mergeToolActivity(
     .slice()
     .reverse()
     .findIndex((activity) => (
+      activity.session_id === payload.session_id &&
       activity.run_id === payload.run_id &&
       activity.tool_name === payload.tool_name &&
       activity.phase === 'start'
@@ -118,14 +120,19 @@ export function useBackendConnection(url: string | null) {
           const evt = data.params as FerrymanEvent;
           setLastEvent(evt);
           if (evt.namespace === "agent" && evt.event === "tool_activity") {
+            const activityPayload = {
+              ...evt.payload,
+              session_id: evt.session_id,
+            } as ToolActivityPayload;
             console.debug('[ferryman][tool_activity]', {
-              runId: evt.payload.run_id,
-              eventId: evt.payload.event_id,
-              seq: evt.payload.seq,
-              toolName: evt.payload.tool_name,
-              phase: evt.payload.phase,
+              sessionId: activityPayload.session_id,
+              runId: activityPayload.run_id,
+              eventId: activityPayload.event_id,
+              seq: activityPayload.seq,
+              toolName: activityPayload.tool_name,
+              phase: activityPayload.phase,
             });
-            setToolActivities((prev) => mergeToolActivity(prev, evt.payload));
+            setToolActivities((prev) => mergeToolActivity(prev, activityPayload));
           }
           return;
         }

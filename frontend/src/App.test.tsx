@@ -222,7 +222,7 @@ describe('App chat interactions', () => {
     const baseTime = new Date().toISOString();
     mockedMessages = [
       { id: 'user-1', role: 'user', content: 'Run this task.', created_at: baseTime },
-      { id: 'assistant-1', role: 'assistant', content: '', created_at: baseTime, metadata: { run: { status: 'pending' } } },
+      { id: 'assistant-1', role: 'assistant', content: '', created_at: baseTime, metadata: { run: { id: 'run-1', status: 'pending' } } },
     ];
 
     const { rerender } = render(<App />);
@@ -234,7 +234,7 @@ describe('App chat interactions', () => {
     scrollIntoView.mockClear();
     mockedMessages = [
       { id: 'user-1', role: 'user', content: 'Run this task.', created_at: baseTime },
-      { id: 'assistant-1', role: 'assistant', content: 'Partial output arrived.', created_at: baseTime, metadata: { run: { status: 'pending' } } },
+      { id: 'assistant-1', role: 'assistant', content: 'Partial output arrived.', created_at: baseTime, metadata: { run: { id: 'run-1', status: 'pending' } } },
     ];
     rerender(<App />);
 
@@ -314,7 +314,7 @@ describe('App chat interactions', () => {
         role: 'user',
         content: 'Use the seo-backlink-research skill.',
         created_at: new Date().toISOString(),
-        metadata: { run: { status: 'pending' } },
+        metadata: { run: { id: 'run-1', status: 'pending' } },
       },
     ];
     mockedToolActivities = [
@@ -342,7 +342,7 @@ describe('App chat interactions', () => {
         role: 'assistant',
         content: '',
         created_at: new Date().toISOString(),
-        metadata: { run: { status: 'pending' } },
+        metadata: { run: { id: 'run-1', status: 'pending' } },
       },
     ];
     mockedToolActivities = [
@@ -363,6 +363,39 @@ describe('App chat interactions', () => {
     });
   });
 
+  it('only shows tool activities for the pending assistant run', async () => {
+    mockedMessages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        created_at: new Date().toISOString(),
+        metadata: { run: { id: 'run-visible', status: 'pending' } },
+      },
+    ];
+    mockedToolActivities = [
+      {
+        session_id: 'XcJ2uTt8Qiw7v2viJJwHDf',
+        run_id: 'run-visible',
+        tool_name: 'list_files',
+        phase: 'complete',
+        input: { path: '/Users/wangweiwei/.ferryman/workspaces/XcJ2uTt8Qiw7v2viJJwHDf/reports' },
+      },
+      {
+        session_id: 'kwhjvdjQWKjCaZdoQqZF8x',
+        run_id: 'run-other',
+        tool_name: 'write_file',
+        phase: 'complete',
+        input: { path: '/Users/wangweiwei/.ferryman/workspaces/kwhjvdjQWKjCaZdoQqZF8x/reports/resize.html' },
+      },
+    ];
+
+    render(<App />);
+
+    expect(screen.getByText('/Users/wangweiwei/.ferryman/workspaces/XcJ2uTt8Qiw7v2viJJwHDf/reports')).toBeInTheDocument();
+    expect(screen.queryByText('/Users/wangweiwei/.ferryman/workspaces/kwhjvdjQWKjCaZdoQqZF8x/reports/resize.html')).not.toBeInTheDocument();
+  });
+
   it('expands tool activity output inline for complete and failed tools', async () => {
     mockedMessages = [
       {
@@ -370,7 +403,7 @@ describe('App chat interactions', () => {
         role: 'assistant',
         content: '',
         created_at: new Date().toISOString(),
-        metadata: { run: { status: 'pending' } },
+        metadata: { run: { id: 'run-1', status: 'pending' } },
       },
     ];
     mockedToolActivities = [

@@ -32,7 +32,15 @@ hiddenimports = sorted(
             "playwright_stealth",
             "pythonjsonlogger.orjson",
             "resend",
+            "requests",
+            "numpy",
+            "pandas",
+            "PIL",
+            "PIL.Image",
+            "yfinance",
         ]
+        + collect_submodules("PIL")
+        + collect_submodules("yfinance")
     )
 )
 
@@ -58,6 +66,11 @@ for package_name in (
     "pydantic",
     "pydantic_core",
     "pydantic_settings",
+    "requests",
+    "numpy",
+    "pandas",
+    "pillow",
+    "yfinance",
 ):
     datas += copy_metadata(package_name)
 
@@ -78,8 +91,9 @@ a = Analysis(
         "huggingface_hub",
         "keyring",
         "lancedb",
-        "numpy",
-        "pandas",
+        "kaleido",
+        "openpyxl",
+        "plotly",
         "pyarrow",
         "pytest",
         "sentence_transformers",

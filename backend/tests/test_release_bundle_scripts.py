@@ -66,6 +66,38 @@ def test_pyinstaller_spec_bundles_resend_and_optional_runtime_defaults():
     assert "app/assets/defaults" in spec_text
 
 
+def test_pyinstaller_spec_bundles_skill_runtime_dependencies():
+    spec_text = (REPO_ROOT / "backend" / "ferryman_backend.spec").read_text(encoding="utf-8")
+    hiddenimports_text = spec_text.split("hiddenimports = sorted", 1)[1].split("datas = []", 1)[0]
+    excludes_text = spec_text.split("excludes=[", 1)[1].split("],", 1)[0]
+
+    for package_name in ("requests", "yfinance", "pandas", "numpy", "PIL"):
+        assert f'"{package_name}",' in hiddenimports_text
+        assert f'"{package_name}",' not in excludes_text
+    for package_name in ("requests", "yfinance", "pandas", "numpy", "pillow"):
+        assert f'"{package_name}",' in spec_text.split("for package_name in (", 1)[1].split("):", 1)[0]
+        assert f'"{package_name}",' not in excludes_text
+    assert 'collect_submodules("PIL")' in hiddenimports_text
+    assert 'collect_submodules("yfinance")' in hiddenimports_text
+
+    for package_name in ("openpyxl", "plotly", "kaleido"):
+        assert f'"{package_name}",' not in hiddenimports_text
+        assert f'"{package_name}",' not in spec_text.split("for package_name in (", 1)[1].split("):", 1)[0]
+        assert f'"{package_name}",' in excludes_text
+
+
+def test_backend_requirements_include_yfinance_runtime_dependencies():
+    requirements_text = (REPO_ROOT / "backend" / "requirements.txt").read_text(encoding="utf-8")
+
+    assert "requests==2.32.5" in requirements_text
+    assert "yfinance==1.2.1" in requirements_text
+    assert "pandas==3.0.2" in requirements_text
+    assert "numpy==2.4.2" in requirements_text
+    assert "Pillow==12.2.0" in requirements_text
+    for requirement in ("openpyxl", "plotly", "kaleido"):
+        assert requirement not in requirements_text
+
+
 def test_build_smoke_skills_dir_adds_temp_smoke_skill_only_for_verification(tmp_path):
     verify_module = load_module("verify_release_bundle_test", VERIFY_SCRIPT_PATH)
     packaged_skills_dir = tmp_path / "packaged-skills"

@@ -5,7 +5,7 @@ description: >
   DCF, margin of safety, fundamental analysis, equity research, company quality,
   moat analysis, capital allocation, or questions about whether a stock is
   undervalued, overvalued, or worth buying. Produces a data-backed research
-  report using 5-year financials, valuation math, and Wyckoff chart analysis.
+  report using 5-year financials, valuation math, and price/volume structure.
 version: 0.1.0
 author: Ferryman
 created: 2026-04-12
@@ -18,10 +18,10 @@ You are a Senior Financial Auditor and Wyckoff Technical Specialist. Your core o
 
 ## Primary Directive
 
-1. **Acquire Historical Data**: Run the data-fetching script to get 5 years of audited financials and high-fidelity technical charts.
+1. **Acquire Historical Data**: Run the data-fetching script to get 5 years of audited financials and 1-year price/volume history.
 2. **Signal vs. Noise**: Distinguish between temporary TTM headwinds (Noise) and terminal structural impairment (Signal) using the 5-year data audit.
 3. **Valuation Math**: Perform explicit Benjamin Graham/DCF math to determine the intrinsic value and required Margin of Safety (MoS).
-4. **Visual Technical Audit**: Analyze institutional footprints (Springs, Upthrusts, Tests) using the Wyckoff model on the generated chart.
+4. **Technical Audit**: Analyze institutional footprints (Springs, Upthrusts, Tests) using the Wyckoff model on the price/volume history.
 5. **Report**: Save the final research as `reports/stock-audit-<ticker>-<current_date>.md`.
 
 ## Execution Workflow
@@ -33,8 +33,7 @@ You are a Senior Financial Auditor and Wyckoff Technical Specialist. Your core o
     - If missing or stale, proceed to run the fetcher.
 2.  **Run Market Fetcher**:
     - Command: `python scripts/fetch_stock_data.py --ticker <TICKER> --output-dir <WORKSPACE_DIR>`
-    - This script leverages `yfinance` to fetch 5 years of Income, CashFlow, and Balance Sheet data, and generates a WebP dashboard.
-3.  **Ingest Assets**: Extract the numerical metrics and the WebP image path from the script's JSON output.
+3.  **Ingest Assets**: Extract the numerical metrics, financial history, and price history from the script's JSON output.
 
 ### Phase 2: High-Fidelity Research & Audit
 
@@ -54,8 +53,8 @@ You are a Senior Financial Auditor and Wyckoff Technical Specialist. Your core o
     - **B. Absolute Bottom (Multiple)**: Punitive P/E or P/B multiple applied to normalized EPS.
 - **MoS Target**: 20% discount for "Moat Kings", 40% for ordinary businesses.
 
-#### 📉 Visual Technical Audit (The Wyckoff Model)
-- Analyze the generated WebP chart for:
+#### 📉 Technical Audit (The Wyckoff Model)
+- Analyze the returned `price_history` series for:
     - **Trend Phase**: Accumulation, Markup, Distribution, or Markdown.
     - **Footprints**: Volume-price effort vs. result, supply/demand tests.
     - **Levels**: Critical support/resistance and a definitive **Action Trigger**.

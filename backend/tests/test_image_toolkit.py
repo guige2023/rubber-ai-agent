@@ -10,6 +10,10 @@ from app.core.runtime import FerrymanRuntime
 from app.core.toolkits.image import ImageToolkit
 from app.core.tool_activity_payload import summarize_tool_input_value
 
+VALID_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+
 
 def make_context(tmp_path: Path, session_id: str = "image-session"):
     settings = Settings(root_dir=tmp_path / "ferryman")
@@ -31,7 +35,7 @@ def image_payload(*, quality: str = "low", output_format: str = "png") -> dict:
         "created": 1770000000,
         "data": [
             {
-                "b64_json": base64.b64encode(b"fake-image-bytes").decode("ascii"),
+                "b64_json": base64.b64encode(VALID_PNG_BYTES).decode("ascii"),
             }
         ],
         "quality": quality,
@@ -88,7 +92,7 @@ async def test_generate_image_uses_azure_client_for_azure_base_url(monkeypatch, 
     assert result["usage"] == {"total_tokens": 12}
     saved_path = Path(result["images"][0]["path"])
     assert saved_path.name.startswith("image-")
-    assert saved_path.read_bytes() == b"fake-image-bytes"
+    assert saved_path.read_bytes() == VALID_PNG_BYTES
     assert saved_path.is_relative_to(ctx.deps.workspace_dir)
 
 
@@ -131,7 +135,7 @@ async def test_generate_image_uses_openai_client_for_non_azure_base_url(monkeypa
     assert "api_version" not in result
     saved_path = Path(result["images"][0]["path"])
     assert saved_path.name == "icon.webp"
-    assert saved_path.read_bytes() == b"fake-image-bytes"
+    assert saved_path.read_bytes() == VALID_PNG_BYTES
 
 
 @pytest.mark.asyncio

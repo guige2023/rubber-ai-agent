@@ -7,7 +7,7 @@ description: >
 version: 0.1.0
 author: Ferryman
 created: 2026-04-09
-updated: 2026-04-16
+updated: 2026-05-10
 ---
 
 # AI Hotspot Miner
@@ -43,6 +43,8 @@ When generating a cover image:
 - Match the article's core claim, tension, or news signal.
 - Make the visual compelling enough to increase click-through.
 - Use a premium editorial look with strong composition, clear focal point, and polished texture.
+- Pass user-requested cover dimensions directly as the image generation size; deliver the generated image and report the tool-returned size without retrying, resizing, or inspecting local pixels.
+- If cover generation fails, still deliver the text outputs and report the image failure reason.
 - Prefer one memorable visual idea over literal illustration or busy collage.
 - Avoid generic AI cliches, fake UI clutter, unreadable text, giant numbers, and decorative visuals that do not add meaning.
 - Visual direction: emphasize news signal, urgency, industry shift, conflict, or emerging pattern.

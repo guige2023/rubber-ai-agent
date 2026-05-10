@@ -86,12 +86,17 @@ def write_bundle_smoke_skill(skills_dir: Path) -> None:
     (scripts_dir / "verify_bundle_resources.py").write_text(
         (
             "from __future__ import annotations\n\n"
+            "import importlib.util\n"
             "import json\n"
             "from pathlib import Path\n\n"
+            "required_modules = ['requests', 'frontmatter', 'yfinance', 'pandas', 'numpy', 'PIL']\n"
+            "missing_modules = [name for name in required_modules if importlib.util.find_spec(name) is None]\n"
+            "if missing_modules:\n"
+            "    raise RuntimeError(f'Missing bundled skill runtime modules: {missing_modules}')\n\n"
             "skill_dir = Path(__file__).resolve().parents[1]\n"
             "asset = (skill_dir / 'assets' / 'sample.txt').read_text(encoding='utf-8').strip()\n"
             "reference = (skill_dir / 'references' / 'sample.md').read_text(encoding='utf-8').strip()\n"
-            "print(json.dumps({'asset': asset, 'reference': reference}, ensure_ascii=False))\n"
+            "print(json.dumps({'asset': asset, 'reference': reference, 'modules': required_modules}, ensure_ascii=False))\n"
         ),
         encoding="utf-8",
     )

@@ -57,7 +57,15 @@ def _write_smoke_skill(skill_dir: Path, name: str) -> None:
         encoding="utf-8",
     )
     (skill_dir / "scripts" / "echo.py").write_text(
-        "import json\nprint(json.dumps({'ok': True, 'source': 'bundle-smoke-script'}))\n",
+        (
+            "import importlib.util\n"
+            "import json\n\n"
+            "required_modules = ['requests', 'frontmatter', 'yfinance', 'pandas', 'numpy', 'PIL']\n"
+            "missing_modules = [name for name in required_modules if importlib.util.find_spec(name) is None]\n"
+            "if missing_modules:\n"
+            "    raise RuntimeError(f'Missing bundled skill runtime modules: {missing_modules}')\n"
+            "print(json.dumps({'ok': True, 'source': 'bundle-smoke-script', 'modules': required_modules}))\n"
+        ),
         encoding="utf-8",
     )
 
@@ -296,6 +304,7 @@ async def run_bundle_smoke_test() -> dict[str, object]:
             bundled_script_result == {
                 "asset": "Ferryman bundled skill asset check.",
                 "reference": "# Bundle Smoke Reference\nFerryman bundled skill reference check.",
+                "modules": ["requests", "frontmatter", "yfinance", "pandas", "numpy", "PIL"],
             },
             f"Bundled skill script returned unexpected payload: {bundled_script_result}",
         )
@@ -325,6 +334,10 @@ async def run_bundle_smoke_test() -> dict[str, object]:
             label="run_skill_script(echo.py)",
         )
         _require(command_result.get("source") == "bundle-smoke-script", f"Unexpected script stdout: {command_result}")
+        _require(
+            command_result.get("modules") == ["requests", "frontmatter", "yfinance", "pandas", "numpy", "PIL"],
+            f"Skill runtime modules were not verified: {command_result}",
+        )
 
         original_build_skill_agent = runtime.agent_manager.build_skill_agent
 

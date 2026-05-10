@@ -4,6 +4,7 @@ import asyncio
 
 from jsonrpcserver import Success, method
 
+from app.core.model_manager import LLMConfigurationError
 from app.core.config import get_settings
 
 
@@ -92,3 +93,41 @@ async def set_active_model(context, model: str):
 async def get_available_models(context):
     """Return the mapped candidate models for the UI select."""
     return Success(await asyncio.to_thread(context.runtime.model_manager.get_available_models))
+
+
+@method
+async def get_model_routing(context):
+    """Return model routing configuration."""
+    return Success(context.runtime.model_manager.get_model_routing_config())
+
+
+@method
+async def set_model_routing(
+    context,
+    enabled: bool = None,
+    classifier_model: str = None,
+    flash_model: str = None,
+    default_model: str = None,
+    classifier_threshold: int = None,
+    classifier_timeout_seconds: float = None,
+):
+    """Update model routing configuration."""
+    updates = {}
+    if enabled is not None:
+        updates["enabled"] = enabled
+    if classifier_model is not None:
+        updates["classifier_model"] = classifier_model
+    if flash_model is not None:
+        updates["flash_model"] = flash_model
+    if default_model is not None:
+        updates["default_model"] = default_model
+    if classifier_threshold is not None:
+        updates["classifier_threshold"] = classifier_threshold
+    if classifier_timeout_seconds is not None:
+        updates["classifier_timeout_seconds"] = classifier_timeout_seconds
+
+    try:
+        config = context.runtime.model_manager.set_model_routing_config(updates)
+    except LLMConfigurationError as exc:
+        return Success({"status": "error", "message": str(exc)})
+    return Success({"status": "success", "config": config})

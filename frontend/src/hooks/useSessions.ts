@@ -13,9 +13,33 @@ export interface MessageRunMetadata {
   [key: string]: any;
 }
 
+export interface ModelUsageTotals {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface RequestModelUsage extends ModelUsageTotals {
+  request_count: number;
+}
+
+export interface MessageModelUsage {
+  version: number;
+  request: {
+    total: ModelUsageTotals;
+    by_model: Record<string, RequestModelUsage>;
+  };
+  classifier?: ModelUsageTotals & {
+    model?: string | null;
+    request_count: number;
+    models?: string[];
+  };
+}
+
 export interface MessageMetadata {
   run?: MessageRunMetadata;
   usage?: Usage;
+  model_usage?: MessageModelUsage;
   model?: {
     name?: string | null;
     provider?: string | null;
@@ -493,6 +517,9 @@ export function useSessions({
 
         if (latestAssistantMessage?.metadata?.model) {
           nextAssistantMetadata.model = latestAssistantMessage.metadata.model;
+        }
+        if (latestAssistantMessage?.metadata?.model_usage) {
+          nextAssistantMetadata.model_usage = latestAssistantMessage.metadata.model_usage;
         }
 
         return prev.map((message) => {

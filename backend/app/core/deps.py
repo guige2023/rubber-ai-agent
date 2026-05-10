@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.core.agent_manager import AgentManager
     from app.core.browser_manager import BrowserManager
     from app.core.config import Settings
+    from app.core.model_routing import ModelUsageTracker
     from app.core.prompt_builder import PromptBuilder
     from app.core.schedule_manager import ScheduleManager
     from app.core.skill_manager import SkillManager
@@ -32,6 +33,7 @@ class AgentDeps:
     task_manager: "TaskManager"
     run_id: str
     skill_name: Optional[str] = None
+    model_usage_tracker: "ModelUsageTracker | None" = None
     emit_event_cb: Optional[Callable[["FerrymanEventEnvelope"], Awaitable[None]]] = None
     schedule_manager: "ScheduleManager | None" = None
     _tool_event_seq: int = field(default=0, init=False, repr=False)

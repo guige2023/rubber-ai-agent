@@ -27,6 +27,15 @@ class LLMConfigurationError(RuntimeError):
 class ModelManager:
     """Manage model provider configuration and LLM model construction."""
 
+    DEFAULT_MODEL_ROUTING_CONFIG: dict[str, object] = {
+        "enabled": False,
+        "classifier_model": "gemini:gemini-3.1-flash-lite-preview",
+        "flash_model": "gemini:gemini-3-flash-preview",
+        "default_model": "system.llm.active_model",
+        "classifier_threshold": 50,
+        "classifier_timeout_seconds": 8,
+    }
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
@@ -150,6 +159,70 @@ class ModelManager:
     def set_active_model(self, model: str) -> None:
         """Persist the globally active model identifier."""
         self._settings.set("system.llm.active_model", model, category="system")
+
+    def get_model_routing_config(self) -> dict[str, object]:
+        """Return model routing configuration with defaults applied."""
+        raw_value = self._settings.get("system.llm.routing", {})
+        stored = raw_value if isinstance(raw_value, dict) else {}
+        config = {**self.DEFAULT_MODEL_ROUTING_CONFIG, **stored}
+
+        try:
+            threshold = int(config["classifier_threshold"])
+        except (TypeError, ValueError):
+            threshold = int(self.DEFAULT_MODEL_ROUTING_CONFIG["classifier_threshold"])
+        config["classifier_threshold"] = min(max(threshold, 0), 100)
+
+        try:
+            timeout = float(config["classifier_timeout_seconds"])
+        except (TypeError, ValueError):
+            timeout = float(self.DEFAULT_MODEL_ROUTING_CONFIG["classifier_timeout_seconds"])
+        config["classifier_timeout_seconds"] = max(timeout, 1.0)
+
+        config["enabled"] = bool(config["enabled"])
+        for key in ("classifier_model", "flash_model", "default_model"):
+            config[key] = str(config[key]).strip()
+        return config
+
+    def set_model_routing_config(self, updates: dict[str, object]) -> dict[str, object]:
+        """Persist model routing configuration after validating supported fields."""
+        allowed_keys = set(self.DEFAULT_MODEL_ROUTING_CONFIG)
+        current = self.get_model_routing_config()
+        next_config = {**current}
+
+        for key, value in updates.items():
+            if key not in allowed_keys:
+                continue
+            next_config[key] = value
+
+        next_config["enabled"] = bool(next_config["enabled"])
+        try:
+            threshold = int(next_config["classifier_threshold"])
+        except (TypeError, ValueError) as exc:
+            raise LLMConfigurationError("classifier_threshold must be an integer between 0 and 100.") from exc
+        if not 0 <= threshold <= 100:
+            raise LLMConfigurationError("classifier_threshold must be between 0 and 100.")
+        next_config["classifier_threshold"] = threshold
+
+        try:
+            timeout = float(next_config["classifier_timeout_seconds"])
+        except (TypeError, ValueError) as exc:
+            raise LLMConfigurationError("classifier_timeout_seconds must be a positive number.") from exc
+        if timeout <= 0:
+            raise LLMConfigurationError("classifier_timeout_seconds must be positive.")
+        next_config["classifier_timeout_seconds"] = timeout
+
+        for key in ("classifier_model", "flash_model", "default_model"):
+            model_ref = str(next_config[key]).strip()
+            if not model_ref:
+                raise LLMConfigurationError(f"{key} cannot be empty.")
+            if key == "default_model" and model_ref != "system.llm.active_model":
+                self._validate_model_id(model_ref)
+            if key != "default_model":
+                self._validate_model_id(model_ref)
+            next_config[key] = model_ref
+
+        self._settings.set("system.llm.routing", next_config, category="system")
+        return next_config
 
     def get_model_readiness(self) -> dict[str, object]:
         """Returns whether the chat experience has a usable active model."""
@@ -836,13 +909,35 @@ class ModelManager:
             },
         )
 
+    def resolve_model_id(self, model_ref: str) -> str:
+        """Resolve model references such as system.llm.active_model."""
+        normalized = str(model_ref or "").strip()
+        if normalized == "system.llm.active_model":
+            active_model_id = self.get_active_model_id()
+            if not active_model_id:
+                raise LLMConfigurationError("No active model is selected. Configure a provider and choose a model first.")
+            return active_model_id
+        self._validate_model_id(normalized)
+        return normalized
+
+    @staticmethod
+    def _validate_model_id(model_id: str) -> None:
+        if ":" not in model_id:
+            raise LLMConfigurationError(f"Model `{model_id}` is invalid.")
+        provider, model_name = (part.strip() for part in model_id.split(":", 1))
+        if not provider or not model_name:
+            raise LLMConfigurationError(f"Model `{model_id}` is invalid.")
+
     def create_active_model(self) -> Model[Any]:
         """Create a model instance from the currently active model setting."""
-        active_model_id = self.get_active_model_id()
+        return self.create_model("system.llm.active_model")
+
+    def create_model(self, model_id: str) -> Model[Any]:
+        """Create a model instance from a concrete model id or supported model reference."""
+        active_model_id = self.resolve_model_id(model_id)
         if not active_model_id:
             raise LLMConfigurationError("No active model is selected. Configure a provider and choose a model first.")
-        if ":" not in active_model_id:
-            raise LLMConfigurationError(f"Active model `{active_model_id}` is invalid.")
+        self._validate_model_id(active_model_id)
 
         provider, model_name = active_model_id.split(":", 1)
         provider_config = self.get_provider_llm_config(provider)

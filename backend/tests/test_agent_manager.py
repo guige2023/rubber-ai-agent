@@ -7,6 +7,7 @@ from pydantic_ai.models.function import DeltaToolCall
 from pydantic_ai.models.function import FunctionModel
 from sqlmodel import select
 
+from app.core.agent_manager import AgentManager
 from app.core.config import Settings
 from app.core.runtime import FerrymanRuntime
 from app.models.database import Message, Session
@@ -79,7 +80,7 @@ def test_prompt_builder_builds_runtime_augmented_instruction(tmp_path):
 async def test_agent_manager_run_master_agent_persists_success(session, tmp_path, monkeypatch):
     runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
     mock_agent = MockAgent()
-    monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id: mock_agent)
+    monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id, **_kwargs: mock_agent)
     monkeypatch.setattr(runtime.context_manager, "maybe_compact_session", AsyncMock())
 
     response = await runtime.agent_manager.run_master_agent(
@@ -115,10 +116,49 @@ async def test_agent_manager_run_master_agent_persists_success(session, tmp_path
     assert mock_agent.calls[0][1]["usage_limits"].request_limit == 100
 
 
+def test_agent_manager_final_payload_includes_model_usage():
+    payload = AgentManager._build_final_payload(
+        run_id="run-usage-1",
+        session_id="s1",
+        content="done",
+        usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        status="success",
+        model_usage={
+            "version": 1,
+            "request": {
+                "total": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                "by_model": {
+                    "gemini:gemini-3-flash-preview": {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                        "request_count": 1,
+                    }
+                },
+            },
+            "classifier": {
+                "model": "gemini:gemini-3.1-flash-lite-preview",
+                "input_tokens": 2,
+                "output_tokens": 1,
+                "total_tokens": 3,
+                "request_count": 1,
+            },
+        },
+    )
+
+    assert payload["payload"]["messages"][0]["metadata"]["model_usage"]["classifier"] == {
+        "model": "gemini:gemini-3.1-flash-lite-preview",
+        "input_tokens": 2,
+        "output_tokens": 1,
+        "total_tokens": 3,
+        "request_count": 1,
+    }
+
+
 @pytest.mark.asyncio
 async def test_agent_manager_run_master_agent_includes_exception_cause(session, tmp_path, monkeypatch):
     runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
-    monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id: FailingAgent())
+    monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id, **_kwargs: FailingAgent())
 
     response = await runtime.agent_manager.run_master_agent(
         "send the report",

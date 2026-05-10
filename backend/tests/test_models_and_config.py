@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from json import JSONDecodeError
+from pathlib import Path
 from urllib.error import HTTPError
 
 import pytest
@@ -7,7 +8,24 @@ from sqlmodel import select, Session as DBSession
 
 import app.core.db as db_module
 from app.models.database import Session, Message, Task, AppConfig
-from app.models.schemas import SessionMemory, SessionModel, MessageModel, TaskModel
+from app.models.schemas import (
+    AgentRunResult,
+    JsonRpcError,
+    JsonRpcErrorCode,
+    JsonRpcErrorResponse,
+    MCPToolModel,
+    MessageModel,
+    ScheduleModel,
+    SessionCompactionMemory,
+    SessionMemory,
+    SessionModel,
+    SessionResponseModel,
+    SkillModel,
+    TaskModel,
+    TaskStatus,
+    Usage,
+    ValidatorBaseModel,
+)
 from app.core.config import Settings as config
 from app.core.model_manager import ModelListEndpointUnavailable, ModelManager
 
@@ -94,6 +112,150 @@ def test_pydantic_schema_validation():
     assert model.content == "Hi"
 
 
+def test_session_model_includes_usage_metadata_and_normalizes_datetimes():
+    model = SessionModel.model_validate({
+        "id": "session-1",
+        "title": "SEO Matrix",
+        "memory": {"schema_version": 1},
+        "metadata": {"kind": "schedule"},
+        "input_tokens": 11,
+        "output_tokens": 5,
+        "created_at": "2026-04-16T12:00:00+08:00",
+        "updated_at": datetime(2026, 4, 16, 4, 5, tzinfo=timezone.utc),
+    })
+
+    assert model.input_tokens == 11
+    assert model.output_tokens == 5
+    assert model.created_at == datetime(2026, 4, 16, 4, 0, tzinfo=timezone.utc)
+    assert model.updated_at == datetime(2026, 4, 16, 4, 5, tzinfo=timezone.utc)
+    assert model.model_dump(mode="json")["created_at"] == "2026-04-16T04:00:00Z"
+    assert "active_run" not in model.model_dump(mode="json")
+
+
+def test_session_response_model_adds_runtime_active_run():
+    model = SessionResponseModel.model_validate({
+        "id": "session-1",
+        "title": "SEO Matrix",
+        "metadata": {},
+        "input_tokens": 11,
+        "output_tokens": 5,
+        "active_run": {"run_id": "run-1", "status": "running"},
+        "created_at": "2026-04-16T12:00:00+08:00",
+        "updated_at": "2026-04-16T12:05:00+08:00",
+    })
+
+    dumped = model.model_dump(mode="json")
+    assert dumped["active_run"] == {"run_id": "run-1", "status": "running"}
+    assert dumped["created_at"] == "2026-04-16T04:00:00Z"
+
+
+def test_response_schema_datetime_fields_are_normalized_to_utc():
+    message = MessageModel.model_validate({
+        "id": "message-1",
+        "session_id": "session-1",
+        "role": "assistant",
+        "content": "Done",
+        "type": "text",
+        "created_at": "2026-04-16T12:00:00+08:00",
+    })
+    task = TaskModel.model_validate({
+        "id": "task-1",
+        "session_id": "session-1",
+        "title": "Task",
+        "created_at": "2026-04-16T12:00:00+08:00",
+        "updated_at": "2026-04-16T12:05:00+08:00",
+        "finished_at": "2026-04-16T12:10:00+08:00",
+    })
+    schedule = ScheduleModel.model_validate({
+        "id": "schedule-1",
+        "name": "Daily",
+        "cron_expression": "0 0 * * *",
+        "last_run_at": "2026-04-16T12:00:00+08:00",
+        "next_run_at": "2026-04-17T12:00:00+08:00",
+        "created_at": "2026-04-16T11:00:00+08:00",
+        "updated_at": "2026-04-16T11:30:00+08:00",
+    })
+
+    assert message.created_at == datetime(2026, 4, 16, 4, 0, tzinfo=timezone.utc)
+    assert task.finished_at == datetime(2026, 4, 16, 4, 10, tzinfo=timezone.utc)
+    assert schedule.next_run_at == datetime(2026, 4, 17, 4, 0, tzinfo=timezone.utc)
+
+    assert message.model_dump(mode="json")["created_at"] == "2026-04-16T04:00:00Z"
+    assert task.model_dump(mode="json")["finished_at"] == "2026-04-16T04:10:00Z"
+    assert schedule.model_dump(mode="json")["next_run_at"] == "2026-04-17T04:00:00Z"
+
+
+def test_all_schema_models_validate_defaults_and_json_payloads():
+    skill = SkillModel.model_validate({
+        "name": "seo-keyword-research",
+        "description": "Find SEO keywords.",
+        "path": Path("/tmp/skill"),
+        "created": date(2026, 5, 1),
+        "updated": date(2026, 5, 2),
+    })
+    assert skill.version == "0.1.0"
+    assert skill.author == "Unknown"
+    assert skill.model_dump(mode="json")["path"] == "/tmp/skill"
+
+    mcp_tool = MCPToolModel.model_validate({
+        "name": "navigate",
+        "description": "Open a URL.",
+        "arguments": {"url": "https://example.com"},
+        "server_name": "browser",
+    })
+    assert mcp_tool.arguments["url"] == "https://example.com"
+
+    compaction = SessionCompactionMemory.model_validate({
+        "summary": "  compacted  ",
+        "cutoff_created_at": "2026-05-10T16:00:00+08:00",
+    })
+    assert compaction.summary == "compacted"
+    assert compaction.cutoff_created_at == datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc)
+
+    assert TaskModel.model_validate({
+        "id": "task-default-status",
+        "session_id": "session-1",
+        "title": "Task",
+        "created_at": "2026-05-10T08:00:00Z",
+        "updated_at": "2026-05-10T08:00:00Z",
+    }).status == TaskStatus.PENDING
+
+    assert ScheduleModel.model_validate({
+        "id": "schedule-defaults",
+        "name": "Daily",
+        "cron_expression": "0 0 * * *",
+        "created_at": "2026-05-10T08:00:00Z",
+        "updated_at": "2026-05-10T08:00:00Z",
+    }).enabled is True
+
+    usage = Usage(input_tokens=3, output_tokens=4)
+    assert usage.total_tokens == 0
+
+    run_result = AgentRunResult(status="success", session_id="session-1", usage=usage)
+    assert run_result.model_dump(mode="json")["usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 0,
+    }
+
+    rpc_error = JsonRpcError(code=JsonRpcErrorCode.INVALID_PARAMS, message="Invalid params")
+    rpc_response = JsonRpcErrorResponse(error=rpc_error, id=12)
+    assert rpc_response.model_dump(mode="json") == {
+        "jsonrpc": "2.0",
+        "error": {"code": -32602, "message": "Invalid params"},
+        "id": 12,
+    }
+
+
+def test_validator_base_model_utc_datetime_normalizes_naive_and_aware_values():
+    naive = datetime(2026, 5, 10, 8, 0)
+    aware = datetime(2026, 5, 10, 16, 0, tzinfo=timezone.utc)
+
+    assert ValidatorBaseModel.utc_datetime(None) is None
+    assert ValidatorBaseModel.utc_datetime(naive) == datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc)
+    assert ValidatorBaseModel.utc_datetime(aware) == aware
+
+
 def test_session_memory_schema_normalizes_compaction_payload():
     memory = SessionMemory.model_validate(
         {
@@ -103,13 +265,12 @@ def test_session_memory_schema_normalizes_compaction_payload():
                 "summary": "  compressed history  ",
                 "cutoff_created_at": "2026-04-16T12:00:00+08:00",
                 "updated_at": datetime(2026, 4, 16, 4, 5, tzinfo=timezone.utc),
-                "guard_until": "not-a-date",
-                "extra": "ignored",
+                    "extra": "ignored",
             },
         }
     )
 
-    assert memory.as_storage_dict() == {
+    assert memory.model_dump(mode="json", exclude_none=True) == {
         "schema_version": 1,
         "compaction": {
             "summary": "compressed history",
@@ -127,7 +288,7 @@ def test_session_memory_schema_tolerates_legacy_shape_mismatches():
         }
     )
 
-    assert memory.as_storage_dict() == {
+    assert memory.model_dump(mode="json", exclude_none=True) == {
         "schema_version": 1,
         "compaction": {},
     }

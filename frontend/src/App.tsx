@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, ReactNode, useRef, useCall
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useBackendConnection, type ToolActivityPayload } from './hooks/useBackendConnection';
-import { useSessions, type Message, type MessageRunStatus } from './hooks/useSessions';
+import { useSessions, type Message, type MessageModelUsage, type MessageRunStatus } from './hooks/useSessions';
 import { useI18n } from './hooks/useI18n';
 import { 
   Settings, 
@@ -107,6 +107,15 @@ type ModelReadiness = {
   ready: boolean;
   active_model: string | null;
   issue: ModelReadinessIssue | null;
+};
+
+type ModelRoutingConfig = {
+  enabled: boolean;
+  classifier_model: string;
+  flash_model: string;
+  default_model: string;
+  classifier_threshold: number;
+  classifier_timeout_seconds: number;
 };
 
 type SendMode = 'mod_enter' | 'enter';
@@ -220,6 +229,20 @@ function getUserRunStatusLabel(message: Message, t: (key: string) => string): st
   return null;
 }
 
+function formatTokenCount(value?: number | null) {
+  return Math.max(0, Number(value || 0)).toLocaleString();
+}
+
+function getMessageModelUsage(message: Message): MessageModelUsage | undefined {
+  return message.role === 'assistant' ? message.metadata?.model_usage : undefined;
+}
+
+function getSortedRequestModelUsage(modelUsage: MessageModelUsage) {
+  return Object.entries(modelUsage.request?.by_model || {}).sort(([, left], [, right]) => (
+    (right.total_tokens || 0) - (left.total_tokens || 0)
+  ));
+}
+
 function pad2(value: number) {
   return String(value).padStart(2, '0');
 }
@@ -286,6 +309,7 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<'models' | 'logs'>('models');
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [modelReadiness, setModelReadiness] = useState<ModelReadiness | null>(null);
+  const [modelRouting, setModelRouting] = useState<ModelRoutingConfig | null>(null);
   const [llmConfigs, setLlmConfigs] = useState<LlmProviderConfig[]>([]);
   const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
   const [skills, setSkills] = useState<SkillSummary[]>([]);
@@ -296,6 +320,7 @@ export default function App() {
   const [isRefreshingLogs, setIsRefreshingLogs] = useState(false);
   const [browserRuntimeStatus, setBrowserRuntimeStatus] = useState<BrowserRuntimeStatus | null>(null);
   const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
+  const [openModelUsageKey, setOpenModelUsageKey] = useState<string | null>(null);
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
   const [isInsightsOpen, setIsInsightsOpen] = useState(false);
   const [expandedToolActivityKeys, setExpandedToolActivityKeys] = useState<Set<string>>(() => new Set());
@@ -509,17 +534,19 @@ export default function App() {
 
     setIsRefreshingModels(true);
     try {
-      const [model, readiness, configs, models] = await Promise.all([
+      const [model, readiness, configs, models, routing] = await Promise.all([
         call('get_active_model'),
         call('get_model_readiness'),
         call('get_llm_configs'),
         call('get_available_models'),
+        call('get_model_routing'),
       ]);
       const nextReadiness = readiness as ModelReadiness;
       setActiveModel((model as string | null) ?? null);
       setModelReadiness(nextReadiness);
       setLlmConfigs(configs as LlmProviderConfig[]);
       setAvailableModels(models as Record<string, string[]>);
+      setModelRouting(routing as ModelRoutingConfig);
 
       if (!didApplyInitialModelRouteRef.current) {
         didApplyInitialModelRouteRef.current = true;
@@ -623,6 +650,13 @@ export default function App() {
     }
   }, []);
 
+  const handleCopyModelUsage = useCallback(async (modelUsage: MessageModelUsage) => {
+    if (!navigator.clipboard) {
+      return;
+    }
+    await navigator.clipboard.writeText(JSON.stringify(modelUsage, null, 2));
+  }, []);
+
   const handleOpenChromeDownload = async () => {
     try {
       await openUrl(CHROME_DOWNLOAD_URL);
@@ -663,8 +697,30 @@ export default function App() {
   };
 
   const handleSetActiveModel = async (model: string) => {
-    await call('set_active_model', { model });
-    await refreshModelSettings();
+    const previousActiveModel = activeModel;
+    const previousModelReadiness = modelReadiness;
+    setActiveModel(model);
+    setModelReadiness((current) => current ? { ...current, active_model: model } : current);
+    try {
+      await call('set_active_model', { model });
+    } catch (error) {
+      console.error('Failed to set active model:', error);
+      setActiveModel(previousActiveModel ?? null);
+      setModelReadiness(previousModelReadiness);
+      await refreshModelSettings();
+    }
+  };
+
+  const handleSetModelRoutingEnabled = async (enabled: boolean) => {
+    setModelRouting((current) => current ? { ...current, enabled } : current);
+    const result = await call('set_model_routing', { enabled }) as { status?: string; message?: string };
+    if (result?.status === 'error') {
+      setModelRouting((current) => current ? { ...current, enabled: !enabled } : current);
+      throw new Error(result.message || 'Failed to update model routing.');
+    }
+    if ('config' in result && result.config) {
+      setModelRouting(result.config as ModelRoutingConfig);
+    }
   };
 
   const providerLabels = Object.fromEntries(
@@ -951,6 +1007,9 @@ export default function App() {
                       const isCopied = copiedMessageKey === messageKey;
                       const timestampLabel = formatMessageTimestamp(msg.created_at);
                       const userRunStatusLabel = getUserRunStatusLabel(msg, t);
+                      const modelUsage = getMessageModelUsage(msg);
+                      const isModelUsageOpen = openModelUsageKey === messageKey;
+                      const requestModelRows = modelUsage ? getSortedRequestModelUsage(modelUsage) : [];
                       const bubbleShellClass = cn(
                         "relative rounded-[1.5rem] shadow-lg",
                         msg.role === 'user'
@@ -1076,7 +1135,7 @@ export default function App() {
                             </span>
                           </div>
                         ) : null}
-                        {(copyText || timestampLabel) ? (
+                        {(copyText || modelUsage || timestampLabel) ? (
                           <div className={metaBarClass}>
                             {copyText ? (
                               <button
@@ -1094,8 +1153,80 @@ export default function App() {
                                 {isCopied ? <Check size={14} strokeWidth={2.4} /> : <Copy size={14} strokeWidth={2.2} />}
                               </button>
                             ) : null}
+                            {modelUsage ? (
+                              <button
+                                type="button"
+                                onClick={() => setOpenModelUsageKey((current) => (
+                                  current === messageKey ? null : messageKey
+                                ))}
+                                aria-label={t('chat.model_usage')}
+                                title={t('chat.model_usage')}
+                                className="flex h-5 w-5 items-center justify-center text-white/48 transition-colors hover:text-white"
+                              >
+                                <Gauge size={14} strokeWidth={2.2} />
+                              </button>
+                            ) : null}
                             {timestampLabel ? (
                               <span className="tabular-nums tracking-[0.01em]">{timestampLabel}</span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {modelUsage && isModelUsageOpen ? (
+                          <div className="absolute bottom-9 left-1 z-20 w-[min(28rem,calc(100vw-3rem))] rounded-2xl border border-white/10 bg-[#101010]/95 p-4 text-left shadow-2xl backdrop-blur-xl">
+                            <div className="mb-3 flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-[12px] font-black uppercase text-white/45">
+                                  {t('chat.model_usage')}
+                                </div>
+                                <div className="mt-1 text-xl font-black leading-none text-white">
+                                  {formatTokenCount(modelUsage.request?.total?.total_tokens)} {t('tasks.tokens_unit')}
+                                </div>
+                                <div className="mt-1 text-[12px] font-medium text-white/45">
+                                  {t('tasks.input_tokens')} {formatTokenCount(modelUsage.request?.total?.input_tokens)}
+                                  <span className="mx-1 text-white/20">·</span>
+                                  {t('tasks.output_tokens')} {formatTokenCount(modelUsage.request?.total?.output_tokens)}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyModelUsage(modelUsage)}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/45 transition-colors hover:text-white"
+                                aria-label={t('chat.copy_model_usage_json')}
+                                title={t('chat.copy_model_usage_json')}
+                              >
+                                <Copy size={13} />
+                              </button>
+                            </div>
+                            <div className="space-y-2">
+                              {requestModelRows.map(([modelId, usage]) => (
+                                <div key={modelId} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                                  <div className="truncate text-[12px] font-bold text-white/82" title={modelId}>{modelId}</div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-white/42">
+                                    <span>{formatTokenCount(usage.total_tokens)} {t('tasks.tokens_unit')}</span>
+                                    <span>{usage.request_count || 0} {t('chat.model_usage_requests')}</span>
+                                    <span>{t('tasks.input_tokens')} {formatTokenCount(usage.input_tokens)}</span>
+                                    <span>{t('tasks.output_tokens')} {formatTokenCount(usage.output_tokens)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            {modelUsage.classifier && modelUsage.classifier.request_count > 0 ? (
+                              <div className="mt-3 border-t border-white/10 pt-3">
+                                <div className="mb-2 text-[11px] font-black uppercase text-white/35">
+                                  {t('chat.model_usage_classifier')}
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                                  <div className="truncate text-[12px] font-bold text-white/75" title={modelUsage.classifier.model || undefined}>
+                                    {modelUsage.classifier.model || t('chat.unknown_model')}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-white/42">
+                                    <span>{formatTokenCount(modelUsage.classifier.total_tokens)} {t('tasks.tokens_unit')}</span>
+                                    <span>{modelUsage.classifier.request_count || 0} {t('chat.model_usage_requests')}</span>
+                                    <span>{t('tasks.input_tokens')} {formatTokenCount(modelUsage.classifier.input_tokens)}</span>
+                                    <span>{t('tasks.output_tokens')} {formatTokenCount(modelUsage.classifier.output_tokens)}</span>
+                                  </div>
+                                </div>
+                              </div>
                             ) : null}
                           </div>
                         ) : null}
@@ -1389,6 +1520,57 @@ export default function App() {
                           </select>
                         </div>
                       </div>
+                    </section>
+
+                    <section className="flex items-center justify-between gap-6 glass rounded-3xl p-6 border border-white/10 shadow-xl">
+                      <div className="flex items-start gap-4">
+                        <div className="w-10 h-10 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center shrink-0">
+                          <Gauge className="text-white/60" size={20} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <span className="text-sm font-bold tracking-tight text-white/70">{t('settings.model_routing_title')}</span>
+                          <p className="max-w-2xl text-xs font-medium leading-5 text-white/40">{t('settings.model_routing_subtitle')}</p>
+                          <p
+                            className={cn(
+                              "min-h-5 text-[11px] font-semibold leading-5 transition-opacity",
+                              modelRouting?.enabled ? "text-white/30 opacity-100" : "text-white/20 opacity-0"
+                            )}
+                            aria-hidden={!(modelRouting?.enabled ?? false)}
+                          >
+                            {modelRouting
+                              ? t('settings.model_routing_detail')
+                                .replace('{classifier}', modelRouting.classifier_model)
+                                .replace('{flash}', modelRouting.flash_model)
+                              : t('settings.model_routing_detail')
+                                .replace('{classifier}', 'gemini:gemini-3.1-flash-lite-preview')
+                                .replace('{flash}', 'gemini:gemini-3-flash-preview')}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label={t('settings.model_routing_title')}
+                        aria-checked={modelRouting?.enabled ?? false}
+                        onClick={() => handleSetModelRoutingEnabled(!(modelRouting?.enabled ?? false)).catch((error) => {
+                          console.error('Failed to update model routing:', error);
+                        })}
+                        disabled={!isConnected || isRefreshingModels}
+                        className={cn(
+                          "relative h-7 w-12 shrink-0 rounded-full border transition-colors",
+                          modelRouting?.enabled
+                            ? "border-emerald-300/40 bg-emerald-300/30"
+                            : "border-white/10 bg-white/10",
+                          (!isConnected || isRefreshingModels) && "cursor-not-allowed opacity-50"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-lg transition-transform",
+                            modelRouting?.enabled && "translate-x-5"
+                          )}
+                        />
+                      </button>
                     </section>
 
                     <section className="space-y-6">

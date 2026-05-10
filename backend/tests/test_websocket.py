@@ -175,6 +175,22 @@ def test_websocket_llm_and_model_config_flow(client):
                 "issue": None,
             }
 
+            response = send_rpc(websocket, "get_model_routing", request_id=61)
+            assert response["result"]["enabled"] is False
+            assert response["result"]["classifier_model"] == "gemini:gemini-3.1-flash-lite-preview"
+
+            response = send_rpc(
+                websocket,
+                "set_model_routing",
+                {"enabled": True},
+                request_id=62,
+            )
+            assert response["result"]["status"] == "success"
+            assert response["result"]["config"]["enabled"] is True
+
+            response = send_rpc(websocket, "get_model_routing", request_id=63)
+            assert response["result"]["enabled"] is True
+
             response = send_rpc(websocket, "get_available_models", request_id=7)
             assert "openai" in response["result"]
             assert "anthropic" not in response["result"]

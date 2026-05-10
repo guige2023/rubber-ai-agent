@@ -103,6 +103,11 @@ describe('App chat interactions', () => {
             'chat.session_busy': 'This session is still running.',
             'chat.tool_output_result': 'Execution Result',
             'chat.tool_output_error': 'Failure Reason',
+            'chat.model_usage': 'Model usage',
+            'chat.copy_model_usage_json': 'Copy model usage JSON',
+            'chat.model_usage_requests': 'requests',
+            'chat.model_usage_classifier': 'Classifier',
+            'chat.unknown_model': 'Unknown model',
             'common.copy': 'Copy',
             'common.copied': 'Copied',
             'nav.recent_sessions': 'Recent Sessions',
@@ -136,6 +141,16 @@ describe('App chat interactions', () => {
         }
         if (method === 'get_available_models') {
           return {};
+        }
+        if (method === 'get_model_routing') {
+          return {
+            enabled: false,
+            classifier_model: 'gemini:gemini-3.1-flash-lite-preview',
+            flash_model: 'gemini:gemini-3-flash-preview',
+            default_model: 'system.llm.active_model',
+            classifier_threshold: 50,
+            classifier_timeout_seconds: 8,
+          };
         }
         if (method === 'list_skills') {
           return [];
@@ -216,6 +231,123 @@ describe('App chat interactions', () => {
     await waitFor(() => {
       expect(clipboardWriteText).toHaveBeenNthCalledWith(2, 'Here is the copied result.');
     });
+  });
+
+  it('shows assistant model usage details when available', async () => {
+    mockedMessages = [
+      {
+        id: 'assistant-usage-1',
+        role: 'assistant',
+        content: 'Done.',
+        created_at: new Date().toISOString(),
+        metadata: {
+          model_usage: {
+            version: 1,
+            request: {
+              total: { input_tokens: 1200, output_tokens: 300, total_tokens: 1500 },
+              by_model: {
+                'gemini:gemini-3-flash-preview': {
+                  input_tokens: 800,
+                  output_tokens: 180,
+                  total_tokens: 980,
+                  request_count: 2,
+                },
+                'deepseek:deepseek-v4-pro': {
+                  input_tokens: 400,
+                  output_tokens: 120,
+                  total_tokens: 520,
+                  request_count: 1,
+                },
+              },
+            },
+            classifier: {
+              model: 'gemini:gemini-3.1-flash-lite-preview',
+              input_tokens: 300,
+              output_tokens: 20,
+              total_tokens: 320,
+              request_count: 3,
+            },
+          },
+        },
+      },
+    ];
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Model usage' }));
+
+    expect(screen.getByText('1,500 Tokens')).toBeInTheDocument();
+    expect(screen.getByText('gemini:gemini-3-flash-preview')).toBeInTheDocument();
+    expect(screen.getByText('deepseek:deepseek-v4-pro')).toBeInTheDocument();
+    expect(screen.getByText('Classifier')).toBeInTheDocument();
+    expect(screen.getByText('gemini:gemini-3.1-flash-lite-preview')).toBeInTheDocument();
+  });
+
+  it('updates the active model select immediately after choosing a model', async () => {
+    let activeModel = 'qwen:qwen3.6-plus';
+    const call = vi.fn(async (method: string, params?: Record<string, string>) => {
+      if (method === 'get_active_model') {
+        return activeModel;
+      }
+      if (method === 'get_model_readiness') {
+        return { ready: true, active_model: activeModel, issue: null };
+      }
+      if (method === 'get_llm_configs') {
+        return [
+          { provider: 'qwen', api_key: '', base_url: '', model: '', metadata: { label: 'Qwen' } },
+          { provider: 'deepseek', api_key: '', base_url: '', model: '', metadata: { label: 'DeepSeek' } },
+        ];
+      }
+      if (method === 'get_available_models') {
+        return {
+          qwen: ['qwen3.6-plus'],
+          deepseek: ['deepseek-v4-pro'],
+        };
+      }
+      if (method === 'get_model_routing') {
+        return {
+          enabled: false,
+          classifier_model: 'gemini:gemini-3.1-flash-lite-preview',
+          flash_model: 'gemini:gemini-3-flash-preview',
+          default_model: 'system.llm.active_model',
+          classifier_threshold: 50,
+          classifier_timeout_seconds: 8,
+        };
+      }
+      if (method === 'set_active_model') {
+        activeModel = params?.model || activeModel;
+        return { status: 'success' };
+      }
+      if (method === 'list_skills') {
+        return [];
+      }
+      if (method === 'read_backend_logs') {
+        return { content: '' };
+      }
+      return {};
+    });
+
+    mockedUseBackendConnection.mockImplementation(() => ({
+      call,
+      execute: vi.fn(),
+      cancelRun: vi.fn(),
+      isConnected: true,
+      tasks: [],
+      toolActivities: mockedToolActivities,
+      lastEvent: null,
+      refreshTasks: vi.fn(),
+      clearToolActivities: vi.fn(),
+    }));
+
+    render(<App />);
+
+    const select = await screen.findByDisplayValue('qwen3.6-plus') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'deepseek:deepseek-v4-pro' } });
+
+    await waitFor(() => {
+      expect(select.value).toBe('deepseek:deepseek-v4-pro');
+    });
+    expect(call).toHaveBeenCalledWith('set_active_model', { model: 'deepseek:deepseek-v4-pro' });
   });
 
   it('auto-scrolls when message content or tool events update', async () => {

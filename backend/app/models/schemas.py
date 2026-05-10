@@ -32,32 +32,23 @@ class MCPToolModel(BaseModel):
     server_name: str
 
 
-def _normalize_utc_string(value: object) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        if not value.strip():
+class ValidatorBaseModel(BaseModel):
+    @classmethod
+    def utc_datetime(cls, value: datetime | None) -> datetime | None:
+        if value is None:
             return None
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    elif isinstance(value, datetime):
-        parsed = value
-    else:
-        return None
-
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    else:
-        parsed = parsed.astimezone(timezone.utc)
-    return parsed.isoformat().replace("+00:00", "Z")
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
-class SessionCompactionMemory(BaseModel):
+class SessionCompactionMemory(ValidatorBaseModel):
     model_config = ConfigDict(extra="ignore")
 
     summary: Optional[str] = None
-    cutoff_created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    guard_until: Optional[str] = None
+    cutoff_created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    guard_until: Optional[datetime] = None
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -67,14 +58,10 @@ class SessionCompactionMemory(BaseModel):
         summary = value.strip()
         return summary or None
 
-    @field_validator("cutoff_created_at", "updated_at", "guard_until", mode="before")
+    @field_validator("cutoff_created_at", "updated_at", "guard_until")
     @classmethod
-    def normalize_utc_fields(cls, value: object) -> Optional[str]:
-        try:
-            return _normalize_utc_string(value)
-        except Exception as e:
-            logger.exception(f"failed to parse utc timestamp with exception:{e}")
-            return None
+    def validate_datetime(cls, value: Optional[datetime]):
+        return cls.utc_datetime(value)
 
 
 class SessionMemory(BaseModel):
@@ -93,18 +80,29 @@ class SessionMemory(BaseModel):
     def normalize_compaction(cls, value: object) -> dict[str, object]:
         return value if isinstance(value, dict) else {}
 
-    def as_storage_dict(self) -> dict[str, object]:
-        return self.model_dump(mode="json", exclude_none=True)
+class SessionModel(ValidatorBaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-class SessionModel(BaseModel):
     id: str
     title: str
     memory: Optional[dict[str, object]] = None
     metadata: dict[str, object] = Field(default_factory=dict)
+    input_tokens: int = 0
+    output_tokens: int = 0
     created_at: datetime
     updated_at: datetime
 
-class MessageModel(BaseModel):
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime):
+        return cls.utc_datetime(value)
+
+
+class SessionResponseModel(SessionModel):
+    active_run: Optional[dict[str, object]] = None
+
+
+class MessageModel(ValidatorBaseModel):
     id: str
     session_id: str
     role: str
@@ -115,7 +113,13 @@ class MessageModel(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
     created_at: datetime
 
-class TaskModel(BaseModel):
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime):
+        return ValidatorBaseModel.utc_datetime(value)
+
+
+class TaskModel(ValidatorBaseModel):
     id: str
     session_id: str
     title: str
@@ -128,7 +132,13 @@ class TaskModel(BaseModel):
     updated_at: datetime
     finished_at: Optional[datetime] = None
 
-class ScheduleModel(BaseModel):
+    @field_validator("created_at", "updated_at", "finished_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime):
+        return ValidatorBaseModel.utc_datetime(value)
+
+
+class ScheduleModel(ValidatorBaseModel):
     id: str
     name: str
     cron_expression: str
@@ -141,6 +151,11 @@ class ScheduleModel(BaseModel):
     last_run_result: Optional[dict[str, object]] = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("last_run_at", "next_run_at", "created_at", "updated_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime):
+        return ValidatorBaseModel.utc_datetime(value)
 
 
 class Usage(BaseModel):

@@ -102,6 +102,7 @@ class SessionManager:
             parts: Optional[list[dict[str, object]]] = None,
             usage: Optional[dict[str, int]] = None,
             model: Optional[dict[str, object]] = None,
+            model_usage: Optional[dict[str, object]] = None,
     ) -> Message:
         usage_data = usage or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         model_data = model or {"name": None, "provider": None}
@@ -109,6 +110,13 @@ class SessionManager:
             "id": run_id,
             "status": "success",
         }
+        assistant_metadata: dict[str, object] = {
+            "usage": usage_data,
+            "model": model_data,
+            "run": run_metadata,
+        }
+        if model_usage:
+            assistant_metadata["model_usage"] = model_usage
 
         with get_session() as db_session:
             if user_message_id:
@@ -126,11 +134,7 @@ class SessionManager:
                 type="text",
                 token_estimate=token_estimate,
                 parts=parts or [],
-                metadata_={
-                    "usage": usage_data,
-                    "model": model_data,
-                    "run": run_metadata,
-                },
+                metadata_=assistant_metadata,
             )
             db_session.add(assistant_msg)
 
@@ -222,6 +226,40 @@ class SessionManager:
             return True
 
     @staticmethod
+    def get_run_model_usage(session_id: str, run_id: str) -> dict[str, object] | None:
+        with get_session() as db_session:
+            message = db_session.exec(
+                select(Message).where(
+                    Message.session_id == session_id,
+                    Message.role == "assistant",
+                    func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                )
+            ).first()
+            if not message:
+                return None
+            model_usage = (message.metadata_ or {}).get("model_usage")
+            return dict(model_usage) if isinstance(model_usage, dict) else None
+
+    @classmethod
+    def get_session_model_usage(cls, session_id: str) -> dict[str, object]:
+        aggregate = cls._empty_model_usage_payload()
+        with get_session() as db_session:
+            messages = db_session.exec(
+                select(Message).where(
+                    Message.session_id == session_id,
+                    Message.role == "assistant",
+                )
+            ).all()
+            for message in messages:
+                model_usage = (message.metadata_ or {}).get("model_usage")
+                if isinstance(model_usage, dict):
+                    cls._merge_model_usage(aggregate, model_usage)
+        return {
+            "session_id": session_id,
+            "model_usage": aggregate,
+        }
+
+    @staticmethod
     def update_session_usage(session_id: str, input_tokens: int, output_tokens: int) -> None:
         with get_session() as db_session:
             session_obj = db_session.get(Session, session_id)
@@ -296,6 +334,7 @@ class SessionManager:
                     "session_id": session_id,
                     "range": self._build_usage_range(range_key, timezone_name),
                     "usage": self._empty_usage_payload(),
+                    "model_usage": self._empty_model_usage_payload(),
                     "memory": None,
                 }
 
@@ -315,8 +354,13 @@ class SessionManager:
             buckets = self._build_daily_buckets(usage_range)
             archived_totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             range_totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            model_usage_totals = self._empty_model_usage_payload()
 
             for message in messages:
+                model_usage = (message.metadata_ or {}).get("model_usage")
+                if message.role == "assistant" and isinstance(model_usage, dict):
+                    self._merge_model_usage(model_usage_totals, model_usage)
+
                 if not self._is_usage_message(message):
                     continue
                 usage = self._extract_usage(message.metadata_)
@@ -363,6 +407,7 @@ class SessionManager:
                     "archived_totals": archived_totals,
                     "unattributed_system_usage": unattributed,
                 },
+                "model_usage": model_usage_totals,
                 "memory": memory,
             }
 
@@ -526,3 +571,66 @@ class SessionManager:
             "archived_totals": dict(empty_totals),
             "unattributed_system_usage": dict(empty_totals),
         }
+
+    @staticmethod
+    def _empty_model_usage_payload() -> dict[str, object]:
+        return {
+            "version": 1,
+            "request": {
+                "total": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                "by_model": {},
+            },
+            "classifier": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "request_count": 0,
+                "models": [],
+            },
+        }
+
+    @classmethod
+    def _merge_model_usage(cls, aggregate: dict[str, object], model_usage: dict[str, object]) -> None:
+        request = model_usage.get("request")
+        if isinstance(request, dict):
+            request_total = request.get("total")
+            if isinstance(request_total, dict):
+                cls._merge_token_counts(aggregate["request"]["total"], request_total)  # type: ignore[index]
+
+            by_model = request.get("by_model")
+            if isinstance(by_model, dict):
+                aggregate_by_model = aggregate["request"]["by_model"]  # type: ignore[index]
+                for model_id, usage in by_model.items():
+                    if not isinstance(model_id, str) or not isinstance(usage, dict):
+                        continue
+                    target = aggregate_by_model.setdefault(  # type: ignore[attr-defined]
+                        model_id,
+                        {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "request_count": 0},
+                    )
+                    cls._merge_token_counts(target, usage)
+                    target["request_count"] += int(usage.get("request_count") or 0)
+
+        classifier = model_usage.get("classifier")
+        if isinstance(classifier, dict):
+            aggregate_classifier = aggregate["classifier"]  # type: ignore[index]
+            cls._merge_token_counts(aggregate_classifier, classifier)
+            aggregate_classifier["request_count"] += int(classifier.get("request_count") or 0)
+            models = aggregate_classifier["models"]
+            model = classifier.get("model")
+            if isinstance(model, str) and model and model not in models:
+                models.append(model)
+            extra_models = classifier.get("models")
+            if isinstance(extra_models, list):
+                for extra_model in extra_models:
+                    if isinstance(extra_model, str) and extra_model and extra_model not in models:
+                        models.append(extra_model)
+            models.sort()
+
+    @staticmethod
+    def _merge_token_counts(target: dict[str, int], usage: dict[str, object]) -> None:
+        target["input_tokens"] += int(usage.get("input_tokens") or 0)
+        target["output_tokens"] += int(usage.get("output_tokens") or 0)
+        target["total_tokens"] += int(
+            usage.get("total_tokens")
+            or int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+        )

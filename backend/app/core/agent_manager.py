@@ -9,6 +9,7 @@ from pydantic_ai.usage import UsageLimits
 
 from app.core.agent_event_stream import build_agent_event_stream_handler
 from app.core.deps import AgentDeps
+from app.core.model_routing import ModelRouter, ModelUsageTracker, RoutingContext, RoutingModel
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -40,24 +41,60 @@ class AgentManager:
         self._prompt_builder = prompt_builder
         self._session_manager = session_manager
         self._context_manager = context_manager
+        self._model_router = ModelRouter(model_manager)
 
-    def build_agent(self, system_prompt: str) -> Agent:
+    def build_agent(self, system_prompt: str, *, routing_context: RoutingContext | None = None) -> Agent:
+        model = RoutingModel(
+            model_manager=self._model_manager,
+            router=self._model_router,
+            routing_context=routing_context or RoutingContext(),
+        )
         agent: Agent = Agent(
-            model=self._model_manager.create_active_model(),
+            model=model,
             system_prompt=system_prompt,
             deps_type=AgentDeps,
             capabilities=self._tool_manager.get_capabilities(),
         )
         return agent
 
-    def build_skill_agent(self, skill_name: str) -> Agent:
+    def build_skill_agent(
+        self,
+        skill_name: str,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        usage_tracker: ModelUsageTracker | None = None,
+    ) -> Agent:
         """Create a skill-scoped agent with the skill instructions injected."""
-        agent = self.build_agent(self._prompt_builder.build_skill_system_prompt(skill_name))
+        agent = self.build_agent(
+            self._prompt_builder.build_skill_system_prompt(skill_name),
+            routing_context=RoutingContext(
+                session_id=session_id,
+                run_id=run_id,
+                scope="skill",
+                skill_name=skill_name,
+                usage_tracker=usage_tracker,
+            ),
+        )
         self._tool_manager.register_skill_toolkits(agent)
         return agent
 
-    def build_master_agent(self, session_id: str) -> Agent:
-        agent = self.build_agent(self._prompt_builder.build_system_prompt(session_id))
+    def build_master_agent(
+        self,
+        session_id: str,
+        *,
+        run_id: str | None = None,
+        usage_tracker: ModelUsageTracker | None = None,
+    ) -> Agent:
+        agent = self.build_agent(
+            self._prompt_builder.build_system_prompt(session_id),
+            routing_context=RoutingContext(
+                session_id=session_id,
+                run_id=run_id,
+                scope="master",
+                usage_tracker=usage_tracker,
+            ),
+        )
         self._tool_manager.register_master_toolkits(agent)
         return agent
 
@@ -89,6 +126,8 @@ class AgentManager:
             }
         })
         user_message_id: Optional[str] = None
+        usage_tracker = ModelUsageTracker()
+        deps.model_usage_tracker = usage_tracker
 
         try:
             self._session_manager.ensure_session(session_id)
@@ -103,7 +142,11 @@ class AgentManager:
             )
             user_message_id = user_msg.id
 
-            master_agent = self.build_master_agent(session_id)
+            master_agent = self.build_master_agent(
+                session_id,
+                run_id=run_id,
+                usage_tracker=usage_tracker,
+            )
             request_limit = self._get_request_limit()
             augmented_instruction = self._prompt_builder.build_runtime_augmented_instruction(instruction, session_id)
             if logger.isEnabledFor(logging.DEBUG):
@@ -167,6 +210,7 @@ class AgentManager:
                     "name": serialized_response.get("model_name") if serialized_response else None,
                     "provider": serialized_response.get("provider_name") if serialized_response else None,
                 },
+                model_usage=usage_tracker.snapshot() if usage_tracker.has_usage() else None,
             )
 
             await self._context_manager.maybe_compact_session(session_id)
@@ -177,6 +221,7 @@ class AgentManager:
                 content=str(result_data),
                 usage=usage_data,
                 status="success",
+                model_usage=usage_tracker.snapshot() if usage_tracker.has_usage() else None,
             )
 
         except Exception as e:
@@ -211,6 +256,7 @@ class AgentManager:
         usage: dict[str, int],
         status: str,
         error: str | None = None,
+        model_usage: dict[str, object] | None = None,
     ) -> dict[str, object]:
         from app.models.events import ChatFinalPayload, EventNamespace, FerrymanEventEnvelope
 
@@ -221,15 +267,19 @@ class AgentManager:
         if error is not None:
             run_metadata["error"] = error
 
+        message_metadata: dict[str, object] = {
+            "run": run_metadata,
+        }
+        if model_usage:
+            message_metadata["model_usage"] = model_usage
+
         payload = ChatFinalPayload(
             run_id=run_id,
             messages=[
                 {
                     "role": "assistant",
                     "content": content,
-                    "metadata": {
-                        "run": run_metadata,
-                    },
+                    "metadata": message_metadata,
                 }
             ],
             usage=usage,

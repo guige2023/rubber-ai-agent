@@ -206,6 +206,27 @@ describe('useSessions', () => {
                 name: 'test-model',
                 provider: 'test-provider',
               },
+              model_usage: {
+                version: 1,
+                request: {
+                  total: { input_tokens: 12, output_tokens: 8, total_tokens: 20 },
+                  by_model: {
+                    'test-provider:test-model': {
+                      input_tokens: 12,
+                      output_tokens: 8,
+                      total_tokens: 20,
+                      request_count: 1,
+                    },
+                  },
+                },
+                classifier: {
+                  model: 'gemini:gemini-3.1-flash-lite-preview',
+                  input_tokens: 2,
+                  output_tokens: 1,
+                  total_tokens: 3,
+                  request_count: 1,
+                },
+              },
             },
           },
         ],
@@ -239,6 +260,27 @@ describe('useSessions', () => {
         model: {
           name: 'test-model',
           provider: 'test-provider',
+        },
+        model_usage: {
+          version: 1,
+          request: {
+            total: { input_tokens: 12, output_tokens: 8, total_tokens: 20 },
+            by_model: {
+              'test-provider:test-model': {
+                input_tokens: 12,
+                output_tokens: 8,
+                total_tokens: 20,
+                request_count: 1,
+              },
+            },
+          },
+          classifier: {
+            model: 'gemini:gemini-3.1-flash-lite-preview',
+            input_tokens: 2,
+            output_tokens: 1,
+            total_tokens: 3,
+            request_count: 1,
+          },
         },
       },
     });

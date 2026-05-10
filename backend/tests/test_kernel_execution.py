@@ -374,7 +374,7 @@ async def test_agent_execution_closure(monkeypatch):
 
     mock_model = streaming_function_model(mock_agent_logic)
     
-    def mock_build_master_agent(session_id: str):
+    def mock_build_master_agent(session_id: str, **_kwargs):
         return Agent(model=mock_model, system_prompt="You are a test agent.")
         
     monkeypatch.setattr(kernel.agent_manager, "build_master_agent", mock_build_master_agent)
@@ -410,7 +410,7 @@ async def test_master_agent_can_recover_from_soft_failed_run_skill(monkeypatch):
         async def run(self, instruction, **kwargs):
             raise RuntimeError("delegate exploded")
 
-    monkeypatch.setattr(kernel.agent_manager, "build_skill_agent", lambda skill_name: FailingSkillAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_skill_agent", lambda skill_name, **_kwargs: FailingSkillAgent())
 
     async def mock_agent_logic(messages, info):
         tool_returns = [
@@ -479,7 +479,7 @@ async def test_run_master_agent_mocked(monkeypatch, caplog):
         async def run(self, instruction, deps=None, message_history=None, usage_limits=None, **kwargs):
             return MockResult("Master Agent executed: " + instruction)
 
-    def mock_build_master_agent(session_id: str):
+    def mock_build_master_agent(session_id: str, **_kwargs):
         return MockAgent()
 
     kernel = FerrymanRuntime(create_test_settings())
@@ -531,7 +531,7 @@ async def test_run_master_agent_history_keeps_system_prompt_and_token_estimates(
             return MockResult()
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda session_id: MockAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda session_id, **_kwargs: MockAgent())
 
     await kernel.run_master_agent(
         "Please list files",
@@ -766,7 +766,7 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
             return CompactionResult()
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id: MasterAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id, **_kwargs: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -850,7 +850,7 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
             raise RuntimeError("compaction backend unavailable")
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id: MasterAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id, **_kwargs: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: FailingCompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -959,7 +959,7 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
             return CompactionResult()
 
     kernel = FerrymanRuntime(create_test_settings())
-    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id: MasterAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id, **_kwargs: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -1292,7 +1292,7 @@ async def test_skill_run_uses_shared_usage_and_request_limit(monkeypatch):
             captured["kwargs"] = kwargs
             return MockSkillResult()
 
-    monkeypatch.setattr(kernel.agent_manager, "build_skill_agent", lambda skill_name: MockSkillAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_skill_agent", lambda skill_name, **_kwargs: MockSkillAgent())
 
     shared_usage = RunUsage()
     ctx = SimpleNamespace(
@@ -1340,7 +1340,7 @@ async def test_skill_run_returns_soft_failure_payload_when_delegate_fails(monkey
         async def run(self, instruction, **kwargs):
             raise RuntimeError("delegate exploded")
 
-    monkeypatch.setattr(kernel.agent_manager, "build_skill_agent", lambda skill_name: MockSkillAgent())
+    monkeypatch.setattr(kernel.agent_manager, "build_skill_agent", lambda skill_name, **_kwargs: MockSkillAgent())
 
     ctx = SimpleNamespace(
         deps=kernel.create_agent_deps(

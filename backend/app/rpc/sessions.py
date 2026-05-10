@@ -10,6 +10,7 @@ from sqlmodel import select
 
 from app.core.db import get_session as get_db_session
 from app.models.database import Message, Session, Task
+from app.models.schemas import SessionResponseModel
 from app.rpc.pagination import fetch_datetime_cursor_page
 
 logger = logging.getLogger(__name__)
@@ -112,14 +113,17 @@ def reconcile_stale_pending_runs_on_startup() -> None:
 
 
 def serialize_session(session: Session, context=None) -> dict[str, object]:
-    return {
+    return SessionResponseModel.model_validate({
         "id": session.id,
         "title": session.title,
-        "updated_at": session.updated_at.isoformat(),
+        "memory": session.memory,
+        "metadata": session.metadata_,
         "input_tokens": session.input_tokens,
         "output_tokens": session.output_tokens,
         "active_run": get_active_run_payload(context, session.id),
-    }
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+    }).model_dump(mode="json")
 
 
 @method

@@ -179,16 +179,16 @@ class ContextManager:
         if summary is not None:
             compaction.summary = summary
         if cutoff_created_at is not None:
-            compaction.cutoff_created_at = format_utc_datetime(cutoff_created_at)
-            compaction.updated_at = format_utc_datetime(datetime.now(timezone.utc))
+            compaction.cutoff_created_at = cutoff_created_at
+            compaction.updated_at = datetime.now(timezone.utc)
         if clear_guard:
             compaction.guard_until = None
         elif guard_until is not None:
-            compaction.guard_until = format_utc_datetime(guard_until)
+            compaction.guard_until = guard_until
 
         memory.schema_version = COMPACTION_MEMORY_SCHEMA_VERSION
         memory.compaction = compaction
-        session_obj.memory = memory.as_storage_dict()
+        session_obj.memory = memory.model_dump(mode="json", exclude_none=True)
         flag_modified(session_obj, "memory")
 
     @staticmethod

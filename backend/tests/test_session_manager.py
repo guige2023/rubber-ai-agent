@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlmodel import select
@@ -27,6 +27,27 @@ def test_session_manager_records_successful_agent_run_atomically(session):
         parts=[{"type": "text", "content": "Done"}],
         usage={"input_tokens": 11, "output_tokens": 5, "total_tokens": 16},
         model={"name": "test-model", "provider": "test-provider"},
+        model_usage={
+            "version": 1,
+            "request": {
+                "total": {"input_tokens": 11, "output_tokens": 5, "total_tokens": 16},
+                "by_model": {
+                    "test-provider:test-model": {
+                        "input_tokens": 11,
+                        "output_tokens": 5,
+                        "total_tokens": 16,
+                        "request_count": 1,
+                    }
+                },
+            },
+            "classifier": {
+                "model": "gemini:gemini-3.1-flash-lite-preview",
+                "input_tokens": 3,
+                "output_tokens": 1,
+                "total_tokens": 4,
+                "request_count": 1,
+            },
+        },
     )
 
     session.expire_all()
@@ -41,6 +62,110 @@ def test_session_manager_records_successful_agent_run_atomically(session):
     assert refreshed_assistant_message.content == "Done"
     assert refreshed_assistant_message.metadata_["usage"]["total_tokens"] == 16
     assert refreshed_assistant_message.metadata_["model"]["name"] == "test-model"
+    assert refreshed_assistant_message.metadata_["model_usage"]["request"]["by_model"]["test-provider:test-model"] == {
+        "input_tokens": 11,
+        "output_tokens": 5,
+        "total_tokens": 16,
+        "request_count": 1,
+    }
+    assert manager.get_run_model_usage("chat-1", "run-1") == refreshed_assistant_message.metadata_["model_usage"]
+
+
+def test_session_manager_aggregates_session_model_usage(session):
+    manager = SessionManager()
+    session.add(Session(id="chat-model-usage", title="Model usage"))
+    session.add_all([
+        Message(
+            session_id="chat-model-usage",
+            role="assistant",
+            content="Run 1",
+            type="text",
+            metadata_={
+                "run": {"id": "run-1", "status": "success"},
+                "model_usage": {
+                    "version": 1,
+                    "request": {
+                        "total": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                        "by_model": {
+                            "gemini:gemini-3-flash-preview": {
+                                "input_tokens": 10,
+                                "output_tokens": 5,
+                                "total_tokens": 15,
+                                "request_count": 1,
+                            }
+                        },
+                    },
+                    "classifier": {
+                        "model": "gemini:gemini-3.1-flash-lite-preview",
+                        "input_tokens": 2,
+                        "output_tokens": 1,
+                        "total_tokens": 3,
+                        "request_count": 1,
+                    },
+                },
+            },
+        ),
+        Message(
+            session_id="chat-model-usage",
+            role="assistant",
+            content="Run 2",
+            type="text",
+            metadata_={
+                "run": {"id": "run-2", "status": "success"},
+                "model_usage": {
+                    "version": 1,
+                    "request": {
+                        "total": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30},
+                        "by_model": {
+                            "gemini:gemini-3-flash-preview": {
+                                "input_tokens": 7,
+                                "output_tokens": 3,
+                                "total_tokens": 10,
+                                "request_count": 1,
+                            },
+                            "deepseek:deepseek-v4-pro": {
+                                "input_tokens": 13,
+                                "output_tokens": 7,
+                                "total_tokens": 20,
+                                "request_count": 1,
+                            },
+                        },
+                    },
+                    "classifier": {
+                        "model": "gemini:gemini-3.1-flash-lite-preview",
+                        "input_tokens": 4,
+                        "output_tokens": 1,
+                        "total_tokens": 5,
+                        "request_count": 2,
+                    },
+                },
+            },
+        ),
+    ])
+    session.commit()
+
+    usage = manager.get_session_model_usage("chat-model-usage")["model_usage"]
+
+    assert usage["request"]["total"] == {"input_tokens": 30, "output_tokens": 15, "total_tokens": 45}
+    assert usage["request"]["by_model"]["gemini:gemini-3-flash-preview"] == {
+        "input_tokens": 17,
+        "output_tokens": 8,
+        "total_tokens": 25,
+        "request_count": 2,
+    }
+    assert usage["request"]["by_model"]["deepseek:deepseek-v4-pro"] == {
+        "input_tokens": 13,
+        "output_tokens": 7,
+        "total_tokens": 20,
+        "request_count": 1,
+    }
+    assert usage["classifier"] == {
+        "input_tokens": 6,
+        "output_tokens": 2,
+        "total_tokens": 8,
+        "request_count": 3,
+        "models": ["gemini:gemini-3.1-flash-lite-preview"],
+    }
 
 
 def test_session_manager_records_failed_agent_run(session):
@@ -225,7 +350,7 @@ def test_session_manager_get_session_insights_handles_missing_session(session):
 def test_session_manager_get_session_insights_groups_by_local_timezone_day(session):
     manager = SessionManager()
     local_timezone = ZoneInfo("Asia/Shanghai")
-    local_datetime = datetime.now(local_timezone).replace(hour=0, minute=30, second=0, microsecond=0)
+    local_datetime = datetime.now(local_timezone).replace(hour=0, minute=30, second=0, microsecond=0) - timedelta(days=1)
     local_date = local_datetime.date().isoformat()
     session.add(Session(id="chat-local-day", title="Local day", input_tokens=3, output_tokens=1))
     session.add(

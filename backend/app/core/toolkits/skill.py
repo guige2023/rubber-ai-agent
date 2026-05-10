@@ -65,7 +65,12 @@ class SkillToolkit(Toolkit):
         try:
             # IMPORTANT: Pass ctx.usage to sub-agent so request/token accounting
             # and request budgeting are shared across the master agent and delegated skills.
-            skill_agent = agent_manager.build_skill_agent(skill_name)
+            skill_agent = agent_manager.build_skill_agent(
+                skill_name,
+                session_id=session_id,
+                run_id=ctx.deps.run_id,
+                usage_tracker=ctx.deps.model_usage_tracker,
+            )
             request_limit = _coerce_request_limit(get_setting_value(ctx.deps, "system.llm.request_limit", 100))
             augmented_instruction = prompt_builder.build_runtime_augmented_instruction(
                 instruction,

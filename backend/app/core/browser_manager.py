@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -26,10 +27,24 @@ class BrowserManager:
         self._get_session_workspace = get_session_workspace
         self._browsers: dict[str, BrowserEntry] = {}
         self._session_headless: dict[str, bool] = {}
+        self._session_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_locks[session_id] = lock
+        return lock
 
     async def get_browser(self, session_id: str, headless: Optional[bool] = None) -> "BrowserController":
-        await self.cleanup_stale_browsers()
+        async with self._get_session_lock(session_id):
+            return await self._get_browser_unlocked(session_id, headless=headless)
 
+    async def _get_browser_unlocked(
+        self,
+        session_id: str,
+        headless: Optional[bool] = None,
+    ) -> "BrowserController":
         requested_headless = headless if headless is not None else True
         if headless is not None:
             self._session_headless[session_id] = headless
@@ -42,7 +57,7 @@ class BrowserManager:
                 logger.info(
                     f"Browser mode change detected ({existing_browser._headless} -> {headless}). Restarting..."
                 )
-                await self.close_browser(session_id)
+                await self._close_browser_unlocked(session_id)
             else:
                 entry["last_active"] = time.time()
                 return existing_browser
@@ -54,7 +69,7 @@ class BrowserManager:
                 key=lambda sid: self._browsers[sid]["last_active"],
             )
             logger.info(f"Max browser instances ({max_instances}) reached. Evicting oldest: {oldest_sid}")
-            await self.close_browser(oldest_sid)
+            await self._close_browser_unlocked(oldest_sid)
 
         if session_id not in self._browsers:
             from app.core.browser import BrowserController
@@ -75,6 +90,10 @@ class BrowserManager:
         return self._browsers[session_id]["instance"]
 
     async def close_browser(self, session_id: str) -> None:
+        async with self._get_session_lock(session_id):
+            await self._close_browser_unlocked(session_id)
+
+    async def _close_browser_unlocked(self, session_id: str) -> None:
         entry = self._browsers.pop(session_id, None)
         if entry:
             browser = entry["instance"]

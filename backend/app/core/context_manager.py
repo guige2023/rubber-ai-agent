@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
+from pydantic import ValidationError
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session as DBSession
 
@@ -98,7 +99,11 @@ class ContextManager:
             return memory
         if not isinstance(memory, dict):
             return SessionMemory()
-        return SessionMemory.model_validate(memory)
+        try:
+            return SessionMemory.model_validate(memory)
+        except ValidationError as e:
+            logger.exception(f"Ignoring invalid session memory payload with exception:{e}")
+            return SessionMemory()
 
     def ensure_message_token_estimates(self, messages: list[Message]) -> int:
         total = 0

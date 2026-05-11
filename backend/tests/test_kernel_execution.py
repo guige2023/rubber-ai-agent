@@ -684,7 +684,7 @@ def test_get_session_messages_respects_microsecond_cutoff():
     assert rendered_tail == ["same-second new user"]
 
 
-def test_get_session_messages_ignores_invalid_memory_timestamps():
+def test_get_session_messages_ignores_invalid_session_memory():
     kernel = FerrymanRuntime(create_test_settings())
     session_id = "session-with-invalid-memory-timestamps"
 
@@ -717,8 +717,8 @@ def test_get_session_messages_ignores_invalid_memory_timestamps():
 
     history = kernel.context_manager.get_session_messages(session_id)
 
-    assert history[1].parts[0].content.startswith("[CONTEXT COMPACTION")
-    assert history[2].parts[0].content == "tail user"
+    assert len(history) == 2
+    assert history[1].parts[0].content == "tail user"
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ BROWSER_SOP_SNIPPET = """
 - The Anti-Guessing Guardrail: NEVER guess an element ID. You MUST call `browser_aria_snapshot` in the immediate preceding steps to get the exact, current IDs before calling `browser_click` or `browser_type`.
 - Accurate Referencing: Only use IDs in brackets (e.g. `"12"`) from the snapshot. NEVER use raw CSS/href selectors.
 - Handling Interception: Close any modals/pop-ups discovered in the snapshot if a click is blocked.
+- Browser launch/profile lock failures: Stop and report the exact error. Do not call skills or write scripts to repair browser runtime issues.
 - CAPTCHA Handling: If you encounter a CAPTCHA, Cloudflare challenge, "verify you are human" page, or any other anti-bot / human-verification flow:
     1. If the browser was opened with `headless=False`:
        - Ask the user to solve it in the browser window.
@@ -65,24 +66,16 @@ You are executing the specialized Skill: {skill_name}.
 Follow these instructions strictly:
 {sop}
 
-## Decision Logic
-Before acting, briefly decide the next step that best follows these instructions. 
-1. **Primary Objective**: Follow these instructions strictly.
-2. **Recursive Assistance**: If these instructions or the current situation require a specialized capability (e.g., translation, currency check) that matches a skill in the available skills list, you may call `run_skill`.
-
 """ + GUARDRAILS_SNIPPET + BROWSER_SOP_SNIPPET + """
 
-## Available Skills
-{skill_list}
-
 ## Response Guidelines
-- Self-Documenting Output (Burn-after-reading): Your internal tool logs are temporary. Your final response to the Master Agent MUST contain all extracted data, results, and a concise summary.
-- Language: Respond in the same language as the instruction provided to you.
+- Return a concise result with relevant findings, created file paths, and blocking errors when useful.
+- Respond in the same language as the delegated request.
 - When replying in Chinese, never add spaces between Chinese and English or numbers unless required to preserve literal text.
 - Use `read_skill_file` for skill file references.
-- Workspace Discipline: When creating files for this run, prefer the active session workspace unless the user explicitly requests a different location.
-- For any files or reports created during this run, provide an absolute local path formatted as a clickable Markdown link, e.g. `[View Report](/Users/name/workspaces/id/reports/report.md)`.
-- Never claim a file/report path unless you actually created it during this run using a tool that writes that file.
+- Create files inside the active session workspace unless the delegated request explicitly asks for another location.
+- Link files created during this run using absolute local paths in Markdown link format.
+- Never claim a file path unless it was actually created during this run.
 """
 
 COMPACTION_SYSTEM_PROMPT = """
@@ -214,5 +207,4 @@ class PromptBuilder:
         return SKILL_SYSTEM_PROMPT.format(
             skill_name=skill_name,
             sop=self._skill_manager.read_skill_sop(skill_name),
-            skill_list=self._skill_manager.get_skill_index_text(),
         )

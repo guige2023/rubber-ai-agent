@@ -2,7 +2,10 @@ import asyncio
 import logging
 import os
 import re
+import shlex
+import signal
 import shutil
+import subprocess
 from collections import deque
 from pathlib import Path
 
@@ -107,10 +110,15 @@ class BrowserController:
             except PlaywrightError as e:
                 last_error = e
                 if self._should_retry_after_process_singleton_error(e):
-                    removed_paths = self._cleanup_stale_process_singleton_files(Path(self._user_data_dir))
+                    profile_dir = Path(self._user_data_dir)
+                    removed_paths = self._cleanup_stale_process_singleton_files(profile_dir)
+                    cleanup_reason = "stale lock cleanup"
+                    if not removed_paths:
+                        removed_paths = await self._recover_live_process_singleton_owner(profile_dir)
+                        cleanup_reason = "same-profile process recovery"
                     if removed_paths:
                         logger.warning(
-                            "Removed stale Chrome process singleton files from "
+                            f"Removed Chrome process singleton files after {cleanup_reason} from "
                             f"{self._user_data_dir}: {', '.join(str(path.name) for path in removed_paths)}"
                         )
                         try:
@@ -204,6 +212,10 @@ class BrowserController:
         if not cls._is_singleton_lock_stale(singleton_lock):
             return []
 
+        return cls._remove_process_singleton_files(profile_dir)
+
+    @classmethod
+    def _remove_process_singleton_files(cls, profile_dir: Path) -> list[Path]:
         removed: list[Path] = []
         for path in cls._iter_process_singleton_paths(profile_dir):
             try:
@@ -227,6 +239,97 @@ class BrowserController:
                 or (name.isdigit() and len(name) > 10)
             ):
                 yield path
+
+    @classmethod
+    async def _recover_live_process_singleton_owner(cls, profile_dir: Path) -> list[Path]:
+        """Terminate a live Chrome owner only when it is using this exact profile."""
+        singleton_lock = profile_dir / "SingletonLock"
+        owner_pid = cls._read_singleton_lock_pid(singleton_lock)
+        if owner_pid is None or not cls._pid_exists(owner_pid):
+            return []
+
+        command = cls._get_pid_command(owner_pid)
+        if not cls._command_uses_profile(command, profile_dir):
+            logger.warning(
+                "Chrome profile is locked by a live process, but it could not be "
+                f"safely matched to this profile. pid={owner_pid}, profile={profile_dir}"
+            )
+            return []
+
+        terminated = await cls._terminate_pid(owner_pid)
+        if not terminated:
+            logger.warning(
+                "Chrome profile owner process could not be terminated safely. "
+                f"pid={owner_pid}, profile={profile_dir}"
+            )
+            return []
+
+        return cls._remove_process_singleton_files(profile_dir)
+
+    @staticmethod
+    def _get_pid_command(pid: int) -> str:
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning(f"Failed to inspect Chrome owner process {pid}: {exc}")
+            return ""
+        return result.stdout.strip()
+
+    @staticmethod
+    def _command_uses_profile(command: str, profile_dir: Path) -> bool:
+        if not command:
+            return False
+        profile_path = str(profile_dir.resolve())
+        try:
+            args = shlex.split(command)
+        except ValueError:
+            args = command.split()
+
+        for index, arg in enumerate(args):
+            raw_value: str | None = None
+            if arg.startswith("--user-data-dir="):
+                raw_value = arg.split("=", 1)[1]
+            elif arg == "--user-data-dir" and index + 1 < len(args):
+                raw_value = args[index + 1]
+
+            if raw_value and str(Path(raw_value).resolve()) == profile_path:
+                return True
+        return False
+
+    @classmethod
+    async def _terminate_pid(cls, pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+
+        for _ in range(10):
+            await asyncio.sleep(0.1)
+            if not cls._pid_exists(pid):
+                return True
+
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+
+        for _ in range(10):
+            await asyncio.sleep(0.1)
+            if not cls._pid_exists(pid):
+                return True
+        return not cls._pid_exists(pid)
 
     @classmethod
     def _is_singleton_lock_stale(cls, lock_path: Path) -> bool:

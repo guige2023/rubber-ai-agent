@@ -76,6 +76,26 @@ def test_prompt_builder_builds_runtime_augmented_instruction(tmp_path):
     assert "Build SEO matrix" in instruction
 
 
+def test_skill_system_prompt_is_scoped_to_current_skill(tmp_path):
+    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    skill_dir = tmp_path / "user" / "skills" / "demo-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Demo skill\n---\nDo demo work.\n",
+        encoding="utf-8",
+    )
+    runtime.skill_manager.scan_skills()
+
+    prompt = runtime.prompt_builder.build_skill_system_prompt("demo-skill")
+
+    assert "Do demo work." in prompt
+    assert "## Available Skills" not in prompt
+    assert "Recursive Assistance" not in prompt
+    assert "run_skill" not in prompt
+    assert "publish_skill" not in prompt
+    assert "Browser launch/profile lock failures" in prompt
+
+
 @pytest.mark.asyncio
 async def test_agent_manager_run_master_agent_persists_success(session, tmp_path, monkeypatch):
     runtime = FerrymanRuntime(Settings(root_dir=tmp_path))

@@ -109,6 +109,81 @@ def test_browser_cleanup_keeps_process_singleton_files_when_owner_is_alive(tmp_p
     assert (profile_dir / "SingletonCookie").exists()
 
 
+def test_browser_command_profile_match_requires_exact_user_data_dir(tmp_path):
+    profile_dir = tmp_path / ".browser"
+    other_profile = tmp_path / ".browser-backup"
+
+    assert BrowserController._command_uses_profile(
+        f"/Applications/Google Chrome --user-data-dir={profile_dir}",
+        profile_dir,
+    )
+    assert BrowserController._command_uses_profile(
+        f"/Applications/Google Chrome --user-data-dir {profile_dir}",
+        profile_dir,
+    )
+    assert not BrowserController._command_uses_profile(
+        f"/Applications/Google Chrome --user-data-dir={other_profile}",
+        profile_dir,
+    )
+
+
+@pytest.mark.asyncio
+async def test_browser_recovery_terminates_live_owner_for_same_profile(tmp_path, monkeypatch):
+    profile_dir = tmp_path / ".browser"
+    profile_dir.mkdir()
+    (profile_dir / "SingletonLock").symlink_to("MacBook-Pro.local-12345")
+    (profile_dir / "SingletonCookie").write_text("cookie", encoding="utf-8")
+
+    terminated = []
+    monkeypatch.setattr(BrowserController, "_pid_exists", staticmethod(lambda pid: True))
+    monkeypatch.setattr(
+        BrowserController,
+        "_get_pid_command",
+        staticmethod(lambda pid: f"/Applications/Google Chrome --user-data-dir={profile_dir.resolve()}"),
+    )
+
+    async def fake_terminate(pid):
+        terminated.append(pid)
+        return True
+
+    monkeypatch.setattr(BrowserController, "_terminate_pid", classmethod(lambda cls, pid: fake_terminate(pid)))
+
+    removed = await BrowserController._recover_live_process_singleton_owner(profile_dir)
+
+    assert terminated == [12345]
+    assert {path.name for path in removed} == {"SingletonLock", "SingletonCookie"}
+    assert not (profile_dir / "SingletonLock").exists()
+
+
+@pytest.mark.asyncio
+async def test_browser_recovery_does_not_terminate_unmatched_live_owner(tmp_path, monkeypatch):
+    profile_dir = tmp_path / ".browser"
+    profile_dir.mkdir()
+    (profile_dir / "SingletonLock").symlink_to("MacBook-Pro.local-12345")
+    (profile_dir / "SingletonCookie").write_text("cookie", encoding="utf-8")
+
+    terminated = []
+    monkeypatch.setattr(BrowserController, "_pid_exists", staticmethod(lambda pid: True))
+    monkeypatch.setattr(
+        BrowserController,
+        "_get_pid_command",
+        staticmethod(lambda pid: "/Applications/Google Chrome --user-data-dir=/tmp/other-profile"),
+    )
+
+    async def fake_terminate(pid):
+        terminated.append(pid)
+        return True
+
+    monkeypatch.setattr(BrowserController, "_terminate_pid", classmethod(lambda cls, pid: fake_terminate(pid)))
+
+    removed = await BrowserController._recover_live_process_singleton_owner(profile_dir)
+
+    assert removed == []
+    assert terminated == []
+    assert (profile_dir / "SingletonLock").is_symlink()
+    assert (profile_dir / "SingletonCookie").exists()
+
+
 @pytest.mark.asyncio
 async def test_browser_screenshot_captures_scaled_jpeg(tmp_path):
     class FakeClient:

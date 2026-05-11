@@ -171,7 +171,10 @@ class ToolManager:
             self.register_toolkit(agent, toolkit_class)
 
     def register_skill_toolkits(self, agent: Agent) -> None:
-        self.register_master_toolkits(agent)
+        for toolkit_class in self._default_toolkits:
+            if toolkit_class is SkillToolkit:
+                continue
+            self.register_toolkit(agent, toolkit_class)
         agent.tool(self.wrap_tool(FileToolkit.read_skill_file))
 
     @staticmethod

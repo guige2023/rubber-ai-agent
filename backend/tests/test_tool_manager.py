@@ -76,6 +76,21 @@ def test_read_skill_file_is_only_registered_for_skill_agents():
     assert "read_skill_file" in skill_agent._function_toolset.tools
 
 
+def test_skill_agents_do_not_get_skill_delegation_tools():
+    tool_manager = ToolManager()
+
+    master_agent = Agent("test")
+    tool_manager.register_master_toolkits(master_agent)
+
+    skill_agent = Agent("test")
+    tool_manager.register_skill_toolkits(skill_agent)
+
+    assert "run_skill" in master_agent._function_toolset.tools
+    assert "publish_skill" in master_agent._function_toolset.tools
+    assert "run_skill" not in skill_agent._function_toolset.tools
+    assert "publish_skill" not in skill_agent._function_toolset.tools
+
+
 @pytest.mark.asyncio
 async def test_tool_validation_capability_normalizes_json_string_array_args():
     capability = FerrymanToolValidationCapability()

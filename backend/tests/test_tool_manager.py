@@ -15,6 +15,7 @@ from app.core.tool_manager import (
 )
 from app.core.toolkits.base import Toolkit
 from app.core.toolkits.email import EmailToolkit
+from app.core.toolkits.web import WebToolkit
 
 
 class DummyToolkit(Toolkit):
@@ -89,6 +90,27 @@ def test_skill_agents_do_not_get_skill_delegation_tools():
     assert "publish_skill" in master_agent._function_toolset.tools
     assert "run_skill" not in skill_agent._function_toolset.tools
     assert "publish_skill" not in skill_agent._function_toolset.tools
+
+
+def test_web_tools_are_registered_as_sequential():
+    manager = ToolManager()
+    agent = Agent("test")
+    agent.tool = MagicMock()
+
+    manager.register_toolkit(agent, WebToolkit)
+
+    assert agent.tool.call_count == len(WebToolkit.get_tools())
+    assert all(call.kwargs.get("sequential") is True for call in agent.tool.call_args_list)
+
+
+def test_non_web_tools_are_not_registered_as_sequential():
+    manager = ToolManager()
+    agent = Agent("test")
+    agent.tool = MagicMock()
+
+    manager.register_toolkit(agent, DummyToolkit)
+
+    assert agent.tool.call_args.kwargs == {}
 
 
 @pytest.mark.asyncio

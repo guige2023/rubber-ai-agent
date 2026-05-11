@@ -183,8 +183,9 @@ class ToolManager:
 
     def register_toolkit(self, agent: Agent, toolkit_class: type[Toolkit]) -> None:
         """Register all tools from a toolkit class using its get_tools() method."""
+        tool_options = {"sequential": True} if toolkit_class is WebToolkit else {}
         for tool_func in toolkit_class.get_tools():
-            agent.tool(self.wrap_tool(tool_func))
+            agent.tool(self.wrap_tool(tool_func), **tool_options)
 
     def wrap_tool(self, bound_tool_func: ToolFunction) -> ToolFunction:
         @wraps(bound_tool_func)

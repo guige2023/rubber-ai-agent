@@ -4,16 +4,12 @@ from typing import Optional
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import RunContext
-from sqlalchemy import String as SAString, desc, or_
-from sqlmodel import select
 
-from app.core.db import get_session
 from app.core.deps import AgentDeps, get_schedule_manager, get_task_manager
-from app.core.schedule_manager import compute_next_run_at, normalize_timezone_name
+from app.core.schedule_manager import ScheduleNotFoundError, ScheduleValidationError
+from app.core.task_manager import TaskNotFoundError, TaskValidationError, VALID_TASK_STATUSES
 from app.core.toolkits.base import Toolkit
-from app.models.database import Schedule, Task
 
-VALID_TASK_STATUSES = frozenset({"pending", "running", "success", "failed", "canceled"})
 PREVIEW_LIMIT = 120
 
 
@@ -41,6 +37,7 @@ class TaskToolkit(Toolkit):
             TaskToolkit.update_task,
             TaskToolkit.list_tasks,
             TaskToolkit.create_schedule,
+            TaskToolkit.update_schedule,
             TaskToolkit.list_schedules,
         ]
 
@@ -61,16 +58,12 @@ class TaskToolkit(Toolkit):
         normalized_title = _require_non_empty("title", title)
         normalized_instruction = _require_non_empty("instruction", instruction)
 
-        task_args = {
-            "instruction": normalized_instruction,
-            "payload": dict(metadata or {}),
-        }
-
-        task = get_task_manager(ctx.deps).persist_task(
+        task = get_task_manager(ctx.deps).create_task(
             session_id=session_id,
             title=normalized_title,
+            instruction=normalized_instruction,
+            metadata=metadata,
             parent_id=parent_id,
-            args=task_args,
         )
         return f"Task created/verified: ID={task.id}, Title='{task.title}'"
 
@@ -88,8 +81,16 @@ class TaskToolkit(Toolkit):
             allowed = ", ".join(sorted(VALID_TASK_STATUSES))
             raise ModelRetry(f"status must be one of: {allowed}.")
 
-        meta = {"progress_note": progress_note} if progress_note is not None else None
-        get_task_manager(ctx.deps).persist_task_update(normalized_task_id, status=normalized_status, metadata=meta)
+        try:
+            get_task_manager(ctx.deps).update_task(
+                normalized_task_id,
+                status=normalized_status,
+                progress_note=progress_note,
+            )
+        except TaskNotFoundError as exc:
+            raise ModelRetry(str(exc)) from exc
+        except TaskValidationError as exc:
+            raise ModelRetry(str(exc)) from exc
         return f"Task {normalized_task_id} updated to {normalized_status}"
 
     @staticmethod
@@ -108,35 +109,27 @@ class TaskToolkit(Toolkit):
 
         normalized_query = query.strip() if query else None
 
-        with get_session() as db_session:
-            statement = select(Task)
-            if normalized_status:
-                statement = statement.where(Task.status == normalized_status)
-            if normalized_query:
-                statement = statement.where(
-                    or_(
-                        Task.title.contains(normalized_query),
-                        Task.args.cast(SAString).contains(normalized_query),
-                    )
-                )
-            statement = statement.order_by(desc(Task.updated_at), desc(Task.id))
-            tasks = db_session.exec(statement).all()
+        tasks, _, _ = get_task_manager(ctx.deps).list_tasks(
+            status=normalized_status,
+            query=normalized_query,
+            limit=200,
+        )
 
-            if not tasks:
-                status_msg = f" with status '{normalized_status}'" if normalized_status else ""
-                query_msg = f" matching '{normalized_query}'" if normalized_query else ""
-                return f"No tasks found{status_msg}{query_msg}."
+        if not tasks:
+            status_msg = f" with status '{normalized_status}'" if normalized_status else ""
+            query_msg = f" matching '{normalized_query}'" if normalized_query else ""
+            return f"No tasks found{status_msg}{query_msg}."
 
-            lines = [f"Found {len(tasks)} tasks:"]
-            for t in tasks:
-                instruction = t.args.get("instruction", "No instruction")
-                payload = t.args.get("payload", {})
-                lines.append(f"- ID: {t.id} | [{t.status}] {t.title}")
-                lines.append(f"  Context: {_render_preview(instruction)}")
-                if payload:
-                    lines.append(f"  Metadata: {payload}")
+        lines = [f"Found {len(tasks)} tasks:"]
+        for t in tasks:
+            instruction = t.args.get("instruction", "No instruction")
+            payload = t.args.get("payload", {})
+            lines.append(f"- ID: {t.id} | [{t.status}] {t.title}")
+            lines.append(f"  Context: {_render_preview(instruction)}")
+            if payload:
+                lines.append(f"  Metadata: {payload}")
 
-            return "\n".join(lines)
+        return "\n".join(lines)
 
     @staticmethod
     async def create_schedule(
@@ -151,39 +144,71 @@ class TaskToolkit(Toolkit):
         Stores the name, cron expression, and instruction in the database. This
         tool does not execute the schedule.
         """
-        normalized_name = _require_non_empty("name", name)
-        normalized_cron = _require_non_empty("cron_expression", cron_expression)
-        normalized_instruction = _require_non_empty("instruction", instruction)
-        normalized_timezone = normalize_timezone_name(timezone)
-        next_run_at = compute_next_run_at(normalized_cron, normalized_timezone)
-
-        new_schedule = Schedule(
-            name=normalized_name,
-            cron_expression=normalized_cron,
-            timezone=normalized_timezone,
-            args={"instruction": normalized_instruction},
-            next_run_at=next_run_at,
-        )
-        with get_session() as session:
-            session.add(new_schedule)
-            session.commit()
-            session.refresh(new_schedule)
         schedule_manager = get_schedule_manager(ctx.deps)
-        if schedule_manager:
-            await schedule_manager.sync_schedule(new_schedule.id)
-        return f"Schedule '{normalized_name}' created with ID: {new_schedule.id}"
+        if not schedule_manager:
+            raise ModelRetry("Schedule manager is not available.")
+        try:
+            schedule = await schedule_manager.create_schedule(
+                name=name,
+                cron_expression=cron_expression,
+                instruction=instruction,
+                timezone_name=timezone,
+            )
+        except ScheduleValidationError as exc:
+            raise ModelRetry(str(exc)) from exc
+        return f"Schedule '{schedule.name}' created with ID: {schedule.id}"
+
+    @staticmethod
+    async def update_schedule(
+            ctx: RunContext[AgentDeps],
+            schedule_id: str,
+            name: Optional[str] = None,
+            cron_expression: Optional[str] = None,
+            instruction: Optional[str] = None,
+            timezone: Optional[str] = None,
+            enabled: Optional[bool] = None,
+    ) -> str:
+        """Update a persisted schedule definition.
+
+        Editable fields are name, cron_expression, instruction, timezone, and enabled.
+        """
+        normalized_schedule_id = _require_non_empty("schedule_id", schedule_id)
+        if all(
+                value is None
+                for value in (name, cron_expression, instruction, timezone, enabled)
+        ):
+            raise ModelRetry("At least one schedule field must be provided.")
+
+        schedule_manager = get_schedule_manager(ctx.deps)
+        if not schedule_manager:
+            raise ModelRetry("Schedule manager is not available.")
+        try:
+            await schedule_manager.update_schedule(
+                normalized_schedule_id,
+                name=name,
+                cron_expression=cron_expression,
+                instruction=instruction,
+                timezone_name=timezone,
+                enabled=enabled,
+            )
+        except ScheduleNotFoundError as exc:
+            raise ModelRetry(str(exc)) from exc
+        except ScheduleValidationError as exc:
+            raise ModelRetry(str(exc)) from exc
+
+        return f"Schedule {normalized_schedule_id} updated"
 
     @staticmethod
     async def list_schedules(ctx: RunContext[AgentDeps]) -> str:
         """List persisted schedule definitions by creation recency."""
-        with get_session() as session:
-            schedules = session.exec(
-                select(Schedule).order_by(desc(Schedule.created_at), desc(Schedule.id))
-            ).all()
-            if not schedules:
-                return "No schedules registered."
-            lines = ["Registered Automated Routines:"]
-            for s in schedules:
-                status = "Enabled" if s.enabled else "Disabled"
-                lines.append(f"- [{status}] ID: {s.id} | Name: {s.name} | Cron: {s.cron_expression}")
-            return "\n".join(lines)
+        schedule_manager = get_schedule_manager(ctx.deps)
+        if not schedule_manager:
+            raise ModelRetry("Schedule manager is not available.")
+        schedules, _ = schedule_manager.list_schedules(limit=200)
+        if not schedules:
+            return "No schedules registered."
+        lines = ["Registered Automated Routines:"]
+        for s in schedules:
+            status = "Enabled" if s.enabled else "Disabled"
+            lines.append(f"- [{status}] ID: {s.id} | Name: {s.name} | Cron: {s.cron_expression}")
+        return "\n".join(lines)

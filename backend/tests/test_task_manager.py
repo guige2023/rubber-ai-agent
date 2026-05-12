@@ -1,5 +1,5 @@
 from app.core.task_manager import TaskManager
-from app.models.database import Task
+from app.models.database import TaskModel
 from app.models.schemas import TaskStatus
 
 
@@ -13,7 +13,7 @@ def test_task_manager_persists_and_updates_task(session):
         metadata={"pages": 12},
     )
 
-    db_task = session.get(Task, task.id)
+    db_task = session.get(TaskModel, task.id)
     assert db_task is not None
     assert db_task.status == TaskStatus.SUCCESS
     assert db_task.finished_at is not None

@@ -3,10 +3,10 @@ import { useCallback, useState } from 'react';
 export interface Schedule {
   id: string;
   name: string;
-  cron: string;
+  cron_expression: string;
+  args: Record<string, any>;
   timezone: string;
   enabled: boolean;
-  instruction?: string;
   last_run_at?: string | null;
   next_run_at?: string | null;
   total_run_count: number;
@@ -64,10 +64,10 @@ export function useSchedules(call: (method: string, params?: any) => Promise<any
     const result: any = await call('update_schedule', {
       schedule_id: schedule.id,
       name: schedule.name,
-      cron: schedule.cron,
+      cron_expression: schedule.cron_expression,
       timezone: schedule.timezone,
       enabled: schedule.enabled,
-      instruction: schedule.instruction || '',
+      instruction: schedule.args?.instruction || '',
     });
     if (result?.status === 'error') {
       throw new Error(result.message);

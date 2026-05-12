@@ -17,7 +17,7 @@ from app.core.schedule_manager import (
 )
 from app.core.run_registry import RunRegistry
 from app.core.session_manager import SessionManager
-from app.models.database import Message, Schedule, Session
+from app.models.database import MessageModel, ScheduleModel, SessionModel
 
 
 class FakeScheduler:
@@ -135,7 +135,7 @@ class PersistentBlockingKernel(BlockingKernel):
 
 @pytest.mark.asyncio
 async def test_scheduler_sync_schedule_sets_timezone_and_next_run(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-1",
         name="Morning sync",
         cron_expression="0 8 * * *",
@@ -152,14 +152,14 @@ async def test_scheduler_sync_schedule_sets_timezone_and_next_run(session):
     await scheduler.sync_schedule(schedule.id)
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
     assert refreshed.timezone == "Asia/Shanghai"
     assert refreshed.next_run_at is not None
     assert scheduler._scheduler.get_job(schedule.id) is not None
 
 
-def test_schedule_datetime_columns_are_persisted_as_explicit_utc_strings(session):
-    schedule = Schedule(
+def test_schedule_datetime_columns_are_persisted_as_utc_datetimes(session):
+    schedule = ScheduleModel(
         id="schedule-utc-storage",
         name="UTC storage",
         cron_expression="14 10 * * *",
@@ -176,9 +176,9 @@ def test_schedule_datetime_columns_are_persisted_as_explicit_utc_strings(session
         {"schedule_id": schedule.id},
     ).one()
 
-    assert row[0] == "2026-04-19T02:14:00Z"
-    assert row[1].endswith("Z")
-    assert row[2].endswith("Z")
+    assert row[0] == "2026-04-19 02:14:00.000000"
+    assert str(row[1])
+    assert str(row[2])
 
 
 def test_schedule_cron_helpers_validate_inputs_and_compute_utc_next_run():
@@ -217,7 +217,7 @@ def test_schedule_cron_helpers_reject_invalid_inputs(
 
 @pytest.mark.asyncio
 async def test_scheduler_run_uses_schedule_id_as_session_and_updates_metrics(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-2",
         name="Nightly digest",
         cron_expression="0 1 * * *",
@@ -236,8 +236,8 @@ async def test_scheduler_run_uses_schedule_id_as_session_and_updates_metrics(ses
     await scheduler._run_schedule(schedule.id)
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
-    persisted_session = session.get(Session, schedule.id)
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
+    persisted_session = session.get(SessionModel, schedule.id)
 
     assert kernel.calls == [{
         "instruction": "Prepare the nightly digest.",
@@ -264,7 +264,7 @@ async def test_scheduler_run_uses_schedule_id_as_session_and_updates_metrics(ses
 
 @pytest.mark.asyncio
 async def test_scheduler_exposes_active_run_while_schedule_is_running(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-active-run",
         name="Active run",
         cron_expression="0 1 * * *",
@@ -296,7 +296,7 @@ async def test_scheduler_exposes_active_run_while_schedule_is_running(session):
 
 @pytest.mark.asyncio
 async def test_scheduler_skips_duplicate_trigger_while_run_is_active(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-busy-run",
         name="Busy run",
         cron_expression="0 1 * * *",
@@ -318,7 +318,7 @@ async def test_scheduler_skips_duplicate_trigger_while_run_is_active(session):
     await scheduler._run_schedule(schedule.id, "catch_up")
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
     assert kernel.calls == [{
         "instruction": "Do not run twice.",
         "session_id": schedule.id,
@@ -341,7 +341,7 @@ async def test_scheduler_skips_duplicate_trigger_while_run_is_active(session):
 
 @pytest.mark.asyncio
 async def test_scheduler_cancel_marks_active_run_canceled(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-cancel-run",
         name="Cancel run",
         cron_expression="0 1 * * *",
@@ -370,7 +370,7 @@ async def test_scheduler_cancel_marks_active_run_canceled(session):
     await task
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
     assert kernel.run_registry.get_active_run_payload(schedule.id) is None
     assert refreshed.total_run_count == 1
     assert refreshed.last_run_result == {
@@ -385,9 +385,9 @@ async def test_scheduler_cancel_marks_active_run_canceled(session):
     }
 
     user_message = session.exec(
-        select(Message).where(
-            Message.session_id == schedule.id,
-            Message.role == "user",
+        select(MessageModel).where(
+            MessageModel.session_id == schedule.id,
+            MessageModel.role == "user",
         )
     ).one()
     assert user_message.metadata_["run"] == {
@@ -398,7 +398,7 @@ async def test_scheduler_cancel_marks_active_run_canceled(session):
 
 @pytest.mark.asyncio
 async def test_scheduler_run_updates_metrics_even_when_agent_execution_fails(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-3",
         name="Failing digest",
         cron_expression="0 1 * * *",
@@ -417,7 +417,7 @@ async def test_scheduler_run_updates_metrics_even_when_agent_execution_fails(ses
     await scheduler._run_schedule(schedule.id)
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
 
     assert kernel.calls == [{
         "instruction": "Prepare the failing digest.",
@@ -441,7 +441,7 @@ async def test_scheduler_run_updates_metrics_even_when_agent_execution_fails(ses
 
 @pytest.mark.asyncio
 async def test_scheduler_run_disables_schedule_when_instruction_is_missing(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-missing-instruction",
         name="Missing instruction",
         cron_expression="0 1 * * *",
@@ -460,7 +460,7 @@ async def test_scheduler_run_disables_schedule_when_instruction_is_missing(sessi
     await scheduler._run_schedule(schedule.id)
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
 
     assert kernel.calls == []
     assert refreshed.enabled is False
@@ -474,7 +474,7 @@ async def test_scheduler_run_disables_schedule_when_instruction_is_missing(sessi
 
 @pytest.mark.asyncio
 async def test_scheduler_sync_all_disables_invalid_persisted_schedule(session):
-    valid_schedule = Schedule(
+    valid_schedule = ScheduleModel(
         id="schedule-valid",
         name="Valid schedule",
         cron_expression="0 8 * * *",
@@ -482,7 +482,7 @@ async def test_scheduler_sync_all_disables_invalid_persisted_schedule(session):
         enabled=True,
         args={"instruction": "Run the valid schedule."},
     )
-    invalid_schedule = Schedule(
+    invalid_schedule = ScheduleModel(
         id="schedule-invalid",
         name="Invalid schedule",
         cron_expression="not-a-cron",
@@ -500,8 +500,8 @@ async def test_scheduler_sync_all_disables_invalid_persisted_schedule(session):
     await scheduler.sync_all()
 
     session.expire_all()
-    refreshed_valid = session.exec(select(Schedule).where(Schedule.id == valid_schedule.id)).one()
-    refreshed_invalid = session.exec(select(Schedule).where(Schedule.id == invalid_schedule.id)).one()
+    refreshed_valid = session.exec(select(ScheduleModel).where(ScheduleModel.id == valid_schedule.id)).one()
+    refreshed_invalid = session.exec(select(ScheduleModel).where(ScheduleModel.id == invalid_schedule.id)).one()
 
     assert refreshed_valid.enabled is True
     assert refreshed_valid.next_run_at is not None
@@ -519,7 +519,7 @@ async def test_scheduler_sync_all_disables_invalid_persisted_schedule(session):
 @pytest.mark.asyncio
 async def test_scheduler_sync_schedule_adds_catchup_job_for_recent_missed_run(session):
     missed_run_at = datetime.now(timezone.utc) - timedelta(hours=2)
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-catchup",
         name="Catch up",
         cron_expression="0 8 * * *",
@@ -550,7 +550,7 @@ async def test_scheduler_sync_schedule_adds_catchup_job_for_recent_missed_run(se
 
 @pytest.mark.asyncio
 async def test_scheduler_sync_schedule_skips_catchup_outside_grace_time(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-stale-missed-run",
         name="Stale missed run",
         cron_expression="0 8 * * *",
@@ -573,7 +573,7 @@ async def test_scheduler_sync_schedule_skips_catchup_outside_grace_time(session)
 
 @pytest.mark.asyncio
 async def test_scheduler_sync_schedule_skips_catchup_when_next_regular_run_is_close(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-next-run-close",
         name="Next run close",
         cron_expression="* * * * *",
@@ -596,7 +596,7 @@ async def test_scheduler_sync_schedule_skips_catchup_when_next_regular_run_is_cl
 
 @pytest.mark.asyncio
 async def test_scheduler_sync_schedule_replaces_only_existing_catchup_job(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-catchup-replace",
         name="Catch up replace",
         cron_expression="0 8 * * *",
@@ -628,7 +628,7 @@ async def test_scheduler_sync_schedule_replaces_only_existing_catchup_job(sessio
 
 def test_scheduler_missed_event_adds_catchup_job_and_refreshes_next_run(session):
     now = datetime.now(timezone.utc)
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-missed-event",
         name="Missed event",
         cron_expression="0 8 * * *",
@@ -657,7 +657,7 @@ def test_scheduler_missed_event_adds_catchup_job_and_refreshes_next_run(session)
     )
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
     catchup_job = fake_scheduler.get_job(f"{schedule.id}:catchup")
 
     assert refreshed.next_run_at == next_regular_run_at
@@ -668,7 +668,7 @@ def test_scheduler_missed_event_adds_catchup_job_and_refreshes_next_run(session)
 
 def test_scheduler_missed_event_ignores_catchup_jobs(session):
     now = datetime.now(timezone.utc)
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-catchup-missed-event",
         name="Catch-up missed event",
         cron_expression="0 8 * * *",
@@ -696,7 +696,7 @@ def test_scheduler_missed_event_ignores_catchup_jobs(session):
 
 @pytest.mark.asyncio
 async def test_scheduler_run_records_catchup_trigger_and_duration(session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-catchup-result",
         name="Catch-up result",
         cron_expression="0 1 * * *",
@@ -715,7 +715,7 @@ async def test_scheduler_run_records_catchup_trigger_and_duration(session):
     await scheduler._run_schedule(schedule.id, "catch_up")
 
     session.expire_all()
-    refreshed = session.exec(select(Schedule).where(Schedule.id == schedule.id)).one()
+    refreshed = session.exec(select(ScheduleModel).where(ScheduleModel.id == schedule.id)).one()
 
     assert refreshed.last_run_result is not None
     assert refreshed.last_run_result["trigger"] == "catch_up"

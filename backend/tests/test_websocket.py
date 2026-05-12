@@ -13,7 +13,7 @@ from sqlmodel import select
 
 from app.main import app
 from app.core.run_registry import RunAlreadyActiveError
-from app.models.database import Message, Schedule, Session, Task
+from app.models.database import MessageModel, ScheduleModel, SessionModel, TaskModel
 from app.models.schemas import AgentRunResult, Usage
 from app.rpc.agent_runs import persist_canceled_chat_run
 from app.rpc.sessions import list_messages, reconcile_stale_pending_runs_on_startup
@@ -50,7 +50,7 @@ def send_rpc_until_response(websocket, method: str, params: dict | None = None, 
 
 
 def persist_session(db_session, session_id: str, title: str | None = None) -> None:
-    db_session.add(Session(id=session_id, title=title or session_id))
+    db_session.add(SessionModel(id=session_id, title=title or session_id))
     db_session.commit()
 
 
@@ -472,9 +472,9 @@ def test_websocket_execute_emits_failed_terminal_event_on_unexpected_background_
 
     session.expire_all()
     persisted_messages = session.exec(
-        select(Message)
-        .where(Message.session_id == "session-background-fail")
-        .order_by(Message.created_at)
+        select(MessageModel)
+        .where(MessageModel.session_id == "session-background-fail")
+        .order_by(MessageModel.created_at)
     ).all()
 
     assert [message.role for message in persisted_messages] == ["user", "assistant"]
@@ -489,14 +489,14 @@ def test_websocket_execute_emits_failed_terminal_event_on_unexpected_background_
 
 def test_persist_canceled_chat_run_updates_existing_run_metadata_only(session):
     session.add(
-        Session(
+        SessionModel(
             id="session-cancel-persist",
             title="Cancel Persist",
             updated_at=datetime(2026, 4, 15, 0, 0, tzinfo=timezone.utc),
         )
     )
     session.add(
-        Message(
+        MessageModel(
             session_id="session-cancel-persist",
             role="user",
             content="请停止",
@@ -515,9 +515,9 @@ def test_persist_canceled_chat_run_updates_existing_run_metadata_only(session):
 
     session.expire_all()
     messages = session.exec(
-        select(Message)
-        .where(Message.session_id == "session-cancel-persist")
-        .order_by(Message.created_at)
+        select(MessageModel)
+        .where(MessageModel.session_id == "session-cancel-persist")
+        .order_by(MessageModel.created_at)
     ).all()
 
     assert len(messages) == 1
@@ -545,9 +545,9 @@ def test_persist_canceled_chat_run_updates_existing_run_metadata_only(session):
 
 
 def test_websocket_cancel_run_recovers_persisted_pending_run_after_restart(client, session):
-    session.add(Session(id="session-stale-cancel", title="Stale Cancel"))
+    session.add(SessionModel(id="session-stale-cancel", title="Stale Cancel"))
     session.add(
-        Message(
+        MessageModel(
             session_id="session-stale-cancel",
             role="user",
             content="这个run是在sidecar重启前开始的",
@@ -583,9 +583,9 @@ def test_websocket_cancel_run_recovers_persisted_pending_run_after_restart(clien
 
     session.expire_all()
     message = session.exec(
-        select(Message).where(
-            Message.session_id == "session-stale-cancel",
-            Message.role == "user",
+        select(MessageModel).where(
+            MessageModel.session_id == "session-stale-cancel",
+            MessageModel.role == "user",
         )
     ).one()
     assert message.metadata_["run"] == {
@@ -595,9 +595,9 @@ def test_websocket_cancel_run_recovers_persisted_pending_run_after_restart(clien
 
 
 def test_startup_reconcile_finalizes_stale_pending_run(session):
-    session.add(Session(id="session-stale-pending", title="Stale Pending"))
+    session.add(SessionModel(id="session-stale-pending", title="Stale Pending"))
     session.add(
-        Message(
+        MessageModel(
             session_id="session-stale-pending",
             role="user",
             content="这个run在sidecar重启前丢失了",
@@ -616,9 +616,9 @@ def test_startup_reconcile_finalizes_stale_pending_run(session):
 
     session.expire_all()
     persisted_messages = session.exec(
-        select(Message)
-        .where(Message.session_id == "session-stale-pending")
-        .order_by(Message.created_at)
+        select(MessageModel)
+        .where(MessageModel.session_id == "session-stale-pending")
+        .order_by(MessageModel.created_at)
     ).all()
     assert [message.metadata_["run"]["status"] for message in persisted_messages] == ["failed", "failed"]
     assert persisted_messages[0].metadata_["run"] == {
@@ -630,9 +630,9 @@ def test_startup_reconcile_finalizes_stale_pending_run(session):
 
 
 def test_websocket_list_messages_does_not_finalize_stale_pending_run(client, session):
-    session.add(Session(id="session-stale-pending-read", title="Stale Pending Read"))
+    session.add(SessionModel(id="session-stale-pending-read", title="Stale Pending Read"))
     session.add(
-        Message(
+        MessageModel(
             session_id="session-stale-pending-read",
             role="user",
             content="读消息不能修改run状态",
@@ -664,9 +664,9 @@ def test_websocket_list_messages_does_not_finalize_stale_pending_run(client, ses
 
     session.expire_all()
     persisted_messages = session.exec(
-        select(Message)
-        .where(Message.session_id == "session-stale-pending-read")
-        .order_by(Message.created_at)
+        select(MessageModel)
+        .where(MessageModel.session_id == "session-stale-pending-read")
+        .order_by(MessageModel.created_at)
     ).all()
     assert len(persisted_messages) == 1
     assert persisted_messages[0].metadata_["run"]["status"] == "pending"
@@ -674,14 +674,14 @@ def test_websocket_list_messages_does_not_finalize_stale_pending_run(client, ses
 
 def test_websocket_list_messages_keeps_schedule_pending_run(client, session):
     session.add(
-        Session(
+        SessionModel(
             id="schedule-active-pending",
             title="Active Schedule",
             metadata_={"kind": "schedule", "schedule_id": "schedule-active-pending"},
         )
     )
     session.add(
-        Message(
+        MessageModel(
             session_id="schedule-active-pending",
             role="user",
             content="这个定时任务还在运行",
@@ -710,7 +710,7 @@ def test_websocket_list_messages_keeps_schedule_pending_run(client, session):
 
     session.expire_all()
     persisted_message = session.exec(
-        select(Message).where(Message.session_id == "schedule-active-pending")
+        select(MessageModel).where(MessageModel.session_id == "schedule-active-pending")
     ).one()
     assert persisted_message.metadata_["run"]["status"] == "pending"
 
@@ -920,26 +920,26 @@ def test_websocket_create_session_without_title_defaults_to_empty_string(client,
         assert response["result"] == {"id": created_id, "title": ""}
         assert len(created_id) == 22
 
-    created = session.get(Session, created_id)
+    created = session.get(SessionModel, created_id)
     assert created is not None
     assert created.title == ""
 
 
 def test_websocket_session_message_and_task_flows(client, session):
     now = datetime.now(timezone.utc)
-    older_session = Session(
+    older_session = SessionModel(
         id="session-old",
         title="Older Session",
         updated_at=now - timedelta(hours=1),
     )
-    active_session = Session(
+    active_session = SessionModel(
         id="session-1",
         title="Session One",
         input_tokens=11,
         output_tokens=7,
         updated_at=now,
     )
-    message_1 = Message(
+    message_1 = MessageModel(
         session_id="session-1",
         role="user",
         content="你好",
@@ -947,7 +947,7 @@ def test_websocket_session_message_and_task_flows(client, session):
         created_at=now - timedelta(minutes=2),
         metadata_={},
     )
-    message_2 = Message(
+    message_2 = MessageModel(
         session_id="session-1",
         role="assistant",
         content="世界",
@@ -955,21 +955,21 @@ def test_websocket_session_message_and_task_flows(client, session):
         created_at=now - timedelta(minutes=1),
         metadata_={"usage": {"input_tokens": 3, "output_tokens": 4}},
     )
-    task_1 = Task(
+    task_1 = TaskModel(
         session_id="session-1",
         title="Task One",
         status="running",
         metadata_={"progress_note": "step 1"},
         updated_at=now,
     )
-    task_2 = Task(
+    task_2 = TaskModel(
         session_id="session-old",
         title="Task Two",
         status="success",
         metadata_={"progress_note": "done"},
         updated_at=now - timedelta(minutes=5),
     )
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-1",
         name="Nightly",
         cron_expression="0 0 * * *",
@@ -1029,31 +1029,27 @@ def test_websocket_session_message_and_task_flows(client, session):
         assert response["result"]["next_cursor"] is None
 
         response = send_rpc(websocket, "list_tasks", {"session_id": "session-1"}, request_id=15)
-        assert response["result"] == {
-            "tasks": [
-                {
-                    "id": task_1.id,
-                    "session_id": "session-1",
-                    "parent_id": None,
-                    "title": "Task One",
-                    "status": "running",
-                    "progress": "step 1",
-                    "updated_at": task_1.updated_at.isoformat(),
-                }
-            ],
-            "next_cursor": None,
-            "summary": {
-                "pending": 0,
-                "running": 1,
-                "success": 0,
-                "failed": 0,
-                "canceled": 0,
-                "total": 1,
-            },
+        task_payload = response["result"]["tasks"][0]
+        assert task_payload["id"] == task_1.id
+        assert task_payload["session_id"] == "session-1"
+        assert task_payload["parent_id"] is None
+        assert task_payload["title"] == "Task One"
+        assert task_payload["status"] == "running"
+        assert task_payload["metadata"] == {"progress_note": "step 1"}
+        assert task_payload["args"] == {}
+        assert task_payload["updated_at"] == now.isoformat().replace("+00:00", "Z")
+        assert response["result"]["next_cursor"] is None
+        assert response["result"]["summary"] == {
+            "pending": 0,
+            "running": 1,
+            "success": 0,
+            "failed": 0,
+            "canceled": 0,
+            "total": 1,
         }
 
         response = send_rpc(websocket, "get_task", {"task_id": task_1.id}, request_id=151)
-        assert response["result"]["task"]["instruction"] == ""
+        assert response["result"]["task"]["args"] == {}
 
         response = send_rpc(
             websocket,
@@ -1073,29 +1069,26 @@ def test_websocket_session_message_and_task_flows(client, session):
         response = send_rpc(websocket, "get_task", {"task_id": task_1.id}, request_id=153)
         assert response["result"]["task"]["title"] == "Task One Updated"
         assert response["result"]["task"]["status"] == "success"
-        assert response["result"]["task"]["instruction"] == "Run the task"
-        assert response["result"]["task"]["payload"] == {"priority": "high"}
+        assert response["result"]["task"]["metadata"]["progress_note"] == "done"
+        assert response["result"]["task"]["args"]["instruction"] == "Run the task"
+        assert response["result"]["task"]["args"]["payload"] == {"priority": "high"}
 
         response = send_rpc(websocket, "list_schedules", request_id=16)
-        assert response["result"] == {
-            "schedules": [
-                {
-                    "id": "schedule-1",
-                    "name": "Nightly",
-                    "cron": "0 0 * * *",
-                    "timezone": "UTC",
-                    "enabled": True,
-                    "last_run_at": None,
-                    "next_run_at": None,
-                    "total_run_count": 0,
-                    "updated_at": schedule.updated_at.isoformat().replace("+00:00", "Z"),
-                }
-            ],
-            "next_cursor": None,
-        }
+        schedule_payload = response["result"]["schedules"][0]
+        assert schedule_payload["id"] == "schedule-1"
+        assert schedule_payload["name"] == "Nightly"
+        assert schedule_payload["cron_expression"] == "0 0 * * *"
+        assert schedule_payload["args"] == {}
+        assert schedule_payload["timezone"] == "UTC"
+        assert schedule_payload["enabled"] is True
+        assert schedule_payload["last_run_at"] is None
+        assert schedule_payload["next_run_at"] is None
+        assert schedule_payload["total_run_count"] == 0
+        assert schedule_payload["updated_at"].endswith("Z")
+        assert response["result"]["next_cursor"] is None
 
         response = send_rpc(websocket, "get_schedule", {"schedule_id": "schedule-1"}, request_id=161)
-        assert response["result"]["schedule"]["instruction"] == ""
+        assert response["result"]["schedule"]["args"] == {}
         assert response["result"]["schedule"]["timezone"] == "UTC"
         assert response["result"]["schedule"]["total_run_count"] == 0
         assert response["result"]["schedule"]["last_run_result"] is None
@@ -1106,7 +1099,7 @@ def test_websocket_session_message_and_task_flows(client, session):
             {
                 "schedule_id": "schedule-1",
                 "name": "Nightly Updated",
-                "cron": "0 8 * * *",
+                "cron_expression": "0 8 * * *",
                 "timezone": "Asia/Shanghai",
                 "enabled": False,
                 "instruction": "Run every morning",
@@ -1117,10 +1110,10 @@ def test_websocket_session_message_and_task_flows(client, session):
 
         response = send_rpc(websocket, "get_schedule", {"schedule_id": "schedule-1"}, request_id=163)
         assert response["result"]["schedule"]["name"] == "Nightly Updated"
-        assert response["result"]["schedule"]["cron"] == "0 8 * * *"
+        assert response["result"]["schedule"]["cron_expression"] == "0 8 * * *"
         assert response["result"]["schedule"]["timezone"] == "Asia/Shanghai"
         assert response["result"]["schedule"]["enabled"] is False
-        assert response["result"]["schedule"]["instruction"] == "Run every morning"
+        assert response["result"]["schedule"]["args"]["instruction"] == "Run every morning"
 
         response = send_rpc(websocket, "delete_task", {"task_id": task_1.id}, request_id=164)
         assert response["result"] == {"status": "success"}
@@ -1149,10 +1142,10 @@ def test_websocket_list_endpoints_use_cursor_pagination(client, session):
     now = datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc)
 
     session.add_all([
-        Session(id="session-b", title="Session B", updated_at=now),
-        Session(id="session-a", title="Session A", updated_at=now),
-        Session(id="session-old", title="Session Old", updated_at=now - timedelta(minutes=1)),
-        Message(
+        SessionModel(id="session-b", title="Session B", updated_at=now),
+        SessionModel(id="session-a", title="Session A", updated_at=now),
+        SessionModel(id="session-old", title="Session Old", updated_at=now - timedelta(minutes=1)),
+        MessageModel(
             id="message-a",
             session_id="session-b",
             role="user",
@@ -1160,7 +1153,7 @@ def test_websocket_list_endpoints_use_cursor_pagination(client, session):
             type="text",
             created_at=now - timedelta(minutes=2),
         ),
-        Message(
+        MessageModel(
             id="message-b",
             session_id="session-b",
             role="assistant",
@@ -1168,7 +1161,7 @@ def test_websocket_list_endpoints_use_cursor_pagination(client, session):
             type="text",
             created_at=now,
         ),
-        Message(
+        MessageModel(
             id="message-c",
             session_id="session-b",
             role="assistant",
@@ -1176,42 +1169,42 @@ def test_websocket_list_endpoints_use_cursor_pagination(client, session):
             type="text",
             created_at=now,
         ),
-        Task(
+        TaskModel(
             id="task-b",
             session_id="session-b",
             title="Task B",
             status="running",
             updated_at=now,
         ),
-        Task(
+        TaskModel(
             id="task-a",
             session_id="session-b",
             title="Task A",
             status="pending",
             updated_at=now,
         ),
-        Task(
+        TaskModel(
             id="task-old",
             session_id="session-b",
             title="Task Old",
             status="success",
             updated_at=now - timedelta(minutes=1),
         ),
-        Schedule(
+        ScheduleModel(
             id="schedule-b",
             name="Schedule B",
             cron_expression="0 1 * * *",
             created_at=now - timedelta(minutes=1),
             updated_at=now,
         ),
-        Schedule(
+        ScheduleModel(
             id="schedule-a",
             name="Schedule A",
             cron_expression="0 2 * * *",
             created_at=now,
             updated_at=now - timedelta(minutes=1),
         ),
-        Schedule(
+        ScheduleModel(
             id="schedule-old",
             name="Schedule Old",
             cron_expression="0 3 * * *",
@@ -1295,9 +1288,9 @@ def test_websocket_list_endpoints_use_cursor_pagination(client, session):
 
 def test_websocket_list_messages_returns_latest_page_then_older_pages_in_display_order(client, session):
     base_time = datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc)
-    session.add(Session(id="session-message-pages", title="Message Pages", updated_at=base_time))
+    session.add(SessionModel(id="session-message-pages", title="Message Pages", updated_at=base_time))
     session.add_all([
-        Message(
+        MessageModel(
             id=f"message-{index:02d}",
             session_id="session-message-pages",
             role="user" if index % 2 else "assistant",
@@ -1358,9 +1351,9 @@ def test_websocket_list_messages_returns_latest_page_then_older_pages_in_display
 @pytest.mark.asyncio
 async def test_list_messages_python_implementation_pages_in_memory_sqlite(session):
     base_time = datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc)
-    session.add(Session(id="session-message-python-pages", title="Message Python Pages", updated_at=base_time))
+    session.add(SessionModel(id="session-message-python-pages", title="Message Python Pages", updated_at=base_time))
     session.add_all([
-        Message(
+        MessageModel(
             id=f"message-python-{index:02d}",
             session_id="session-message-python-pages",
             role="user" if index % 2 else "assistant",
@@ -1412,7 +1405,7 @@ async def test_list_messages_python_implementation_pages_in_memory_sqlite(sessio
 
 
 def test_websocket_update_schedule_syncs_schedule_manager(client, session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-sync-update",
         name="Sync me",
         cron_expression="0 0 * * *",
@@ -1433,7 +1426,7 @@ def test_websocket_update_schedule_syncs_schedule_manager(client, session):
             {
                 "schedule_id": "schedule-sync-update",
                 "name": "Sync me updated",
-                "cron": "0 8 * * *",
+                "cron_expression": "0 8 * * *",
                 "timezone": "Asia/Shanghai",
                 "instruction": "Updated instruction",
             },
@@ -1445,7 +1438,7 @@ def test_websocket_update_schedule_syncs_schedule_manager(client, session):
 
 
 def test_websocket_get_schedule_serializes_legacy_naive_datetime_as_explicit_utc(client, session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-legacy-utc",
         name="Legacy UTC schedule",
         cron_expression="14 10 * * *",
@@ -1486,7 +1479,7 @@ def test_websocket_get_schedule_serializes_legacy_naive_datetime_as_explicit_utc
 
 
 def test_websocket_delete_schedule_removes_scheduler_job(client, session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-sync-delete",
         name="Delete me",
         cron_expression="0 0 * * *",
@@ -1513,7 +1506,7 @@ def test_websocket_delete_schedule_removes_scheduler_job(client, session):
 
 
 def test_websocket_update_schedule_can_disable_invalid_persisted_schedule(client, session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-invalid-disable",
         name="Broken schedule",
         cron_expression="not-a-cron",
@@ -1540,7 +1533,7 @@ def test_websocket_update_schedule_can_disable_invalid_persisted_schedule(client
         )
 
     session.expire_all()
-    refreshed = session.get(Schedule, "schedule-invalid-disable")
+    refreshed = session.get(ScheduleModel, "schedule-invalid-disable")
 
     assert response["result"] == {"status": "success"}
     assert refreshed is not None
@@ -1550,7 +1543,7 @@ def test_websocket_update_schedule_can_disable_invalid_persisted_schedule(client
 
 
 def test_websocket_update_schedule_reenables_schedule_and_restores_next_run(client, session):
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-reenable",
         name="Re-enable me",
         cron_expression="0 8 * * *",
@@ -1577,7 +1570,7 @@ def test_websocket_update_schedule_reenables_schedule_and_restores_next_run(clie
         )
 
     session.expire_all()
-    refreshed = session.get(Schedule, "schedule-reenable")
+    refreshed = session.get(ScheduleModel, "schedule-reenable")
 
     assert response["result"] == {"status": "success"}
     assert refreshed is not None
@@ -1598,7 +1591,7 @@ def test_scheduler_runs_due_schedule_during_app_lifespan(session, monkeypatch):
     def fake_build_cron_trigger(cron_expression: str, timezone_name: str | None = None):
         return DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(milliseconds=50))
 
-    schedule = Schedule(
+    schedule = ScheduleModel(
         id="schedule-lifespan-run",
         name="Lifespan schedule",
         cron_expression="* * * * *",
@@ -1616,8 +1609,8 @@ def test_scheduler_runs_due_schedule_during_app_lifespan(session, monkeypatch):
         time.sleep(0.2)
 
     session.expire_all()
-    refreshed = session.get(Schedule, "schedule-lifespan-run")
-    persisted_session = session.get(Session, "schedule-lifespan-run")
+    refreshed = session.get(ScheduleModel, "schedule-lifespan-run")
+    persisted_session = session.get(SessionModel, "schedule-lifespan-run")
 
     assert calls == [{"instruction": "Run during lifespan", "session_id": "schedule-lifespan-run"}]
     assert refreshed is not None

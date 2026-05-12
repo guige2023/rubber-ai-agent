@@ -7,15 +7,15 @@ from sqlmodel import select
 from app.core.config import Settings
 from app.core.context_manager import ContextManager
 from app.core.runtime import FerrymanRuntime
-from app.models.database import Message, Session
+from app.models.database import MessageModel, SessionModel
 
 
 def test_context_manager_splits_tail_by_token_budget():
     messages = [
-        Message(session_id="s1", role="user", content="a", token_estimate=10),
-        Message(session_id="s1", role="assistant", content="b", token_estimate=10),
-        Message(session_id="s1", role="user", content="c", token_estimate=10),
-        Message(session_id="s1", role="assistant", content="d", token_estimate=10),
+        MessageModel(session_id="s1", role="user", content="a", token_estimate=10),
+        MessageModel(session_id="s1", role="assistant", content="b", token_estimate=10),
+        MessageModel(session_id="s1", role="user", content="c", token_estimate=10),
+        MessageModel(session_id="s1", role="assistant", content="d", token_estimate=10),
     ]
 
     compactable, tail = ContextManager.split_compaction_tail(messages, tail_tokens=20)
@@ -26,9 +26,9 @@ def test_context_manager_splits_tail_by_token_budget():
 
 def test_context_manager_selects_rolling_chunk():
     messages = [
-        Message(session_id="s1", role="user", content="a", token_estimate=10),
-        Message(session_id="s1", role="assistant", content="b", token_estimate=10),
-        Message(session_id="s1", role="user", content="c", token_estimate=10),
+        MessageModel(session_id="s1", role="user", content="a", token_estimate=10),
+        MessageModel(session_id="s1", role="assistant", content="b", token_estimate=10),
+        MessageModel(session_id="s1", role="user", content="c", token_estimate=10),
     ]
 
     chunk = ContextManager.select_compaction_chunk(messages, max_tokens=25)
@@ -41,7 +41,7 @@ def test_context_manager_loads_summary_and_tail_messages(session, tmp_path):
     session_id = "context-session"
     cutoff = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     session.add(
-        Session(
+        SessionModel(
             id=session_id,
             memory={
                 "schema_version": 1,
@@ -53,7 +53,7 @@ def test_context_manager_loads_summary_and_tail_messages(session, tmp_path):
         )
     )
     session.add(
-        Message(
+        MessageModel(
             session_id=session_id,
             role="user",
             content="old",
@@ -62,7 +62,7 @@ def test_context_manager_loads_summary_and_tail_messages(session, tmp_path):
         )
     )
     session.add(
-        Message(
+        MessageModel(
             session_id=session_id,
             role="user",
             content="new",
@@ -99,9 +99,9 @@ async def test_context_manager_records_memory_compaction_message(session, tmp_pa
     session_id = "compact-session"
     first_created_at = datetime(2026, 5, 5, 1, 0, tzinfo=timezone.utc)
     second_created_at = datetime(2026, 5, 5, 2, 0, tzinfo=timezone.utc)
-    session.add(Session(id=session_id))
+    session.add(SessionModel(id=session_id))
     session.add_all([
-        Message(
+        MessageModel(
             session_id=session_id,
             role="user",
             content="Build SEO matrix.",
@@ -109,7 +109,7 @@ async def test_context_manager_records_memory_compaction_message(session, tmp_pa
             token_estimate=10,
             created_at=first_created_at,
         ),
-        Message(
+        MessageModel(
             session_id=session_id,
             role="assistant",
             content="Done.",
@@ -152,9 +152,9 @@ async def test_context_manager_records_memory_compaction_message(session, tmp_pa
     await runtime.context_manager.maybe_compact_session(session_id)
 
     session.expire_all()
-    refreshed_session = session.get(Session, session_id)
+    refreshed_session = session.get(SessionModel, session_id)
     compaction_message = next(
-        message for message in session.exec(select(Message).where(Message.session_id == session_id)).all()
+        message for message in session.exec(select(MessageModel).where(MessageModel.session_id == session_id)).all()
         if message.role == "memory" and message.type == "compaction"
     )
     assert refreshed_session.input_tokens == 30

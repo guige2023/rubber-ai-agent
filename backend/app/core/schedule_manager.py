@@ -11,12 +11,15 @@ import shortuuid
 from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy import update
 from sqlmodel import select
 
 from app.core.config import Settings
 from app.core.db import get_session
+from app.core.pagination import fetch_datetime_cursor_page
 from app.core.run_registry import RunAlreadyActiveError
-from app.models.database import Schedule, Session
+from app.models.database import ScheduleModel, SessionModel
+from app.models.schemas import ScheduleUpdateSchema
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +100,25 @@ def compute_next_run_at(
     return next_fire_time.astimezone(timezone.utc)
 
 
+class ScheduleManagerError(Exception):
+    """Base error for schedule manager operations."""
+
+
+class ScheduleNotFoundError(ScheduleManagerError):
+    """Raised when a schedule does not exist."""
+
+
+class ScheduleValidationError(ScheduleManagerError, ValueError):
+    """Raised when schedule input is invalid."""
+
+
+def _require_non_empty(field_name: str, value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ScheduleValidationError(f"{field_name} must not be empty.")
+    return normalized
+
+
 class ScheduleManager:
     """Bridge persisted schedules in SQLite to in-process APScheduler jobs."""
 
@@ -104,6 +126,156 @@ class ScheduleManager:
         self.runtime = runtime
         self.settings = settings
         self._scheduler: Optional[AsyncIOScheduler] = None
+
+    async def create_schedule(
+            self,
+            *,
+            name: str,
+            cron_expression: str,
+            instruction: str,
+            timezone_name: Optional[str] = None,
+            sync_runtime: bool = True,
+    ) -> ScheduleModel:
+        normalized_name = _require_non_empty("name", name)
+        normalized_cron = _require_non_empty("cron_expression", cron_expression)
+        normalized_instruction = _require_non_empty("instruction", instruction)
+        try:
+            normalized_timezone = normalize_timezone_name(timezone_name)
+            next_run_at = compute_next_run_at(normalized_cron, normalized_timezone)
+        except ValueError as exc:
+            raise ScheduleValidationError(str(exc)) from exc
+
+        schedule = ScheduleModel(
+            name=normalized_name,
+            cron_expression=normalized_cron,
+            timezone=normalized_timezone,
+            args={"instruction": normalized_instruction},
+            next_run_at=next_run_at,
+        )
+        with get_session() as session:
+            session.add(schedule)
+            session.commit()
+            session.refresh(schedule)
+
+        if sync_runtime:
+            await self.sync_schedule(schedule.id)
+        return schedule
+
+    @staticmethod
+    def get_schedule(schedule_id: str) -> ScheduleModel:
+        normalized_schedule_id = _require_non_empty("schedule_id", schedule_id)
+        with get_session() as session:
+            schedule = session.get(ScheduleModel, normalized_schedule_id)
+            if not schedule:
+                raise ScheduleNotFoundError("Schedule not found")
+            return schedule
+
+    @staticmethod
+    def list_schedules(
+            *,
+            cursor: Optional[str] = None,
+            limit: int = 50,
+    ) -> tuple[list[ScheduleModel], Optional[str]]:
+        with get_session() as session:
+            schedules, next_cursor = fetch_datetime_cursor_page(
+                session,
+                select(ScheduleModel),
+                model=ScheduleModel,
+                sort_field="created_at",
+                cursor=cursor,
+                limit=limit,
+            )
+            return schedules, next_cursor
+
+    async def update_schedule(
+            self,
+            schedule_id: str,
+            *,
+            name: Optional[str] = None,
+            cron_expression: Optional[str] = None,
+            timezone_name: Optional[str] = None,
+            enabled: Optional[bool] = None,
+            instruction: Optional[str] = None,
+            cron_field_name: str = "cron_expression",
+            sync_runtime: bool = True,
+    ) -> ScheduleModel:
+        normalized_schedule_id = _require_non_empty("schedule_id", schedule_id)
+        patch = ScheduleUpdateSchema(
+            name=name,
+            cron_expression=cron_expression,
+            timezone=timezone_name,
+            enabled=enabled,
+            instruction=instruction,
+        )
+        changes = patch.model_dump(exclude_none=True)
+
+        with get_session() as session:
+            schedule = session.get(ScheduleModel, normalized_schedule_id)
+            if not schedule:
+                raise ScheduleNotFoundError("Schedule not found")
+
+            next_args = dict(schedule.args or {})
+            target_enabled = changes.get("enabled", schedule.enabled)
+            target_name = changes.get("name", schedule.name)
+            target_cron = changes.get("cron_expression", schedule.cron_expression)
+            target_timezone = changes.get("timezone", schedule.timezone)
+            target_instruction = changes.get("instruction", next_args.get("instruction", ""))
+
+            if "name" in changes or target_enabled:
+                changes["name"] = _require_non_empty("name", target_name)
+                target_name = changes["name"]
+            if "instruction" in changes or target_enabled:
+                target_instruction = _require_non_empty("instruction", target_instruction)
+            if "cron_expression" in changes:
+                changes["cron_expression"] = _require_non_empty(cron_field_name, target_cron)
+                target_cron = changes["cron_expression"]
+
+            try:
+                if "timezone" in changes or target_enabled:
+                    changes["timezone"] = normalize_timezone_name(target_timezone)
+                    target_timezone = changes["timezone"]
+                if target_enabled:
+                    target_cron = _require_non_empty(cron_field_name, target_cron)
+                    next_run_at = compute_next_run_at(target_cron, target_timezone)
+                else:
+                    next_run_at = None
+            except ValueError as exc:
+                raise ScheduleValidationError(str(exc)) from exc
+
+            if "instruction" in changes:
+                next_args["instruction"] = target_instruction
+                changes["args"] = next_args
+            changes.pop("instruction", None)
+            changes.update({
+                "next_run_at": next_run_at,
+                "updated_at": datetime.now(timezone.utc),
+            })
+
+            session.execute(
+                update(ScheduleModel)
+                .where(ScheduleModel.id == normalized_schedule_id)
+                .values(**changes)
+            )
+            session.commit()
+            refreshed = session.get(ScheduleModel, normalized_schedule_id)
+            if not refreshed:
+                raise ScheduleNotFoundError("Schedule not found")
+
+        if sync_runtime:
+            await self.sync_schedule(normalized_schedule_id)
+        return refreshed
+
+    async def delete_schedule(self, schedule_id: str, *, sync_runtime: bool = True) -> None:
+        normalized_schedule_id = _require_non_empty("schedule_id", schedule_id)
+        with get_session() as session:
+            schedule = session.get(ScheduleModel, normalized_schedule_id)
+            if not schedule:
+                raise ScheduleNotFoundError("Schedule not found")
+            session.delete(schedule)
+            session.commit()
+
+        if sync_runtime:
+            await self.remove_schedule(normalized_schedule_id)
 
     async def start(self) -> None:
         scheduler = AsyncIOScheduler(
@@ -127,7 +299,7 @@ class ScheduleManager:
 
     async def sync_all(self) -> None:
         with get_session() as session:
-            schedules = list(session.exec(select(Schedule)).all())
+            schedules = list(session.exec(select(ScheduleModel)).all())
         for schedule in schedules:
             try:
                 await self.sync_schedule(schedule.id)
@@ -138,7 +310,7 @@ class ScheduleManager:
     async def sync_schedule(self, schedule_id: str) -> None:
         scheduler = self._require_scheduler()
         with get_session() as session:
-            schedule = session.get(Schedule, schedule_id)
+            schedule = session.get(ScheduleModel, schedule_id)
             if not schedule:
                 self._remove_job_if_present(schedule_id)
                 return
@@ -182,7 +354,7 @@ class ScheduleManager:
     async def _run_schedule(self, schedule_id: str, trigger: str = "scheduled") -> None:
         logger.info(f"Running scheduled task for schedule {schedule_id} via {trigger}")
         with get_session() as session:
-            schedule = session.get(Schedule, schedule_id)
+            schedule = session.get(ScheduleModel, schedule_id)
             if not schedule or not schedule.enabled:
                 self._remove_job_if_present(schedule_id)
                 return
@@ -255,7 +427,7 @@ class ScheduleManager:
             )
         finally:
             with get_session() as session:
-                schedule = session.get(Schedule, schedule_id)
+                schedule = session.get(ScheduleModel, schedule_id)
                 if not schedule:
                     return
                 schedule.last_run_at = finished_at
@@ -270,7 +442,7 @@ class ScheduleManager:
     @staticmethod
     def _ensure_schedule_session(schedule_id: str, schedule_name: str) -> None:
         with get_session() as session:
-            session_obj = session.get(Session, schedule_id)
+            session_obj = session.get(SessionModel, schedule_id)
             if session_obj:
                 updated = False
                 metadata = dict(session_obj.metadata_ or {})
@@ -287,7 +459,7 @@ class ScheduleManager:
                 return
 
             session.add(
-                Session(
+                SessionModel(
                     id=schedule_id,
                     title=schedule_name,
                     metadata_={"kind": "schedule", "schedule_id": schedule_id},
@@ -314,7 +486,7 @@ class ScheduleManager:
         self._remove_job_if_present(schedule_id)
 
         with get_session() as session:
-            schedule = session.get(Schedule, schedule_id)
+            schedule = session.get(ScheduleModel, schedule_id)
             if not schedule:
                 return
 
@@ -358,7 +530,7 @@ class ScheduleManager:
             return
 
         with get_session() as session:
-            schedule = session.get(Schedule, schedule_id)
+            schedule = session.get(ScheduleModel, schedule_id)
             if not schedule or not schedule.enabled:
                 return
             schedule.next_run_at = next_regular_run_at

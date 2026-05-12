@@ -11,9 +11,9 @@ def build_rpc_context(websocket: WebSocket, send_lock: asyncio.Lock) -> SimpleNa
     return SimpleNamespace(
         runtime=app_state.runtime,
         bearer_token=app_state.bearer_token,
+        task_manager=app_state.runtime.task_manager,
         schedule_manager=app_state.schedule_manager,
         app_state=app_state,
         request_ws=websocket,
         send_lock=send_lock,
     )
-

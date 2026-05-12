@@ -8,10 +8,10 @@ export interface ManagedTask {
   parent_id: string | null;
   title: string;
   status: ManagedTaskStatus;
-  progress?: string;
-  instruction?: string;
-  payload?: Record<string, any>;
-  created_at?: string;
+  args: Record<string, any>;
+  metadata: Record<string, any>;
+  project_id?: string | null;
+  created_at: string;
   updated_at: string;
   finished_at?: string | null;
 }
@@ -80,9 +80,9 @@ export function useManagedTasks(call: (method: string, params?: any) => Promise<
       task_id: task.id,
       title: task.title,
       status: task.status,
-      progress_note: task.progress || '',
-      instruction: task.instruction || '',
-      payload: task.payload || {},
+      progress_note: task.metadata?.progress_note || '',
+      instruction: task.args?.instruction || '',
+      payload: task.args?.payload || {},
     });
     if (result?.status === 'error') {
       throw new Error(result.message);

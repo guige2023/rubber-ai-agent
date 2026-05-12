@@ -14,6 +14,20 @@ interface TaskManagerProps {
 
 const STATUS_OPTIONS: ManagedTaskStatus[] = ['pending', 'running', 'success', 'failed', 'canceled'];
 
+function taskProgress(task: ManagedTask) {
+  return typeof task.metadata?.progress_note === 'string' ? task.metadata.progress_note : '';
+}
+
+function taskInstruction(task: ManagedTask) {
+  return typeof task.args?.instruction === 'string' ? task.args.instruction : '';
+}
+
+function taskPayload(task: ManagedTask) {
+  return task.args?.payload && typeof task.args.payload === 'object' && !Array.isArray(task.args.payload)
+    ? task.args.payload
+    : {};
+}
+
 function formatDate(value?: string | null) {
   if (!value) return '-';
   return new Intl.DateTimeFormat(undefined, {
@@ -54,7 +68,7 @@ export function TaskManager({ call, isConnected, t }: TaskManagerProps) {
 
   useEffect(() => {
     setDraft(selectedTask);
-    setPayloadJson(JSON.stringify(selectedTask?.payload || {}, null, 2));
+    setPayloadJson(JSON.stringify(selectedTask ? taskPayload(selectedTask) : {}, null, 2));
     setFormError(null);
   }, [selectedTask]);
 
@@ -73,7 +87,13 @@ export function TaskManager({ call, isConnected, t }: TaskManagerProps) {
     setFormError(null);
     try {
       const payload = payloadJson.trim() ? JSON.parse(payloadJson) : {};
-      await updateTask({ ...draft, payload });
+      await updateTask({
+        ...draft,
+        args: {
+          ...draft.args,
+          payload,
+        },
+      });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -150,7 +170,7 @@ export function TaskManager({ call, isConnected, t }: TaskManagerProps) {
                       <TaskStatusIcon status={task.status} />
                       <div className="min-w-0 flex-1">
                         <h3 className="truncate text-sm font-black tracking-tight text-white/84">{task.title}</h3>
-                        <p className="mt-1 truncate text-xs font-medium text-white/32">{task.progress || t('tasks.no_progress')}</p>
+                        <p className="mt-1 truncate text-xs font-medium text-white/32">{taskProgress(task) || t('tasks.no_progress')}</p>
                       </div>
                     </div>
                     <span className="w-fit rounded-md border border-white/10 px-2 py-1 text-[9px] font-black uppercase tracking-[0.14em] text-white/42">
@@ -193,13 +213,23 @@ export function TaskManager({ call, isConnected, t }: TaskManagerProps) {
             </Field>
             <Field label={t('tasks.field_progress')}>
               <textarea
-                value={draft.progress || ''}
-                onChange={(event) => setDraft({ ...draft, progress: event.target.value })}
+                value={taskProgress(draft)}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  metadata: { ...draft.metadata, progress_note: event.target.value },
+                })}
                 className="field-textarea min-h-[96px]"
               />
             </Field>
             <Field label={t('tasks.field_instruction')}>
-              <textarea value={draft.instruction || ''} onChange={(event) => setDraft({ ...draft, instruction: event.target.value })} className="field-textarea min-h-[120px]" />
+              <textarea
+                value={taskInstruction(draft)}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  args: { ...draft.args, instruction: event.target.value },
+                })}
+                className="field-textarea min-h-[120px]"
+              />
             </Field>
             <Field label={t('tasks.field_payload')}>
               <textarea value={payloadJson} onChange={(event) => setPayloadJson(event.target.value)} className="field-textarea min-h-[140px] font-mono text-[11px]" />

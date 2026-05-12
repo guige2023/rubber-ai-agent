@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+
 from jsonrpcserver import Success, method
 
-from app.rpc.serializers import format_optional_date
+
+def format_optional_date(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return None
 
 
 @method
@@ -27,4 +38,3 @@ async def list_skills(context):
         ])
 
     return Success([])
-

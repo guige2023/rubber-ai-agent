@@ -12,7 +12,7 @@ from sqlmodel import desc, select
 
 from app.core.db import get_session
 from app.core.run_registry import RunAlreadyActiveError
-from app.models.database import Message, Session
+from app.models.database import MessageModel, SessionModel
 from app.models.events import FerrymanEventEnvelope
 from app.rpc.events import build_emit_ws_event, emit_refresh_event
 
@@ -24,13 +24,13 @@ def load_persisted_chat_run_event(session_id: str, run_id: str) -> FerrymanEvent
 
     with get_session() as db_session:
         assistant_message = db_session.exec(
-            select(Message)
+            select(MessageModel)
             .where(
-                Message.session_id == session_id,
-                Message.role == "assistant",
-                func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                MessageModel.session_id == session_id,
+                MessageModel.role == "assistant",
+                func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
             )
-            .order_by(desc(Message.created_at))
+            .order_by(desc(MessageModel.created_at))
         ).first()
 
         if not assistant_message:
@@ -74,20 +74,20 @@ def persist_failed_chat_run(
     }
 
     with get_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
         if not session_obj:
-            session_obj = Session(id=session_id, title="")
+            session_obj = SessionModel(id=session_id, title="")
             db_session.add(session_obj)
             db_session.flush()
 
         user_message = db_session.exec(
-            select(Message)
+            select(MessageModel)
             .where(
-                Message.session_id == session_id,
-                Message.role == "user",
-                func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                MessageModel.session_id == session_id,
+                MessageModel.role == "user",
+                func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
             )
-            .order_by(desc(Message.created_at))
+            .order_by(desc(MessageModel.created_at))
         ).first()
         if user_message:
             user_meta = dict(user_message.metadata_ or {})
@@ -96,7 +96,7 @@ def persist_failed_chat_run(
             db_session.add(user_message)
         elif instruction is not None:
             db_session.add(
-                Message(
+                MessageModel(
                     session_id=session_id,
                     role="user",
                     content=instruction,
@@ -106,17 +106,17 @@ def persist_failed_chat_run(
             )
 
         assistant_message = db_session.exec(
-            select(Message)
+            select(MessageModel)
             .where(
-                Message.session_id == session_id,
-                Message.role == "assistant",
-                func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                MessageModel.session_id == session_id,
+                MessageModel.role == "assistant",
+                func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
             )
-            .order_by(desc(Message.created_at))
+            .order_by(desc(MessageModel.created_at))
         ).first()
         if not assistant_message:
             db_session.add(
-                Message(
+                MessageModel(
                     session_id=session_id,
                     role="assistant",
                     content=failure_content,
@@ -166,20 +166,20 @@ def persist_canceled_chat_run(session_id: str, run_id: str) -> FerrymanEventEnve
     }
 
     with get_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
         if not session_obj:
-            session_obj = Session(id=session_id, title="")
+            session_obj = SessionModel(id=session_id, title="")
             db_session.add(session_obj)
             db_session.flush()
 
         user_message = db_session.exec(
-            select(Message)
+            select(MessageModel)
             .where(
-                Message.session_id == session_id,
-                Message.role == "user",
-                func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                MessageModel.session_id == session_id,
+                MessageModel.role == "user",
+                func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
             )
-            .order_by(desc(Message.created_at))
+            .order_by(desc(MessageModel.created_at))
         ).first()
         if user_message:
             user_meta = dict(user_message.metadata_ or {})
@@ -211,11 +211,11 @@ def persist_canceled_chat_run(session_id: str, run_id: str) -> FerrymanEventEnve
 def has_persisted_pending_chat_run(session_id: str, run_id: str) -> bool:
     with get_session() as db_session:
         return db_session.exec(
-            select(Message.id).where(
-                Message.session_id == session_id,
-                Message.role == "user",
-                func.json_extract(Message.metadata_, "$.run.id") == run_id,
-                func.json_extract(Message.metadata_, "$.run.status") == "pending",
+            select(MessageModel.id).where(
+                MessageModel.session_id == session_id,
+                MessageModel.role == "user",
+                func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
+                func.json_extract(MessageModel.metadata_, "$.run.status") == "pending",
             )
         ).first() is not None
 
@@ -240,7 +240,7 @@ async def background_generate_title(runtime, session_id: str, instruction: str, 
         logger.info(f"Generated title for session {session_id}: {generated_title}")
 
         with get_session() as db_session:
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if session_obj and not session_obj.title:
                 session_obj.title = generated_title
                 session_obj.updated_at = datetime.now(timezone.utc)
@@ -300,7 +300,7 @@ async def background_execute_run(
 
         need_title_gen = False
         with get_session() as db_session:
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if session_obj and not session_obj.title:
                 need_title_gen = True
 

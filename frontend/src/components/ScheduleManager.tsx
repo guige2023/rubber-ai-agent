@@ -38,6 +38,10 @@ function getLastRunHeadline(schedule: Schedule, t: (key: string) => string) {
   return lastRun.status === 'failed' ? t('schedules.last_run_failed') : t('schedules.last_run_succeeded');
 }
 
+function scheduleInstruction(schedule: Schedule) {
+  return typeof schedule.args?.instruction === 'string' ? schedule.args.instruction : '';
+}
+
 export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) {
   const {
     schedules,
@@ -155,7 +159,7 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
                         </div>
                       </div>
                     </div>
-                    <span className="truncate font-mono text-[11px] text-white/38">{schedule.cron}</span>
+                    <span className="truncate font-mono text-[11px] text-white/38">{schedule.cron_expression}</span>
                     <span className="font-mono text-[10px] text-white/28">{formatDate(schedule.next_run_at, schedule.timezone)}</span>
                     <span className="font-mono text-[10px] text-white/28">{formatDate(schedule.last_run_at, schedule.timezone)}</span>
                     <ChevronRight size={15} className="justify-self-end text-white/18 transition-transform group-hover:translate-x-0.5 group-hover:text-white/45" />
@@ -205,11 +209,18 @@ export function ScheduleManager({ call, isConnected, t }: ScheduleManagerProps) 
               <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className="field-input" />
             </Field>
             <Field label={t('schedules.field_cron')}>
-              <input value={draft.cron} onChange={(event) => setDraft({ ...draft, cron: event.target.value })} className="field-input font-mono" />
+              <input value={draft.cron_expression} onChange={(event) => setDraft({ ...draft, cron_expression: event.target.value })} className="field-input font-mono" />
               <p className="mt-2 text-[11px] font-medium text-white/28">{t('schedules.cron_hint')}</p>
             </Field>
             <Field label={t('schedules.field_instruction')}>
-              <textarea value={draft.instruction || ''} onChange={(event) => setDraft({ ...draft, instruction: event.target.value })} className="field-textarea min-h-[180px]" />
+              <textarea
+                value={scheduleInstruction(draft)}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  args: { ...draft.args, instruction: event.target.value },
+                })}
+                className="field-textarea min-h-[180px]"
+              />
             </Field>
             <Field label={t('schedules.field_enabled')}>
               <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 transition-colors hover:bg-white/[0.05]">

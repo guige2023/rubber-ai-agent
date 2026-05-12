@@ -8,7 +8,6 @@ from sqlalchemy import inspect
 from sqlmodel import SQLModel, create_engine, Session as DBSession, text
 
 from app.core.config import get_settings
-from app.core.utc_datetime import format_utc_datetime, parse_utc_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +30,8 @@ UTC_DATETIME_COLUMNS: dict[str, tuple[str, ...]] = {
     "app_configs": ("updated_at",),
 }
 
-# This key is a one-time execution marker for the specific UTC datetime backfill
-# implemented in migrate_datetime_columns_to_explicit_utc_strings().
+# This key is a one-time execution marker for the UTC datetime backfill
+# implemented in migrate_datetime_columns_to_utc_storage().
 #
 # IMPORTANT:
 # - Reuse this key only if the migration logic is unchanged.
@@ -40,7 +39,7 @@ UTC_DATETIME_COLUMNS: dict[str, tuple[str, ...]] = {
 #   create a NEW key (for example, ..._v2) so the migration runs again.
 # - For a different one-time migration, use a different dedicated key instead of
 #   overloading this one.
-UTC_DATETIME_MIGRATION_KEY = "system.utc_datetime_text_migration_v1"
+UTC_DATETIME_MIGRATION_KEY = "system.utc_datetime_storage_migration_v1"
 MODEL_ROUTING_THRESHOLD_MIGRATION_KEY = "system.model_routing_threshold_migration_v1"
 
 
@@ -97,8 +96,8 @@ def migrate_session_memory_json_payloads() -> None:
         conn.commit()
 
 
-def migrate_datetime_columns_to_explicit_utc_strings() -> None:
-    """Normalize persisted datetimes to explicit ISO 8601 UTC strings."""
+def migrate_datetime_columns_to_utc_storage() -> None:
+    """Normalize persisted datetimes to UTC values stored in SQLite datetime format."""
     # Guard this backfill with a durable marker so startup does not rescan every
     # datetime column on every launch. If you change the normalization behavior
     # and need to re-run it for already-migrated databases, bump
@@ -135,7 +134,17 @@ def migrate_datetime_columns_to_explicit_utc_strings() -> None:
 
                 for rowid, raw_value in rows:
                     try:
-                        parsed = parse_utc_datetime(raw_value)
+                        if isinstance(raw_value, datetime):
+                            parsed = raw_value
+                        else:
+                            raw_text = str(raw_value).strip()
+                            if not raw_text:
+                                continue
+                            parsed = datetime.fromisoformat(raw_text.replace("Z", "+00:00"))
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        else:
+                            parsed = parsed.astimezone(timezone.utc)
                     except Exception as exc:
                         logger.warning(
                             f"Skipping invalid datetime during UTC normalization: "
@@ -146,7 +155,7 @@ def migrate_datetime_columns_to_explicit_utc_strings() -> None:
                     if parsed is None:
                         continue
 
-                    normalized = format_utc_datetime(parsed)
+                    normalized = parsed.replace(tzinfo=None).isoformat(sep=" ")
                     if raw_value == normalized:
                         continue
 
@@ -167,8 +176,8 @@ def migrate_datetime_columns_to_explicit_utc_strings() -> None:
                     "key": UTC_DATETIME_MIGRATION_KEY,
                     "value": json.dumps(True),
                     "category": "system",
-                    "metadata": json.dumps({"migration": "utc_datetime_text_v1"}),
-                    "updated_at": format_utc_datetime(datetime.now(timezone.utc)),
+                    "metadata": json.dumps({"migration": "utc_datetime_storage_v1"}),
+                    "updated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" "),
                 },
             )
         conn.commit()
@@ -186,7 +195,7 @@ def migrate_model_routing_threshold_default() -> None:
     if "app_configs" not in table_names:
         return
 
-    now = format_utc_datetime(datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
     with engine.connect() as conn:
         migration_marker = conn.execute(
             text("SELECT 1 FROM app_configs WHERE key = :key LIMIT 1"),
@@ -303,7 +312,7 @@ def init_db():
     try:
         auto_migrate_schema()
         migrate_session_memory_json_payloads()
-        migrate_datetime_columns_to_explicit_utc_strings()
+        migrate_datetime_columns_to_utc_storage()
         migrate_model_routing_threshold_default()
     except Exception as e:
         logger.exception("🚨 DB Initialization Error")

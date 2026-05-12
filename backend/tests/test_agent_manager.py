@@ -10,7 +10,7 @@ from sqlmodel import select
 from app.core.agent_manager import AgentManager
 from app.core.config import Settings
 from app.core.runtime import FerrymanRuntime
-from app.models.database import Message, Session
+from app.models.database import MessageModel, SessionModel
 from app.models.events import ToolPhase
 from app.models.schemas import Usage
 
@@ -125,13 +125,13 @@ async def test_agent_manager_run_master_agent_persists_success(session, tmp_path
         "total_tokens": 30,
     }
 
-    db_session = session.get(Session, "s1")
+    db_session = session.get(SessionModel, "s1")
     assert db_session is not None
     assert db_session.input_tokens == 10
     assert db_session.output_tokens == 20
 
     messages = session.exec(
-        select(Message).where(Message.session_id == "s1").order_by(Message.created_at)
+        select(MessageModel).where(MessageModel.session_id == "s1").order_by(MessageModel.created_at)
     ).all()
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].metadata_["run"]["id"] == "run-agent-success-1"
@@ -204,7 +204,7 @@ async def test_agent_manager_run_master_agent_includes_exception_cause(session, 
     assert "Input should be a valid array" in content
 
     messages = session.exec(
-        select(Message).where(Message.session_id == "s-cause").order_by(Message.created_at)
+        select(MessageModel).where(MessageModel.session_id == "s-cause").order_by(MessageModel.created_at)
     ).all()
     assert messages[-1].metadata_["run"]["status"] == "failed"
     assert "Cause: 1 validation error for send_email" in messages[-1].content
@@ -258,7 +258,7 @@ async def test_agent_manager_continues_after_tool_argument_validation_error(
     assert call_count == 2
 
     messages = session.exec(
-        select(Message).where(Message.session_id == "s-validation").order_by(Message.created_at)
+        select(MessageModel).where(MessageModel.session_id == "s-validation").order_by(MessageModel.created_at)
     ).all()
     assert messages[-1].metadata_["run"]["status"] == "success"
     assert not messages[-1].content.startswith("Run failed:")

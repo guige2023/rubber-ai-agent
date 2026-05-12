@@ -80,7 +80,7 @@ class SessionMemory(BaseModel):
     def normalize_compaction(cls, value: object) -> dict[str, object]:
         return value if isinstance(value, dict) else {}
 
-class SessionModel(ValidatorBaseModel):
+class SessionSchema(ValidatorBaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -98,11 +98,11 @@ class SessionModel(ValidatorBaseModel):
         return cls.utc_datetime(value)
 
 
-class SessionResponseModel(SessionModel):
+class SessionResponseSchema(SessionSchema):
     active_run: Optional[dict[str, object]] = None
 
 
-class MessageModel(ValidatorBaseModel):
+class MessageSchema(ValidatorBaseModel):
     id: str
     session_id: str
     role: str
@@ -119,13 +119,15 @@ class MessageModel(ValidatorBaseModel):
         return ValidatorBaseModel.utc_datetime(value)
 
 
-class TaskModel(ValidatorBaseModel):
+class TaskSchema(ValidatorBaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
     id: str
     session_id: str
     title: str
     status: str = TaskStatus.PENDING
     args: dict[str, object] = Field(default_factory=dict)
-    metadata: dict[str, object] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict, alias="metadata_")
     parent_id: Optional[str] = None
     project_id: Optional[str] = None
     created_at: datetime
@@ -138,7 +140,9 @@ class TaskModel(ValidatorBaseModel):
         return ValidatorBaseModel.utc_datetime(value)
 
 
-class ScheduleModel(ValidatorBaseModel):
+class ScheduleSchema(ValidatorBaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str
     cron_expression: str
@@ -156,6 +160,14 @@ class ScheduleModel(ValidatorBaseModel):
     @classmethod
     def validate_datetime(cls, value: datetime):
         return ValidatorBaseModel.utc_datetime(value)
+
+
+class ScheduleUpdateSchema(BaseModel):
+    name: Optional[str] = None
+    cron_expression: Optional[str] = None
+    timezone: Optional[str] = None
+    enabled: Optional[bool] = None
+    instruction: Optional[str] = None
 
 
 class Usage(BaseModel):

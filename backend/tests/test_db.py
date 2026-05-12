@@ -6,14 +6,14 @@ from sqlalchemy import text
 from app.core.db import (
     MODEL_ROUTING_THRESHOLD_MIGRATION_KEY,
     UTC_DATETIME_MIGRATION_KEY,
-    migrate_datetime_columns_to_explicit_utc_strings,
+    migrate_datetime_columns_to_utc_storage,
     migrate_model_routing_threshold_default,
 )
 
 
 def test_utc_datetime_migration_runs_once_and_records_marker(session):
-    migrate_datetime_columns_to_explicit_utc_strings()
-    migrate_datetime_columns_to_explicit_utc_strings()
+    migrate_datetime_columns_to_utc_storage()
+    migrate_datetime_columns_to_utc_storage()
     session.expire_all()
 
     marker_rows = session.execute(

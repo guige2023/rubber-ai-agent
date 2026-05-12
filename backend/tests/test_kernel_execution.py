@@ -42,8 +42,7 @@ from app.core.tool_errors import RetryableToolError
 from app.core.toolkits.base import Toolkit
 from app.core.toolkits.skill import SkillToolkit
 from app.core.toolkits.web import WebToolkit
-from app.core.utc_datetime import format_utc_datetime
-from app.models.database import Message, Session
+from app.models.database import MessageModel, SessionModel
 from app.models.events import FerrymanEventEnvelope, EventNamespace, ToolPhase, ToolActivityPayload
 from app.models.schemas import Usage
 
@@ -547,9 +546,9 @@ async def test_run_master_agent_history_keeps_system_prompt_and_token_estimates(
     with get_session() as db_session:
         messages = list(
             db_session.exec(
-                select(Message)
-                .where(Message.session_id == "test-session")
-                .order_by(Message.created_at)  # type: ignore[arg-type]
+                select(MessageModel)
+                .where(MessageModel.session_id == "test-session")
+                .order_by(MessageModel.created_at)  # type: ignore[arg-type]
             ).all()
         )
 
@@ -565,7 +564,7 @@ def test_get_session_messages_includes_summary_and_only_tail_messages():
 
     with get_session() as db_session:
         db_session.add(
-            Session(
+            SessionModel(
                 id=session_id,
                 title="",
                 memory={
@@ -579,7 +578,7 @@ def test_get_session_messages_includes_summary_and_only_tail_messages():
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="old user",
@@ -589,7 +588,7 @@ def test_get_session_messages_includes_summary_and_only_tail_messages():
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content="old assistant",
@@ -599,7 +598,7 @@ def test_get_session_messages_includes_summary_and_only_tail_messages():
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="new user",
@@ -609,7 +608,7 @@ def test_get_session_messages_includes_summary_and_only_tail_messages():
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content="new assistant",
@@ -643,21 +642,21 @@ def test_get_session_messages_respects_microsecond_cutoff():
 
     with get_session() as db_session:
         db_session.add(
-            Session(
+            SessionModel(
                 id=session_id,
                 title="",
                 memory={
                     "schema_version": 1,
                     "compaction": {
                         "summary": "compressed history",
-                        "cutoff_created_at": format_utc_datetime(cutoff),
+                        "cutoff_created_at": cutoff.isoformat().replace("+00:00", "Z"),
                         "updated_at": "2026-04-16T12:05:00Z",
                     },
                 },
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content="already compacted",
@@ -667,7 +666,7 @@ def test_get_session_messages_respects_microsecond_cutoff():
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="same-second new user",
@@ -690,7 +689,7 @@ def test_get_session_messages_ignores_invalid_session_memory():
 
     with get_session() as db_session:
         db_session.add(
-            Session(
+            SessionModel(
                 id=session_id,
                 title="",
                 memory={
@@ -704,7 +703,7 @@ def test_get_session_messages_ignores_invalid_session_memory():
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="tail user",
@@ -777,9 +776,9 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
     )
 
     with get_session() as db_session:
-        db_session.add(Session(id=session_id, title=""))
+        db_session.add(SessionModel(id=session_id, title=""))
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="first user",
@@ -789,7 +788,7 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content="first assistant",
@@ -811,7 +810,7 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
     assert "post-compaction reply" not in captured["compaction_input"]
 
     with get_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
         assert session_obj is not None
         assert session_obj.memory["compaction"]["summary"].startswith("## Current Goal")
         assert session_obj.memory["compaction"]["cutoff_created_at"] is not None
@@ -862,9 +861,9 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
     )
 
     with get_session() as db_session:
-        db_session.add(Session(id=session_id, title=""))
+        db_session.add(SessionModel(id=session_id, title=""))
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="older user",
@@ -874,7 +873,7 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content="older assistant",
@@ -894,16 +893,16 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
     assert captured["compaction_calls"] == 1
 
     with get_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
         assert session_obj is not None
         assert session_obj.memory["compaction"]["guard_until"] is not None
         assert "summary" not in session_obj.memory["compaction"]
 
         messages = list(
             db_session.exec(
-                select(Message)
-                .where(Message.session_id == session_id)
-                .order_by(Message.created_at)  # type: ignore[arg-type]
+                select(MessageModel)
+                .where(MessageModel.session_id == session_id)
+                .order_by(MessageModel.created_at)  # type: ignore[arg-type]
             ).all()
         )
 
@@ -970,9 +969,9 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
     )
 
     with get_session() as db_session:
-        db_session.add(Session(id=session_id, title=""))
+        db_session.add(SessionModel(id=session_id, title=""))
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="legacy user message " * 8,
@@ -982,7 +981,7 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content="legacy assistant message " * 8,
@@ -1000,13 +999,13 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
     with get_session() as db_session:
         legacy_messages = list(
             db_session.exec(
-                select(Message)
-                .where(Message.session_id == session_id)
-                .where(Message.content.like("legacy%"))
-                .order_by(Message.created_at)  # type: ignore[arg-type]
+                select(MessageModel)
+                .where(MessageModel.session_id == session_id)
+                .where(MessageModel.content.like("legacy%"))
+                .order_by(MessageModel.created_at)  # type: ignore[arg-type]
             ).all()
         )
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
 
     assert [message.token_estimate for message in legacy_messages] == sorted(
         [message.token_estimate for message in legacy_messages]
@@ -1051,10 +1050,10 @@ async def test_maybe_compact_session_uses_rolling_chunk_window(monkeypatch):
     )
 
     with get_session() as db_session:
-        db_session.add(Session(id=session_id, title=""))
+        db_session.add(SessionModel(id=session_id, title=""))
         for index in range(4):
             db_session.add(
-                Message(
+                MessageModel(
                     session_id=session_id,
                     role="user" if index % 2 == 0 else "assistant",
                     content=f"message {index}",
@@ -1073,7 +1072,7 @@ async def test_maybe_compact_session_uses_rolling_chunk_window(monkeypatch):
     assert "message 3" not in captured["input"]
 
     with get_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
 
     assert session_obj is not None
     assert session_obj.memory["compaction"]["cutoff_created_at"] == "2026-04-16T12:01:00Z"
@@ -1115,7 +1114,7 @@ async def test_maybe_compact_session_rolls_forward_after_existing_cutoff(monkeyp
 
     with get_session() as db_session:
         db_session.add(
-            Session(
+            SessionModel(
                 id=session_id,
                 title="",
                 memory={
@@ -1129,7 +1128,7 @@ async def test_maybe_compact_session_rolls_forward_after_existing_cutoff(monkeyp
         )
         for index in range(4):
             db_session.add(
-                Message(
+                MessageModel(
                     session_id=session_id,
                     role="user",
                     content=f"message {index}",
@@ -1149,7 +1148,7 @@ async def test_maybe_compact_session_rolls_forward_after_existing_cutoff(monkeyp
     assert "message 3" not in captured["input"]
 
     with get_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
 
     assert session_obj is not None
     assert session_obj.memory["compaction"]["cutoff_created_at"] == "2026-04-16T12:02:00Z"
@@ -1189,9 +1188,9 @@ async def test_maybe_compact_session_includes_single_message_larger_than_chunk(m
     )
 
     with get_session() as db_session:
-        db_session.add(Session(id=session_id, title=""))
+        db_session.add(SessionModel(id=session_id, title=""))
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content="oversized message",
@@ -1201,7 +1200,7 @@ async def test_maybe_compact_session_includes_single_message_larger_than_chunk(m
             )
         )
         db_session.add(
-            Message(
+            MessageModel(
                 session_id=session_id,
                 role="user",
                 content="later message",
@@ -1218,7 +1217,7 @@ async def test_maybe_compact_session_includes_single_message_larger_than_chunk(m
     assert "later message" not in captured["input"]
 
     with get_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
 
     assert session_obj is not None
     assert session_obj.memory["compaction"]["cutoff_created_at"] == "2026-04-16T12:00:00Z"
@@ -1227,7 +1226,7 @@ async def test_maybe_compact_session_includes_single_message_larger_than_chunk(m
 def test_split_compaction_tail_preserves_recent_messages():
     base_time = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
     messages = [
-        Message(
+        MessageModel(
             session_id="tail-session",
             role="user",
             content=f"message {index}",

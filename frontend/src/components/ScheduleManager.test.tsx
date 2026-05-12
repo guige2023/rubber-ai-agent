@@ -14,10 +14,10 @@ function buildSchedule(): Schedule {
   return {
     id: 'schedule-1',
     name: 'Morning sync',
-    cron: '0 8 * * *',
+    cron_expression: '0 8 * * *',
+    args: { instruction: 'Run the morning sync.' },
     timezone: 'Asia/Shanghai',
     enabled: true,
-    instruction: 'Run the morning sync.',
     last_run_at: '2026-04-15T00:00:00+00:00',
     next_run_at: '2026-04-16T00:00:00+00:00',
     total_run_count: 7,

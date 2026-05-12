@@ -9,9 +9,9 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.core.db import get_session as get_db_session
-from app.models.database import Message, Session, Task
-from app.models.schemas import SessionResponseModel
-from app.rpc.pagination import fetch_datetime_cursor_page
+from app.core.pagination import fetch_datetime_cursor_page
+from app.models.database import MessageModel, SessionModel, TaskModel
+from app.models.schemas import SessionResponseSchema
 
 logger = logging.getLogger(__name__)
 STALE_PENDING_RUN_ERROR = "Run interrupted before completion."
@@ -31,13 +31,13 @@ def get_active_run_payload(context, session_id: str) -> dict[str, object] | None
 def finalize_stale_pending_runs(db_session, session_id: str) -> None:
     """Mark orphaned DB-pending runs as failed during startup reconciliation."""
     pending_user_messages = list(db_session.exec(
-        select(Message)
+        select(MessageModel)
         .where(
-            Message.session_id == session_id,
-            Message.role == "user",
-            func.json_extract(Message.metadata_, "$.run.status") == "pending",
+            MessageModel.session_id == session_id,
+            MessageModel.role == "user",
+            func.json_extract(MessageModel.metadata_, "$.run.status") == "pending",
         )
-        .order_by(Message.created_at)
+        .order_by(MessageModel.created_at)
     ).all())
     if not pending_user_messages:
         return
@@ -66,17 +66,17 @@ def finalize_stale_pending_runs(db_session, session_id: str) -> None:
             continue
 
         assistant_final = db_session.exec(
-            select(Message)
+            select(MessageModel)
             .where(
-                Message.session_id == session_id,
-                Message.role == "assistant",
-                func.json_extract(Message.metadata_, "$.run.id") == run_id,
-                func.json_extract(Message.metadata_, "$.run.status") != "pending",
+                MessageModel.session_id == session_id,
+                MessageModel.role == "assistant",
+                func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
+                func.json_extract(MessageModel.metadata_, "$.run.status") != "pending",
             )
         ).first()
         if assistant_final is None:
             db_session.add(
-                Message(
+                MessageModel(
                     session_id=session_id,
                     role="assistant",
                     content=f"Run failed: {STALE_PENDING_RUN_ERROR}",
@@ -90,7 +90,7 @@ def finalize_stale_pending_runs(db_session, session_id: str) -> None:
     if not changed:
         return
 
-    session_obj = db_session.get(Session, session_id)
+    session_obj = db_session.get(SessionModel, session_id)
     if session_obj:
         session_obj.updated_at = datetime.now(timezone.utc)
         db_session.add(session_obj)
@@ -101,10 +101,10 @@ def reconcile_stale_pending_runs_on_startup() -> None:
     """Fail orphaned pending runs left behind by a previous sidecar process."""
     with get_db_session() as db_session:
         session_ids = list(db_session.exec(
-            select(Message.session_id)
+            select(MessageModel.session_id)
             .where(
-                Message.role == "user",
-                func.json_extract(Message.metadata_, "$.run.status") == "pending",
+                MessageModel.role == "user",
+                func.json_extract(MessageModel.metadata_, "$.run.status") == "pending",
             )
             .distinct()
         ).all())
@@ -112,8 +112,8 @@ def reconcile_stale_pending_runs_on_startup() -> None:
             finalize_stale_pending_runs(db_session, session_id)
 
 
-def serialize_session(session: Session, context=None) -> dict[str, object]:
-    return SessionResponseModel.model_validate({
+def serialize_session(session: SessionModel, context=None) -> dict[str, object]:
+    return SessionResponseSchema.model_validate({
         "id": session.id,
         "title": session.title,
         "memory": session.memory,
@@ -132,7 +132,7 @@ async def create_session(context, title: Optional[str] = None):
     logger.info(f"🆕 Creating new session: {title}")
     with get_db_session() as db_session:
         normalized_title = title or ""
-        new_session = Session(title=normalized_title)
+        new_session = SessionModel(title=normalized_title)
         db_session.add(new_session)
         db_session.commit()
         db_session.refresh(new_session)
@@ -144,14 +144,14 @@ async def delete_session(context, session_id: str):
     """Delete a session and its associated messages/tasks."""
     logger.info(f"🗑️ Deleting session: {session_id}")
     with get_db_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
         if not session_obj:
             return Success({"status": "error", "message": "Session not found"})
 
-        msgs = db_session.exec(select(Message).where(Message.session_id == session_id)).all()
+        msgs = db_session.exec(select(MessageModel).where(MessageModel.session_id == session_id)).all()
         for message in msgs:
             db_session.delete(message)
-        tasks = db_session.exec(select(Task).where(Task.session_id == session_id)).all()
+        tasks = db_session.exec(select(TaskModel).where(TaskModel.session_id == session_id)).all()
         for task in tasks:
             db_session.delete(task)
 
@@ -165,7 +165,7 @@ async def update_session(context, session_id: str, title: str):
     """Update a session's title."""
     logger.info(f"📝 Updating session {session_id} title to: {title}")
     with get_db_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
         if not session_obj:
             return Success({"status": "error", "message": "Session not found"})
         session_obj.title = title
@@ -182,8 +182,8 @@ async def list_sessions(context, cursor: Optional[str] = None, limit: int = 20):
     with get_db_session() as db_session:
         sessions_list, next_cursor = fetch_datetime_cursor_page(
             db_session,
-            select(Session),
-            model=Session,
+            select(SessionModel),
+            model=SessionModel,
             sort_field="updated_at",
             cursor=cursor,
             limit=limit,
@@ -200,7 +200,7 @@ async def get_session(context, session_id: str):
     """Return a single chat session with its current runtime status."""
     logger.debug(f"Fetching session: {session_id}")
     with get_db_session() as db_session:
-        session_obj = db_session.get(Session, session_id)
+        session_obj = db_session.get(SessionModel, session_id)
         if not session_obj:
             return Success({"status": "error", "message": "Session not found"})
         return Success(serialize_session(session_obj, context))
@@ -214,8 +214,8 @@ async def list_messages(context, session_id: str, cursor: Optional[str] = None, 
     with get_db_session() as db_session:
         messages_list, next_cursor = fetch_datetime_cursor_page(
             db_session,
-            select(Message).where(Message.session_id == session_id, Message.role.in_(("user", "assistant"))),
-            model=Message,
+            select(MessageModel).where(MessageModel.session_id == session_id, MessageModel.role.in_(("user", "assistant"))),
+            model=MessageModel,
             sort_field="created_at",
             cursor=cursor,
             limit=limit,

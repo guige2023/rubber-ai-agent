@@ -13,7 +13,7 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
-    from app.models.database import AppConfig
+    from app.models.database import AppConfigModel
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -151,11 +151,11 @@ class Settings(BaseSettings):
     def get(key: str, default: object = None) -> object:
         """Retrieves a configuration value from the database."""
         from sqlmodel import select
-        from app.models.database import AppConfig
+        from app.models.database import AppConfigModel
         from app.core.db import get_session
 
         with get_session() as session:
-            statement = select(AppConfig).where(AppConfig.key == key)
+            statement = select(AppConfigModel).where(AppConfigModel.key == key)
             record = session.exec(statement).first()
             return record.value if record else default
 
@@ -165,15 +165,15 @@ class Settings(BaseSettings):
         value: object,
         category: str = "general",
         metadata: Optional[dict[str, object]] = None,
-    ) -> "AppConfig":
+    ) -> "AppConfigModel":
         """Sets a configuration value in the database."""
         from datetime import datetime, timezone
         from sqlmodel import select
-        from app.models.database import AppConfig
+        from app.models.database import AppConfigModel
         from app.core.db import get_session
 
         with get_session() as session:
-            statement = select(AppConfig).where(AppConfig.key == key)
+            statement = select(AppConfigModel).where(AppConfigModel.key == key)
             record = session.exec(statement).first()
 
             if record:
@@ -183,7 +183,7 @@ class Settings(BaseSettings):
                     record.metadata_.update(metadata)
                 record.updated_at = datetime.now(timezone.utc)
             else:
-                record = AppConfig(
+                record = AppConfigModel(
                     key=key,
                     value=value,
                     category=category,
@@ -197,14 +197,14 @@ class Settings(BaseSettings):
             return record
 
     @staticmethod
-    def list_by_category(category: str) -> list["AppConfig"]:
+    def list_by_category(category: str) -> list["AppConfigModel"]:
         """List persisted configuration values by category."""
         from sqlmodel import select
-        from app.models.database import AppConfig
+        from app.models.database import AppConfigModel
         from app.core.db import get_session
 
         with get_session() as session:
-            statement = select(AppConfig).where(AppConfig.category == category)
+            statement = select(AppConfigModel).where(AppConfigModel.category == category)
             return list(session.exec(statement).all())
 
 

@@ -7,21 +7,21 @@ import pytest
 from sqlmodel import select, Session as DBSession
 
 import app.core.db as db_module
-from app.models.database import Session, Message, Task, AppConfig
+from app.models.database import SessionModel, MessageModel, TaskModel, AppConfigModel
 from app.models.schemas import (
     AgentRunResult,
     JsonRpcError,
     JsonRpcErrorCode,
     JsonRpcErrorResponse,
     MCPToolModel,
-    MessageModel,
-    ScheduleModel,
+    MessageSchema,
+    ScheduleSchema,
     SessionCompactionMemory,
     SessionMemory,
-    SessionModel,
-    SessionResponseModel,
+    SessionSchema,
+    SessionResponseSchema,
     SkillModel,
-    TaskModel,
+    TaskSchema,
     TaskStatus,
     Usage,
     ValidatorBaseModel,
@@ -43,11 +43,11 @@ from app.models.events import (
 
 def test_app_config_crud(session):
     """Test AppConfig database operations."""
-    app_config = AppConfig(key="test.key", value={"foo": "bar"}, category="test")
+    app_config = AppConfigModel(key="test.key", value={"foo": "bar"}, category="test")
     session.add(app_config)
     session.commit()
     
-    statement = select(AppConfig).where(AppConfig.key == "test.key")
+    statement = select(AppConfigModel).where(AppConfigModel.key == "test.key")
     result = session.exec(statement).first()
     assert result is not None
     assert result.value == {"foo": "bar"}
@@ -56,12 +56,12 @@ def test_app_config_crud(session):
 
 def test_session_message_relationship(session):
     """Test creating a session and associated messages."""
-    new_session = Session(title="Test Session")
+    new_session = SessionModel(title="Test Session")
     session.add(new_session)
     session.commit()
     session.refresh(new_session)
     
-    msg = Message(
+    msg = MessageModel(
         session_id=new_session.id,
         role="user",
         content="Hello",
@@ -70,14 +70,14 @@ def test_session_message_relationship(session):
     session.add(msg)
     session.commit()
     
-    statement = select(Message).where(Message.session_id == new_session.id)
+    statement = select(MessageModel).where(MessageModel.session_id == new_session.id)
     results = session.exec(statement).all()
     assert len(results) == 1
     assert results[0].content == "Hello"
 
 
 def test_migrate_session_memory_json_payloads_clears_legacy_text(session):
-    legacy_session = Session(title="Legacy Session", memory=None)
+    legacy_session = SessionModel(title="Legacy Session", memory=None)
     session.add(legacy_session)
     session.commit()
     session.refresh(legacy_session)
@@ -92,7 +92,7 @@ def test_migrate_session_memory_json_payloads_clears_legacy_text(session):
     db_module.migrate_session_memory_json_payloads()
 
     with DBSession(db_module.engine) as verify_session:
-        refreshed = verify_session.get(Session, legacy_session.id)
+        refreshed = verify_session.get(SessionModel, legacy_session.id)
         assert refreshed is not None
         assert refreshed.memory is None
 
@@ -107,13 +107,13 @@ def test_pydantic_schema_validation():
         "type": "text",
         "created_at": datetime.now(timezone.utc)
     }
-    model = MessageModel(**data)
+    model = MessageSchema(**data)
     assert model.role == "assistant"
     assert model.content == "Hi"
 
 
 def test_session_model_includes_usage_metadata_and_normalizes_datetimes():
-    model = SessionModel.model_validate({
+    model = SessionSchema.model_validate({
         "id": "session-1",
         "title": "SEO Matrix",
         "memory": {"schema_version": 1},
@@ -133,7 +133,7 @@ def test_session_model_includes_usage_metadata_and_normalizes_datetimes():
 
 
 def test_session_response_model_adds_runtime_active_run():
-    model = SessionResponseModel.model_validate({
+    model = SessionResponseSchema.model_validate({
         "id": "session-1",
         "title": "SEO Matrix",
         "metadata": {},
@@ -150,7 +150,7 @@ def test_session_response_model_adds_runtime_active_run():
 
 
 def test_response_schema_datetime_fields_are_normalized_to_utc():
-    message = MessageModel.model_validate({
+    message = MessageSchema.model_validate({
         "id": "message-1",
         "session_id": "session-1",
         "role": "assistant",
@@ -158,7 +158,7 @@ def test_response_schema_datetime_fields_are_normalized_to_utc():
         "type": "text",
         "created_at": "2026-04-16T12:00:00+08:00",
     })
-    task = TaskModel.model_validate({
+    task = TaskSchema.model_validate({
         "id": "task-1",
         "session_id": "session-1",
         "title": "Task",
@@ -166,7 +166,7 @@ def test_response_schema_datetime_fields_are_normalized_to_utc():
         "updated_at": "2026-04-16T12:05:00+08:00",
         "finished_at": "2026-04-16T12:10:00+08:00",
     })
-    schedule = ScheduleModel.model_validate({
+    schedule = ScheduleSchema.model_validate({
         "id": "schedule-1",
         "name": "Daily",
         "cron_expression": "0 0 * * *",
@@ -212,7 +212,7 @@ def test_all_schema_models_validate_defaults_and_json_payloads():
     assert compaction.summary == "compacted"
     assert compaction.cutoff_created_at == datetime(2026, 5, 10, 8, 0, tzinfo=timezone.utc)
 
-    assert TaskModel.model_validate({
+    assert TaskSchema.model_validate({
         "id": "task-default-status",
         "session_id": "session-1",
         "title": "Task",
@@ -220,7 +220,7 @@ def test_all_schema_models_validate_defaults_and_json_payloads():
         "updated_at": "2026-05-10T08:00:00Z",
     }).status == TaskStatus.PENDING
 
-    assert ScheduleModel.model_validate({
+    assert ScheduleSchema.model_validate({
         "id": "schedule-defaults",
         "name": "Daily",
         "cron_expression": "0 0 * * *",
@@ -353,7 +353,7 @@ def test_config_registry_persistence(session):
     
     from app.core.db import get_session
     with get_session() as db_session:
-         statement = select(AppConfig).where(AppConfig.key == test_key)
+         statement = select(AppConfigModel).where(AppConfigModel.key == test_key)
          record = db_session.exec(statement).first()
          assert record is not None
          assert record.value == test_val

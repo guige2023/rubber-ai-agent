@@ -70,4 +70,3 @@ def fetch_datetime_cursor_page(
     items = items[:limit]
     last_item = items[-1]
     return items, encode_datetime_cursor(getattr(last_item, sort_field), last_item.id)
-

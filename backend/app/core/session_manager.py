@@ -9,10 +9,23 @@ from sqlalchemy import func
 from sqlmodel import Session as DBSession, select
 
 from app.core.db import get_session
-from app.core.utc_datetime import ensure_utc_datetime, format_utc_datetime, parse_utc_datetime
-from app.models.database import Message, Session
+from app.models.database import MessageModel, SessionModel
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_text(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class SessionManager:
@@ -26,7 +39,7 @@ class SessionManager:
     @staticmethod
     def session_exists(session_id: str) -> bool:
         with get_session() as db_session:
-            return db_session.get(Session, session_id) is not None
+            return db_session.get(SessionModel, session_id) is not None
 
     @staticmethod
     def ensure_session(
@@ -34,9 +47,9 @@ class SessionManager:
             *,
             title: Optional[str] = None,
             metadata: Optional[dict[str, object]] = None,
-    ) -> Session:
+    ) -> SessionModel:
         with get_session() as db_session:
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if session_obj:
                 changed = False
                 if title is not None and not session_obj.title:
@@ -54,7 +67,7 @@ class SessionManager:
                     db_session.refresh(session_obj)
                 return session_obj
 
-            session_obj = Session(
+            session_obj = SessionModel(
                 id=session_id,
                 title=title or "",
                 metadata_=dict(metadata or {}),
@@ -71,9 +84,9 @@ class SessionManager:
             content: str,
             run_id: str,
             token_estimate: int,
-    ) -> Message:
+    ) -> MessageModel:
         with get_session() as db_session:
-            message = Message(
+            message = MessageModel(
                 session_id=session_id,
                 role="user",
                 content=content,
@@ -103,7 +116,7 @@ class SessionManager:
             usage: Optional[dict[str, int]] = None,
             model: Optional[dict[str, object]] = None,
             model_usage: Optional[dict[str, object]] = None,
-    ) -> Message:
+    ) -> MessageModel:
         usage_data = usage or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         model_data = model or {"name": None, "provider": None}
         run_metadata = {
@@ -120,14 +133,14 @@ class SessionManager:
 
         with get_session() as db_session:
             if user_message_id:
-                user_msg = db_session.get(Message, user_message_id)
+                user_msg = db_session.get(MessageModel, user_message_id)
                 if user_msg:
                     user_meta = dict(user_msg.metadata_ or {})
                     user_meta["run"] = run_metadata
                     user_msg.metadata_ = user_meta
                     db_session.add(user_msg)
 
-            assistant_msg = Message(
+            assistant_msg = MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content=content,
@@ -138,7 +151,7 @@ class SessionManager:
             )
             db_session.add(assistant_msg)
 
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if session_obj:
                 session_obj.input_tokens += int(usage_data.get("input_tokens", 0))
                 session_obj.output_tokens += int(usage_data.get("output_tokens", 0))
@@ -156,7 +169,7 @@ class SessionManager:
             session_id: str,
             run_id: str,
             error_message: str,
-    ) -> Message:
+    ) -> MessageModel:
         run_metadata = {
             "id": run_id,
             "status": "failed",
@@ -165,14 +178,14 @@ class SessionManager:
 
         with get_session() as db_session:
             if user_message_id:
-                user_msg = db_session.get(Message, user_message_id)
+                user_msg = db_session.get(MessageModel, user_message_id)
                 if user_msg:
                     user_meta = dict(user_msg.metadata_ or {})
                     user_meta["run"] = run_metadata
                     user_msg.metadata_ = user_meta
                     db_session.add(user_msg)
 
-            failure_msg = Message(
+            failure_msg = MessageModel(
                 session_id=session_id,
                 role="assistant",
                 content=f"Run failed: {error_message}",
@@ -181,7 +194,7 @@ class SessionManager:
             )
             db_session.add(failure_msg)
 
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if session_obj:
                 session_obj.updated_at = datetime.now(timezone.utc)
                 db_session.add(session_obj)
@@ -203,10 +216,10 @@ class SessionManager:
 
         with get_session() as db_session:
             user_msg = db_session.exec(
-                select(Message).where(
-                    Message.session_id == session_id,
-                    Message.role == "user",
-                    func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                select(MessageModel).where(
+                    MessageModel.session_id == session_id,
+                    MessageModel.role == "user",
+                    func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
                 )
             ).first()
             if not user_msg:
@@ -217,7 +230,7 @@ class SessionManager:
             user_msg.metadata_ = user_meta
             db_session.add(user_msg)
 
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if session_obj:
                 session_obj.updated_at = datetime.now(timezone.utc)
                 db_session.add(session_obj)
@@ -229,10 +242,10 @@ class SessionManager:
     def get_run_model_usage(session_id: str, run_id: str) -> dict[str, object] | None:
         with get_session() as db_session:
             message = db_session.exec(
-                select(Message).where(
-                    Message.session_id == session_id,
-                    Message.role == "assistant",
-                    func.json_extract(Message.metadata_, "$.run.id") == run_id,
+                select(MessageModel).where(
+                    MessageModel.session_id == session_id,
+                    MessageModel.role == "assistant",
+                    func.json_extract(MessageModel.metadata_, "$.run.id") == run_id,
                 )
             ).first()
             if not message:
@@ -245,9 +258,9 @@ class SessionManager:
         aggregate = cls._empty_model_usage_payload()
         with get_session() as db_session:
             messages = db_session.exec(
-                select(Message).where(
-                    Message.session_id == session_id,
-                    Message.role == "assistant",
+                select(MessageModel).where(
+                    MessageModel.session_id == session_id,
+                    MessageModel.role == "assistant",
                 )
             ).all()
             for message in messages:
@@ -262,7 +275,7 @@ class SessionManager:
     @staticmethod
     def update_session_usage(session_id: str, input_tokens: int, output_tokens: int) -> None:
         with get_session() as db_session:
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if not session_obj:
                 return
             session_obj.input_tokens += input_tokens
@@ -285,7 +298,7 @@ class SessionManager:
             message_count: int,
             token_estimate: int = 0,
             db_session: DBSession | None = None,
-    ) -> Message:
+    ) -> MessageModel:
         usage_data = {
             "input_tokens": int(usage.get("input_tokens", 0)),
             "output_tokens": int(usage.get("output_tokens", 0)),
@@ -294,7 +307,7 @@ class SessionManager:
                 or int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
             ),
         }
-        message = Message(
+        message = MessageModel(
             session_id=session_id,
             role="memory",
             type="compaction",
@@ -303,8 +316,8 @@ class SessionManager:
             metadata_={
                 "usage": usage_data,
                 "compaction": {
-                    "from_created_at": format_utc_datetime(from_created_at),
-                    "cutoff_created_at": format_utc_datetime(cutoff_created_at),
+                    "from_created_at": _utc_text(from_created_at),
+                    "cutoff_created_at": _utc_text(cutoff_created_at),
                     "message_count": max(0, int(message_count)),
                 },
             },
@@ -328,7 +341,7 @@ class SessionManager:
             timezone_name: str = "UTC",
     ) -> dict[str, object]:
         with get_session() as db_session:
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if not session_obj:
                 return {
                     "session_id": session_id,
@@ -341,16 +354,14 @@ class SessionManager:
             usage_range = self._build_usage_range(range_key, timezone_name)
             messages = list(
                 db_session.exec(
-                    select(Message)
-                    .where(Message.session_id == session_id)
-                    .order_by(Message.created_at)  # type: ignore[arg-type]
+                    select(MessageModel)
+                    .where(MessageModel.session_id == session_id)
+                    .order_by(MessageModel.created_at)  # type: ignore[arg-type]
                 ).all()
             )
 
-            range_start = parse_utc_datetime(str(usage_range["start_utc"]))
-            range_end = parse_utc_datetime(str(usage_range["end_utc"]))
-            if range_start is None or range_end is None:
-                raise ValueError("Usage range boundaries must be valid UTC timestamps.")
+            range_start = _utc_datetime(datetime.fromisoformat(str(usage_range["start_utc"]).replace("Z", "+00:00")))
+            range_end = _utc_datetime(datetime.fromisoformat(str(usage_range["end_utc"]).replace("Z", "+00:00")))
             buckets = self._build_daily_buckets(usage_range)
             archived_totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             range_totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -371,7 +382,7 @@ class SessionManager:
                 archived_totals["output_tokens"] += usage["output_tokens"]
                 archived_totals["total_tokens"] += usage["total_tokens"]
 
-                created_at = ensure_utc_datetime(message.created_at)
+                created_at = _utc_datetime(message.created_at)
                 if not (range_start <= created_at < range_end):
                     continue
 
@@ -417,7 +428,7 @@ class SessionManager:
             *,
             cutoff_created_at: Optional[datetime] = None,
             db_session: DBSession | None = None,
-    ) -> list[Message]:
+    ) -> list[MessageModel]:
         """Load chat messages after the compaction cutoff.
 
         `cutoff_created_at` is the end of the already-compacted history, so it
@@ -435,19 +446,19 @@ class SessionManager:
             db_session: DBSession,
             session_id: str,
             cutoff_created_at: Optional[datetime],
-    ) -> list[Message]:
+    ) -> list[MessageModel]:
         filters = [
-            Message.session_id == session_id,
-            Message.role.in_(("user", "assistant")),  # type:ignore
+            MessageModel.session_id == session_id,
+            MessageModel.role.in_(("user", "assistant")),  # type:ignore
         ]
         if cutoff_created_at is not None:
-            compacted_until_created_at = ensure_utc_datetime(cutoff_created_at)
-            filters.append(Message.created_at > compacted_until_created_at)  # type: ignore[arg-type]
+            compacted_until_created_at = _utc_datetime(cutoff_created_at)
+            filters.append(MessageModel.created_at > compacted_until_created_at)  # type: ignore[arg-type]
 
         statement = (
-            select(Message)
+            select(MessageModel)
             .where(*filters)
-            .order_by(Message.created_at)  # type: ignore[arg-type]
+            .order_by(MessageModel.created_at)  # type: ignore[arg-type]
         )
         return list(db_session.exec(statement).all())
 
@@ -488,8 +499,8 @@ class SessionManager:
             "timezone": tz.key,
             "start_date": start_day.isoformat(),
             "end_date": end_day.isoformat(),
-            "start_utc": format_utc_datetime(start_local),
-            "end_utc": format_utc_datetime(end_local),
+            "start_utc": _utc_text(start_local),
+            "end_utc": _utc_text(end_local),
         }
 
     @staticmethod
@@ -512,8 +523,8 @@ class SessionManager:
             day_key = current_day.isoformat()
             buckets[day_key] = {
                 "date": day_key,
-                "period_start_utc": format_utc_datetime(day_start),
-                "period_end_utc": format_utc_datetime(day_end),
+                "period_start_utc": _utc_text(day_start),
+                "period_end_utc": _utc_text(day_end),
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "total_tokens": 0,
@@ -537,7 +548,7 @@ class SessionManager:
         }
 
     @staticmethod
-    def _is_usage_message(message: Message) -> bool:
+    def _is_usage_message(message: MessageModel) -> bool:
         return message.role == "assistant" or (message.role == "memory" and message.type == "compaction")
 
     @classmethod

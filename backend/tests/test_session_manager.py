@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from sqlmodel import select
 
 from app.core.session_manager import SessionManager
-from app.models.database import Message, Session
+from app.models.database import MessageModel, SessionModel
 
 
 def test_session_manager_records_successful_agent_run_atomically(session):
@@ -51,9 +51,9 @@ def test_session_manager_records_successful_agent_run_atomically(session):
     )
 
     session.expire_all()
-    refreshed_session = session.get(Session, "chat-1")
-    refreshed_user_message = session.get(Message, user_message.id)
-    refreshed_assistant_message = session.get(Message, assistant_message.id)
+    refreshed_session = session.get(SessionModel, "chat-1")
+    refreshed_user_message = session.get(MessageModel, user_message.id)
+    refreshed_assistant_message = session.get(MessageModel, assistant_message.id)
 
     assert refreshed_session is not None
     assert refreshed_session.input_tokens == 11
@@ -73,9 +73,9 @@ def test_session_manager_records_successful_agent_run_atomically(session):
 
 def test_session_manager_aggregates_session_model_usage(session):
     manager = SessionManager()
-    session.add(Session(id="chat-model-usage", title="Model usage"))
+    session.add(SessionModel(id="chat-model-usage", title="Model usage"))
     session.add_all([
-        Message(
+        MessageModel(
             session_id="chat-model-usage",
             role="assistant",
             content="Run 1",
@@ -105,7 +105,7 @@ def test_session_manager_aggregates_session_model_usage(session):
                 },
             },
         ),
-        Message(
+        MessageModel(
             session_id="chat-model-usage",
             role="assistant",
             content="Run 2",
@@ -187,8 +187,8 @@ def test_session_manager_records_failed_agent_run(session):
     )
 
     session.expire_all()
-    refreshed_user_message = session.get(Message, user_message.id)
-    refreshed_failure_message = session.get(Message, failure_message.id)
+    refreshed_user_message = session.get(MessageModel, user_message.id)
+    refreshed_failure_message = session.get(MessageModel, failure_message.id)
 
     assert refreshed_user_message.metadata_["run"]["status"] == "failed"
     assert refreshed_user_message.metadata_["run"]["error"] == "boom"
@@ -200,21 +200,21 @@ def test_session_manager_load_chat_messages_filters_cutoff(session):
     manager = SessionManager()
     cutoff = datetime(2026, 4, 20, 9, 0, tzinfo=timezone.utc)
     session.add_all([
-        Message(
+        MessageModel(
             session_id="chat-history",
             role="user",
             content="before",
             type="text",
             created_at=datetime(2026, 4, 20, 8, 59, tzinfo=timezone.utc),
         ),
-        Message(
+        MessageModel(
             session_id="chat-history",
             role="assistant",
             content="after",
             type="text",
             created_at=datetime(2026, 4, 20, 9, 1, tzinfo=timezone.utc),
         ),
-        Message(
+        MessageModel(
             session_id="chat-history",
             role="tool",
             content="ignored",
@@ -236,7 +236,7 @@ def test_session_manager_update_session_usage(session):
     manager.update_session_usage("chat-usage", input_tokens=3, output_tokens=4)
 
     session.expire_all()
-    refreshed = session.exec(select(Session).where(Session.id == "chat-usage")).one()
+    refreshed = session.exec(select(SessionModel).where(SessionModel.id == "chat-usage")).one()
     assert refreshed.input_tokens == 3
     assert refreshed.output_tokens == 4
 
@@ -257,7 +257,7 @@ def test_session_manager_records_memory_compaction_message(session):
     )
 
     session.expire_all()
-    refreshed = session.get(Message, message.id)
+    refreshed = session.get(MessageModel, message.id)
     assert refreshed.role == "memory"
     assert refreshed.type == "compaction"
     assert refreshed.content == "Compacted SEO context."
@@ -273,7 +273,7 @@ def test_session_manager_get_session_insights_aggregates_message_usage(session):
     manager = SessionManager()
     now = datetime.now(timezone.utc)
     session.add(
-        Session(
+        SessionModel(
             id="chat-insights",
             title="SEO content matrix",
             input_tokens=20,
@@ -289,7 +289,7 @@ def test_session_manager_get_session_insights_aggregates_message_usage(session):
         )
     )
     session.add_all([
-        Message(
+        MessageModel(
             session_id="chat-insights",
             role="assistant",
             content="Done",
@@ -297,7 +297,7 @@ def test_session_manager_get_session_insights_aggregates_message_usage(session):
             created_at=now,
             metadata_={"usage": {"input_tokens": 11, "output_tokens": 5, "total_tokens": 16}},
         ),
-        Message(
+        MessageModel(
             session_id="chat-insights",
             role="assistant",
             content="Older",
@@ -305,7 +305,7 @@ def test_session_manager_get_session_insights_aggregates_message_usage(session):
             created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
             metadata_={"usage": {"input_tokens": 2, "output_tokens": 1, "total_tokens": 3}},
         ),
-        Message(
+        MessageModel(
             session_id="chat-insights",
             role="memory",
             type="compaction",
@@ -352,9 +352,9 @@ def test_session_manager_get_session_insights_groups_by_local_timezone_day(sessi
     local_timezone = ZoneInfo("Asia/Shanghai")
     local_datetime = datetime.now(local_timezone).replace(hour=0, minute=30, second=0, microsecond=0) - timedelta(days=1)
     local_date = local_datetime.date().isoformat()
-    session.add(Session(id="chat-local-day", title="Local day", input_tokens=3, output_tokens=1))
+    session.add(SessionModel(id="chat-local-day", title="Local day", input_tokens=3, output_tokens=1))
     session.add(
-        Message(
+        MessageModel(
             session_id="chat-local-day",
             role="assistant",
             content="Local midnight boundary",

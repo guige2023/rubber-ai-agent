@@ -27,8 +27,7 @@ from app.core.db import get_session
 from app.core.model_manager import ModelManager
 from app.core.prompt_builder import COMPACTION_SYSTEM_PROMPT, build_compaction_input
 from app.core.session_manager import SessionManager
-from app.core.utc_datetime import format_utc_datetime, parse_utc_datetime
-from app.models.database import Message, Session
+from app.models.database import MessageModel, SessionModel
 from app.models.schemas import SessionMemory
 
 logger = logging.getLogger(__name__)
@@ -40,6 +39,20 @@ COMPACTION_GUARD_SECONDS_DEFAULT = 60
 COMPACTION_TAIL_TOKENS_DEFAULT = 4000
 TOKEN_ESTIMATE_ENCODING = "o200k_base"
 O200K_BASE_CACHE_KEY = "fb374d419588a4632f3f557e76b4b70aebbca790"
+
+
+def _utc_text(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @lru_cache(maxsize=1)
@@ -105,7 +118,7 @@ class ContextManager:
             logger.exception(f"Ignoring invalid session memory payload with exception:{e}")
             return SessionMemory()
 
-    def ensure_message_token_estimates(self, messages: list[Message]) -> int:
+    def ensure_message_token_estimates(self, messages: list[MessageModel]) -> int:
         total = 0
         for message in messages:
             estimate = message.token_estimate
@@ -116,11 +129,11 @@ class ContextManager:
         return total
 
     @staticmethod
-    def select_compaction_chunk(messages: list[Message], max_tokens: int) -> list[Message]:
+    def select_compaction_chunk(messages: list[MessageModel], max_tokens: int) -> list[MessageModel]:
         if max_tokens <= 0:
             return messages
 
-        chunk: list[Message] = []
+        chunk: list[MessageModel] = []
         token_total = 0
         for message in messages:
             estimate = max(message.token_estimate, 0)
@@ -133,7 +146,7 @@ class ContextManager:
         return chunk
 
     @staticmethod
-    def split_compaction_tail(messages: list[Message], tail_tokens: int) -> tuple[list[Message], list[Message]]:
+    def split_compaction_tail(messages: list[MessageModel], tail_tokens: int) -> tuple[list[MessageModel], list[MessageModel]]:
         if tail_tokens <= 0 or not messages:
             return messages, []
 
@@ -152,26 +165,20 @@ class ContextManager:
 
     def get_compaction_state(
         self,
-        session_obj: Session,
+        session_obj: SessionModel,
     ) -> tuple[Optional[str], Optional[datetime], Optional[datetime]]:
         memory = self.normalize_session_memory(session_obj.memory)
         compaction = memory.compaction
         summary = compaction.summary
-        try:
-            cutoff_created_at = parse_utc_datetime(compaction.cutoff_created_at)
-            guard_until = parse_utc_datetime(compaction.guard_until)
-        except Exception as e:
-            logger.exception(f"Ignoring invalid session memory timestamps "
-                             f"for session {session_obj.id} with exception:{e}")
-            cutoff_created_at = None
-            guard_until = None
+        cutoff_created_at = compaction.cutoff_created_at
+        guard_until = compaction.guard_until
         if not summary:
             return None, cutoff_created_at, guard_until
         return summary, cutoff_created_at, guard_until
 
     def update_compaction_metadata(
         self,
-        session_obj: Session,
+        session_obj: SessionModel,
         *,
         summary: Optional[str] = None,
         cutoff_created_at: Optional[datetime] = None,
@@ -184,12 +191,12 @@ class ContextManager:
         if summary is not None:
             compaction.summary = summary
         if cutoff_created_at is not None:
-            compaction.cutoff_created_at = cutoff_created_at
+            compaction.cutoff_created_at = _utc_datetime(cutoff_created_at)
             compaction.updated_at = datetime.now(timezone.utc)
         if clear_guard:
             compaction.guard_until = None
         elif guard_until is not None:
-            compaction.guard_until = guard_until
+            compaction.guard_until = _utc_datetime(guard_until)
 
         memory.schema_version = COMPACTION_MEMORY_SCHEMA_VERSION
         memory.compaction = compaction
@@ -210,11 +217,11 @@ class ContextManager:
         )
 
     @staticmethod
-    def serialize_messages_for_compaction(messages: list[Message]) -> str:
+    def serialize_messages_for_compaction(messages: list[MessageModel]) -> str:
         payload = [
             {
                 "role": msg.role,
-                "created_at": format_utc_datetime(msg.created_at),
+                "created_at": _utc_text(msg.created_at),
                 "content": msg.content,
             }
             for msg in messages
@@ -232,7 +239,7 @@ class ContextManager:
         db_session: DBSession,
         session_id: str,
         cutoff_created_at: Optional[datetime],
-    ) -> list[Message]:
+    ) -> list[MessageModel]:
         return self._session_manager.load_chat_messages(
             session_id,
             cutoff_created_at=cutoff_created_at,
@@ -245,7 +252,7 @@ class ContextManager:
             ModelRequest(parts=[SystemPromptPart(content=self._build_system_prompt(session_id))])
         ]
         with get_session() as db_session:
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             cutoff_created_at: Optional[datetime] = None
             if session_obj:
                 summary, cutoff_created_at, _guard_until = self.get_compaction_state(session_obj)
@@ -280,7 +287,7 @@ class ContextManager:
         now = datetime.now(timezone.utc)
 
         with get_session() as db_session:
-            session_obj = db_session.get(Session, session_id)
+            session_obj = db_session.get(SessionModel, session_id)
             if not session_obj:
                 return
 
@@ -326,7 +333,7 @@ class ContextManager:
 
             usage = compaction_result.usage()
             with get_session() as db_session:
-                session_obj = db_session.get(Session, session_id)
+                session_obj = db_session.get(SessionModel, session_id)
                 if not session_obj:
                     return
 

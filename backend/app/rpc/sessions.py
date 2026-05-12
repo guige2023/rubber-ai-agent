@@ -251,10 +251,10 @@ async def get_session_insights(
         f"Fetching session insights (session_id: {session_id}, "
         f"range_key: {range_key}, timezone: {timezone})"
     )
-    return Success(
-        context.runtime.session_manager.get_session_insights(
-            session_id,
-            range_key=range_key,
-            timezone_name=timezone,
-        )
+    insights = context.runtime.session_manager.get_session_insights(
+        session_id,
+        range_key=range_key,
+        timezone_name=timezone,
     )
+    insights["session_workspace"] = str(context.runtime.get_session_workspace(session_id))
+    return Success(insights)

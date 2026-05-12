@@ -67,6 +67,20 @@ def test_websocket_ping(client):
         assert response["id"] == 1
 
 
+def test_websocket_session_insights_include_workspace(client, session):
+    persist_session(session, "session-insights")
+
+    with client.websocket_connect(websocket_path()) as websocket:
+        response = send_rpc(
+            websocket,
+            "get_session_insights",
+            {"session_id": "session-insights", "range_key": "last_30_days", "timezone": "UTC"},
+        )
+
+    assert response["result"]["session_id"] == "session-insights"
+    assert response["result"]["session_workspace"].endswith("/workspaces/session-insights")
+
+
 def test_websocket_invalid_json_does_not_disconnect(client):
     with client.websocket_connect(websocket_path()) as websocket:
         websocket.send_text("{bad-json")

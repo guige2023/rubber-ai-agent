@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { Check, Copy, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { Check, Copy, FolderOpen, RefreshCw } from 'lucide-react';
 import { SideDrawer } from './SideDrawer';
 import { cn } from '../utils/cn';
 
@@ -17,6 +18,7 @@ type DailyUsage = UsageTotals & {
 
 type SessionInsights = {
   session_id: string;
+  session_workspace?: string;
   range: {
     key: RangeKey;
     timezone: string;
@@ -212,6 +214,7 @@ export function SessionInsightsDrawer({
   const summaryTokenEstimate = Number(compaction?.summary_token_estimate || 0);
   const unattributed = insights?.usage.unattributed_system_usage.total_tokens || 0;
   const hoveredPoint = hoverIndex === null ? null : chartModel.totalPoints[hoverIndex];
+  const activeWorkspace = insights?.session_id === sessionId ? insights.session_workspace : null;
 
   const handleChartMouseMove = (event: MouseEvent<SVGSVGElement>) => {
     const daily = insights?.usage.daily || [];
@@ -241,6 +244,18 @@ export function SessionInsightsDrawer({
     }
   };
 
+  const handleOpenWorkspace = async () => {
+    if (!activeWorkspace) {
+      return;
+    }
+
+    try {
+      await invoke('open_local_file', { path: activeWorkspace });
+    } catch (openError) {
+      console.error('Failed to open session workspace:', openError);
+    }
+  };
+
   return (
     <SideDrawer
       open={open}
@@ -250,6 +265,17 @@ export function SessionInsightsDrawer({
       size="wide"
     >
       <div className="space-y-6">
+        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <InsightMeta label={t('insights.session_id')} value={sessionId} />
+          <InsightMeta
+            label={t('insights.session_workspace')}
+            value={activeWorkspace || t('common.loading')}
+            icon={activeWorkspace ? <FolderOpen size={15} /> : null}
+            onClick={activeWorkspace ? handleOpenWorkspace : undefined}
+            title={activeWorkspace ? t('insights.open_workspace') : undefined}
+          />
+        </section>
+
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -455,6 +481,55 @@ function MemoryMeta({ label, value }: { label: string; value?: string | null }) 
     <div className="rounded-xl border border-white/8 bg-white/[0.035] px-4 py-3">
       <div className="text-[10px] font-black uppercase tracking-widest text-white/32">{label}</div>
       <div className="mt-2 break-words font-mono text-[11px] font-bold leading-5 text-white/58">{value || '-'}</div>
+    </div>
+  );
+}
+
+function InsightMeta({
+  label,
+  value,
+  icon,
+  onClick,
+  title,
+}: {
+  label: string;
+  value?: string | null;
+  icon?: ReactNode;
+  onClick?: () => void;
+  title?: string;
+}) {
+  const content = (
+    <>
+      <div className="min-w-0">
+        <div className="text-[10px] font-black uppercase tracking-widest text-white/32">{label}</div>
+        <div className="mt-2 truncate font-mono text-[11px] font-bold leading-5 text-white/58" title={value || '-'}>
+          {value || '-'}
+        </div>
+      </div>
+      {icon ? (
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.035] text-white/50">
+          {icon}
+        </span>
+      ) : null}
+    </>
+  );
+
+  const className = cn(
+    "flex min-w-0 items-center justify-between gap-3 rounded-xl border border-white/8 bg-white/[0.035] px-4 py-3",
+    onClick && "text-left transition-colors hover:bg-white/[0.07]"
+  );
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className} aria-label={title} title={title}>
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {content}
     </div>
   );
 }

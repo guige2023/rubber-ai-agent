@@ -29,9 +29,13 @@ def test_generate_image_schema_keeps_size_optional_and_omits_compression():
     ToolManager().register_toolkit(agent, ImageToolkit)
 
     schema = agent._function_toolset.tools["generate_image"].function_schema.json_schema
+    description = agent._function_toolset.tools["generate_image"].function_schema.description
 
     assert "size" not in schema["required"]
     assert "output_compression" not in schema["properties"]
+    assert "`gpt-image-2`" in description
+    assert "DALL" not in description
+    assert "multiples of 16 px" in description
 
 
 class FakeImageResult:

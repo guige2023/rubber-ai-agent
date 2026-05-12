@@ -126,14 +126,12 @@ class ImageToolkit(Toolkit):
     ) -> dict[str, object]:
         """Generate images through OpenAI-compatible `client.images.generate`.
 
-        Pass `api_key` and `base_url` at call time. When `base_url` contains
-        `.azure.com`, the tool uses `AzureOpenAI` with `api_version`; otherwise
-        it uses `OpenAI(base_url=...)`. `quality` defaults to `low` to control
-        cost and reduce accidental overuse. If provided, `size` must use the
-        OpenAI Images API format `"<width>x<height>"`, for example
-        `"1024x1024"` or `"2560x1088"`; when omitted, no `size` parameter is
-        sent and the provider default applies. Generated images are saved
-        inside the current session workspace.
+        Pass `api_key` and `base_url` at call time. This tool generates with
+        `gpt-image-2`. If provided, `size` must use the `"<width>x<height>"`
+        format; both edges must be multiples of 16 px, the long edge must be
+        at most 3840 px, the aspect ratio must be at most 3:1, and total
+        pixels must be between 655,360 and 8,294,400. Generated images are
+        saved inside the current session workspace.
         """
         normalized_api_key = ImageToolkit._require_non_empty("api_key", api_key)
         normalized_base_url = ImageToolkit._require_non_empty("base_url", base_url)

@@ -164,7 +164,7 @@ async def _run_websocket_smoke(report: dict[str, object]) -> None:
     )
     server_task = asyncio.create_task(server.serve())
     try:
-        for _ in range(100):
+        for _ in range(600):
             if server.started:
                 break
             await asyncio.sleep(0.05)

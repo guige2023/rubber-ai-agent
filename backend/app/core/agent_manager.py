@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.core.config import Settings
     from app.core.context_manager import ContextManager
     from app.core.model_manager import ModelManager
+    from app.core.model_pricing import ModelPricingService
     from app.core.prompt_builder import PromptBuilder
     from app.core.session_manager import SessionManager
     from app.core.tool_manager import ToolManager
@@ -34,9 +35,14 @@ class AgentManager:
         prompt_builder: "PromptBuilder",
         session_manager: "SessionManager",
         context_manager: "ContextManager",
+        model_pricing_service: "ModelPricingService | None" = None,
     ) -> None:
         self._settings = settings
         self._model_manager = model_manager
+        if model_pricing_service is None:
+            from app.core.model_pricing import ModelPricingService
+            model_pricing_service = ModelPricingService(enabled=False)
+        self._model_pricing_service = model_pricing_service
         self._tool_manager = tool_manager
         self._prompt_builder = prompt_builder
         self._session_manager = session_manager
@@ -198,7 +204,9 @@ class AgentManager:
                     }
                 })
 
-            self._session_manager.record_agent_run_success(
+            model_usage = usage_tracker.snapshot() if usage_tracker.has_usage() else None
+            model_cost = self._model_pricing_service.calculate_cost(model_usage)
+            assistant_message = self._session_manager.record_agent_run_success(
                 user_message_id=user_message_id,
                 session_id=session_id,
                 run_id=run_id,
@@ -210,8 +218,17 @@ class AgentManager:
                     "name": serialized_response.get("model_name") if serialized_response else None,
                     "provider": serialized_response.get("provider_name") if serialized_response else None,
                 },
-                model_usage=usage_tracker.snapshot() if usage_tracker.has_usage() else None,
+                model_usage=model_usage,
+                model_cost=model_cost,
             )
+            if model_usage:
+                self._log_model_usage(
+                    session_id=session_id,
+                    run_id=run_id,
+                    message_id=assistant_message.id,
+                    usage=model_usage,
+                    cost=model_cost,
+                )
 
             await self._context_manager.maybe_compact_session(session_id)
 
@@ -221,7 +238,8 @@ class AgentManager:
                 content=str(result_data),
                 usage=usage_data,
                 status="success",
-                model_usage=usage_tracker.snapshot() if usage_tracker.has_usage() else None,
+                model_usage=model_usage,
+                model_cost=model_cost,
             )
 
         except Exception as e:
@@ -257,6 +275,7 @@ class AgentManager:
         status: str,
         error: str | None = None,
         model_usage: dict[str, object] | None = None,
+        model_cost: dict[str, object] | None = None,
     ) -> dict[str, object]:
         from app.models.events import ChatFinalPayload, EventNamespace, FerrymanEventEnvelope
 
@@ -271,7 +290,9 @@ class AgentManager:
             "run": run_metadata,
         }
         if model_usage:
-            message_metadata["model_usage"] = model_usage
+            message_metadata["usage"] = model_usage
+        if model_cost:
+            message_metadata["cost"] = model_cost
 
         payload = ChatFinalPayload(
             run_id=run_id,
@@ -291,3 +312,23 @@ class AgentManager:
             payload=payload,
         )
         return final_res.model_dump(mode="json")
+
+    @staticmethod
+    def _log_model_usage(
+        *,
+        session_id: str,
+        run_id: str,
+        message_id: str,
+        usage: dict[str, object],
+        cost: dict[str, object] | None,
+    ) -> None:
+        logger.info({
+            "message": {
+                "event": "model_usage",
+                "session_id": session_id,
+                "run_id": run_id,
+                "message_id": message_id,
+                "usage": usage,
+                "cost": cost,
+            }
+        })

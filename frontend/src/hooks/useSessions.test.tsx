@@ -206,7 +206,7 @@ describe('useSessions', () => {
                 name: 'test-model',
                 provider: 'test-provider',
               },
-              model_usage: {
+              usage: {
                 version: 1,
                 request: {
                   total: { input_tokens: 12, output_tokens: 8, total_tokens: 20 },
@@ -226,6 +226,14 @@ describe('useSessions', () => {
                   total_tokens: 3,
                   request_count: 1,
                 },
+              },
+              cost: {
+                version: 1,
+                currency: 'USD',
+                complete: true,
+                estimated: true,
+                total: { input_cost: 0.01, output_cost: 0.02, total_cost: 0.03 },
+                missing_pricing: [],
               },
             },
           },
@@ -252,16 +260,11 @@ describe('useSessions', () => {
           id: 'run-success-1',
           status: 'success',
         },
-        usage: {
-          input_tokens: 12,
-          output_tokens: 8,
-          total_tokens: 20,
-        },
         model: {
           name: 'test-model',
           provider: 'test-provider',
         },
-        model_usage: {
+        usage: {
           version: 1,
           request: {
             total: { input_tokens: 12, output_tokens: 8, total_tokens: 20 },
@@ -281,6 +284,14 @@ describe('useSessions', () => {
             total_tokens: 3,
             request_count: 1,
           },
+        },
+        cost: {
+          version: 1,
+          currency: 'USD',
+          complete: true,
+          estimated: true,
+          total: { input_cost: 0.01, output_cost: 0.02, total_cost: 0.03 },
+          missing_pricing: [],
         },
       },
     });

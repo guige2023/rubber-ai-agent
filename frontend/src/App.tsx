@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, ReactNode, useRef, useCall
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useBackendConnection, type ToolActivityPayload } from './hooks/useBackendConnection';
-import { useSessions, type Message, type MessageModelUsage, type MessageRunStatus } from './hooks/useSessions';
+import { useSessions, type Message, type MessageModelCost, type MessageModelUsage, type MessageRunStatus } from './hooks/useSessions';
 import { useI18n } from './hooks/useI18n';
 import { 
   Settings, 
@@ -233,8 +233,24 @@ function formatTokenCount(value?: number | null) {
   return Math.max(0, Number(value || 0)).toLocaleString();
 }
 
+function formatUsdCost(value?: number | null) {
+  const amount = Math.max(0, Number(value || 0));
+  if (amount === 0) {
+    return '$0.00';
+  }
+  if (amount < 0.01) {
+    return `$${amount.toFixed(6)}`;
+  }
+  return `$${amount.toFixed(4)}`;
+}
+
 function getMessageModelUsage(message: Message): MessageModelUsage | undefined {
-  return message.role === 'assistant' ? message.metadata?.model_usage : undefined;
+  const usage = message.role === 'assistant' ? message.metadata?.usage : undefined;
+  return usage && 'request' in usage ? usage as MessageModelUsage : undefined;
+}
+
+function getMessageModelCost(message: Message): MessageModelCost | undefined {
+  return message.role === 'assistant' ? message.metadata?.cost : undefined;
 }
 
 function getSortedRequestModelUsage(modelUsage: MessageModelUsage) {
@@ -1008,8 +1024,12 @@ export default function App() {
                       const timestampLabel = formatMessageTimestamp(msg.created_at);
                       const userRunStatusLabel = getUserRunStatusLabel(msg, t);
                       const modelUsage = getMessageModelUsage(msg);
+                      const modelCost = getMessageModelCost(msg);
                       const isModelUsageOpen = openModelUsageKey === messageKey;
                       const requestModelRows = modelUsage ? getSortedRequestModelUsage(modelUsage) : [];
+                      const missingPricing = Array.isArray(modelCost?.missing_pricing)
+                        ? modelCost.missing_pricing.filter((modelId): modelId is string => Boolean(modelId))
+                        : [];
                       const bubbleShellClass = cn(
                         "relative rounded-[1.5rem] shadow-lg",
                         msg.role === 'user'
@@ -1186,6 +1206,23 @@ export default function App() {
                                   <span className="mx-1 text-white/20">·</span>
                                   {t('tasks.output_tokens')} {formatTokenCount(modelUsage.request?.total?.output_tokens)}
                                 </div>
+                                {modelCost?.total ? (
+                                  <>
+                                    <div className="mt-2 text-[12px] font-bold text-emerald-300/85">
+                                      {formatUsdCost(modelCost.total.total_cost)}
+                                    </div>
+                                    {modelCost.complete === false ? (
+                                      <div className="mt-1 max-w-[22rem] text-[11px] font-medium leading-snug text-amber-200/75">
+                                        {t('chat.model_cost_incomplete')}
+                                        {missingPricing.length > 0 ? (
+                                          <span className="ml-1 text-white/38" title={missingPricing.join(', ')}>
+                                            {t('chat.model_cost_missing_pricing')}: {missingPricing.join(', ')}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </>
+                                ) : null}
                               </div>
                               <button
                                 type="button"
@@ -1206,6 +1243,9 @@ export default function App() {
                                     <span>{usage.request_count || 0} {t('chat.model_usage_requests')}</span>
                                     <span>{t('tasks.input_tokens')} {formatTokenCount(usage.input_tokens)}</span>
                                     <span>{t('tasks.output_tokens')} {formatTokenCount(usage.output_tokens)}</span>
+                                    {modelCost?.request?.by_model?.[modelId]?.total_cost != null ? (
+                                      <span className="text-emerald-300/75">{formatUsdCost(modelCost.request.by_model[modelId].total_cost)}</span>
+                                    ) : null}
                                   </div>
                                 </div>
                               ))}
@@ -1224,6 +1264,9 @@ export default function App() {
                                     <span>{modelUsage.classifier.request_count || 0} {t('chat.model_usage_requests')}</span>
                                     <span>{t('tasks.input_tokens')} {formatTokenCount(modelUsage.classifier.input_tokens)}</span>
                                     <span>{t('tasks.output_tokens')} {formatTokenCount(modelUsage.classifier.output_tokens)}</span>
+                                    {modelCost?.classifier?.total_cost != null ? (
+                                      <span className="text-emerald-300/75">{formatUsdCost(modelCost.classifier.total_cost)}</span>
+                                    ) : null}
                                   </div>
                                 </div>
                               </div>

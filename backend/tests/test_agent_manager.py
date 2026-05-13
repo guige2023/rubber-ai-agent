@@ -172,15 +172,25 @@ def test_agent_manager_final_payload_includes_model_usage():
                 "request_count": 1,
             },
         },
+        model_cost={
+            "version": 1,
+            "currency": "USD",
+            "complete": True,
+            "estimated": True,
+            "total": {"input_cost": 0.01, "output_cost": 0.02, "total_cost": 0.03},
+            "missing_pricing": [],
+        },
     )
 
-    assert payload["payload"]["messages"][0]["metadata"]["model_usage"]["classifier"] == {
+    assert payload["payload"]["messages"][0]["metadata"]["usage"]["classifier"] == {
         "model": "gemini:gemini-3.1-flash-lite-preview",
         "input_tokens": 2,
         "output_tokens": 1,
         "total_tokens": 3,
         "request_count": 1,
     }
+    assert payload["payload"]["messages"][0]["metadata"]["cost"]["total"]["total_cost"] == 0.03
+    assert "model_usage" not in payload["payload"]["messages"][0]["metadata"]
 
 
 @pytest.mark.asyncio

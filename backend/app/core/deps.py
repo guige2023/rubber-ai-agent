@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.core.browser_manager import BrowserManager
     from app.core.config import Settings
     from app.core.model_routing import ModelUsageTracker
+    from app.core.model_pricing import ModelPricingService
     from app.core.prompt_builder import PromptBuilder
     from app.core.schedule_manager import ScheduleManager
     from app.core.skill_manager import SkillManager
@@ -34,6 +35,7 @@ class AgentDeps:
     run_id: str
     skill_name: Optional[str] = None
     model_usage_tracker: "ModelUsageTracker | None" = None
+    model_pricing_service: "ModelPricingService | None" = None
     emit_event_cb: Optional[Callable[["FerrymanEventEnvelope"], Awaitable[None]]] = None
     schedule_manager: "ScheduleManager | None" = None
     _tool_event_seq: int = field(default=0, init=False, repr=False)
@@ -90,6 +92,10 @@ def get_skill_manager(deps: AgentDeps) -> "SkillManager":
 
 def get_task_manager(deps: AgentDeps) -> "TaskManager":
     return deps.task_manager
+
+
+def get_model_pricing_service(deps: AgentDeps) -> "ModelPricingService | None":
+    return deps.model_pricing_service
 
 
 def get_schedule_manager(deps: AgentDeps) -> "ScheduleManager | None":

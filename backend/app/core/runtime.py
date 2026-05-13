@@ -30,6 +30,7 @@ class FerrymanRuntime:
         from app.core.browser_manager import BrowserManager
         from app.core.context_manager import ContextManager
         from app.core.model_manager import ModelManager
+        from app.core.model_pricing import ModelPricingService
         from app.core.prompt_builder import PromptBuilder
         from app.core.run_registry import RunRegistry
         from app.core.schedule_manager import ScheduleManager
@@ -39,6 +40,7 @@ class FerrymanRuntime:
         from app.core.tool_manager import ToolManager
 
         self.model_manager = ModelManager(settings=settings)
+        self.model_pricing_service = ModelPricingService(enabled=settings.model_pricing_refresh_enabled)
         self.skill_manager = SkillManager(settings=settings)
         self.task_manager = TaskManager()
         self.session_manager = SessionManager()
@@ -59,6 +61,7 @@ class FerrymanRuntime:
         self.agent_manager = AgentManager(
             settings=settings,
             model_manager=self.model_manager,
+            model_pricing_service=self.model_pricing_service,
             tool_manager=self.tool_manager,
             prompt_builder=self.prompt_builder,
             session_manager=self.session_manager,
@@ -108,6 +111,7 @@ class FerrymanRuntime:
             task_manager=self.task_manager,
             skill_name=skill_name,
             run_id=run_id,
+            model_pricing_service=self.model_pricing_service,
             emit_event_cb=emit_event_cb,
             schedule_manager=self.schedule_manager,
         )

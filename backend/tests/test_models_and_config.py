@@ -379,7 +379,6 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     config.set("llm.qwen", {"api_key": "sk-qwen"}, category="llm")
     config.set("llm.deepseek", {"api_key": "sk-deepseek"}, category="llm")
     config.set("llm.kimi", {"api_key": "sk-kimi"}, category="llm")
-    config.set("llm.doubao", {"api_key": "sk-doubao"}, category="llm")
     config.set(
         "llm.custom",
         {"api_key": "sk-custom", "base_url": "https://custom.example.com/v1", "model": "my-custom-model"},
@@ -398,8 +397,6 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
             return ["deepseek-v4-pro", "deepseek-v4-flash"]
         if provider == "kimi":
             return ["kimi-k2.5", "kimi-k2-thinking"]
-        if provider == "doubao":
-            return ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-lite-260215"]
         return []
 
     ModelManager._fetch_provider_models = staticmethod(fake_fetcher)
@@ -414,11 +411,9 @@ def test_available_models_include_qwen_and_dynamic_custom_model():
     assert "qwen" not in models
     assert "deepseek" in models
     assert "kimi" in models
-    assert "doubao" in models
     assert models["deepseek"] == ["deepseek-v4-pro", "deepseek-v4-flash"]
     assert "custom" in models
     assert models["kimi"] == ["kimi-k2.5", "kimi-k2-thinking"]
-    assert models["doubao"] == ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-lite-260215"]
     assert models["custom"] == ["my-custom-model"]
 
 
@@ -430,7 +425,6 @@ def test_llm_provider_catalog_preserves_settings_display_order():
         "qwen",
         "openai",
         "anthropic",
-        "doubao",
         "custom",
     ]
 
@@ -687,13 +681,6 @@ def test_fetch_provider_models_routes_to_provider_specific_fetchers(monkeypatch)
         "https://api.moonshot.cn/v1",
         "openai_compatible",
     ) == ["kimi-k2.5"]
-    assert ModelManager._fetch_provider_models(
-        "doubao",
-        "sk-d",
-        "https://ark.cn-beijing.volces.com/api/v3",
-        "openai_compatible",
-    ) == ["doubao-seed-2-0-pro-260215", "doubao-seed-2-0-code-preview-260215"]
-
 
 def test_fetch_provider_models_marks_missing_models_endpoint_as_unavailable(monkeypatch):
     def raise_not_found(api_key: str, base_url: str):
@@ -910,30 +897,4 @@ def test_filter_deepseek_models_prioritizes_current_chat_models():
         "deepseek-v4-flash",
         "deepseek-chat",
         "deepseek-reasoner",
-    ]
-
-
-def test_filter_doubao_models_keeps_latest_supported_chat_family():
-    filtered = ModelManager._filter_doubao_models([
-        "doubao-seed-2-0-code-preview-260215",
-        "doubao-seed-1-6-251015",
-        "doubao-seed-2-1-mini-260415",
-        "doubao-seed-2-0-pro-260215",
-        "doubao-seed-2-1-pro-260415",
-        "doubao-seed-2-0-lite-260215",
-        "doubao-seed-2-1-lite-260415",
-        "doubao-seedream-4-0-250828",
-        "doubao-seed-2-0-mini-260215",
-        "doubao-embedding-text-240715",
-        "doubao-seed-2-1-code-preview-260415",
-        "doubao-seed-2-0-pro-260215",
-        "kimi-k2.5",
-        "ep-20260414-example",
-    ])
-
-    assert filtered == [
-        "doubao-seed-2-1-pro-260415",
-        "doubao-seed-2-1-lite-260415",
-        "doubao-seed-2-1-mini-260415",
-        "doubao-seed-2-1-code-preview-260415",
     ]

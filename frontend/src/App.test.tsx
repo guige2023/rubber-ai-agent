@@ -107,6 +107,8 @@ describe('App chat interactions', () => {
             'chat.copy_model_usage_json': 'Copy model usage JSON',
             'chat.model_usage_requests': 'requests',
             'chat.model_usage_classifier': 'Classifier',
+            'chat.model_cost_incomplete': 'Incomplete pricing',
+            'chat.model_cost_missing_pricing': 'Missing pricing',
             'chat.unknown_model': 'Unknown model',
             'common.copy': 'Copy',
             'common.copied': 'Copied',
@@ -120,6 +122,8 @@ describe('App chat interactions', () => {
             'tasks.token_in': 'IN',
             'tasks.token_out': 'OUT',
             'tasks.token_total': 'TOT',
+            'tasks.input_tokens': 'Input',
+            'tasks.output_tokens': 'Output',
             'chat.send_mode': 'Send mode',
             'settings.no_models': 'No models',
             'app.byok_enabled': 'BYOK',
@@ -241,7 +245,7 @@ describe('App chat interactions', () => {
         content: 'Done.',
         created_at: new Date().toISOString(),
         metadata: {
-          model_usage: {
+          usage: {
             version: 1,
             request: {
               total: { input_tokens: 1200, output_tokens: 300, total_tokens: 1500 },
@@ -268,6 +272,21 @@ describe('App chat interactions', () => {
               request_count: 3,
             },
           },
+          cost: {
+            version: 1,
+            currency: 'USD',
+            complete: true,
+            estimated: true,
+            total: { input_cost: 0.001, output_cost: 0.002, total_cost: 0.003 },
+            request: {
+              by_model: {
+                'gemini:gemini-3-flash-preview': { total_cost: 0.002 },
+                'deepseek:deepseek-v4-pro': { total_cost: 0.001 },
+              },
+            },
+            classifier: { total_cost: 0.0001 },
+            missing_pricing: [],
+          },
         },
       },
     ];
@@ -281,6 +300,49 @@ describe('App chat interactions', () => {
     expect(screen.getByText('deepseek:deepseek-v4-pro')).toBeInTheDocument();
     expect(screen.getByText('Classifier')).toBeInTheDocument();
     expect(screen.getByText('gemini:gemini-3.1-flash-lite-preview')).toBeInTheDocument();
+  });
+
+  it('explains incomplete model cost pricing', async () => {
+    mockedMessages = [
+      {
+        id: 'assistant-usage-incomplete-cost',
+        role: 'assistant',
+        content: 'Done.',
+        created_at: new Date().toISOString(),
+        metadata: {
+          usage: {
+            version: 1,
+            request: {
+              total: { input_tokens: 1000, output_tokens: 100, total_tokens: 1100 },
+              by_model: {
+                'custom:unknown': {
+                  input_tokens: 1000,
+                  output_tokens: 100,
+                  total_tokens: 1100,
+                  request_count: 1,
+                },
+              },
+            },
+          },
+          cost: {
+            version: 1,
+            currency: 'USD',
+            complete: false,
+            estimated: true,
+            total: { input_cost: 0, output_cost: 0, total_cost: 0 },
+            request: { by_model: {} },
+            missing_pricing: ['custom:unknown'],
+          },
+        },
+      },
+    ];
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Model usage' }));
+
+    expect(screen.getByText('Incomplete pricing')).toBeInTheDocument();
+    expect(screen.getByText(/Missing pricing: custom:unknown/)).toBeInTheDocument();
   });
 
   it('updates the active model select immediately after choosing a model', async () => {

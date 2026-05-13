@@ -116,6 +116,7 @@ class SessionManager:
             usage: Optional[dict[str, int]] = None,
             model: Optional[dict[str, object]] = None,
             model_usage: Optional[dict[str, object]] = None,
+            model_cost: Optional[dict[str, object]] = None,
     ) -> MessageModel:
         usage_data = usage or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         model_data = model or {"name": None, "provider": None}
@@ -124,12 +125,12 @@ class SessionManager:
             "status": "success",
         }
         assistant_metadata: dict[str, object] = {
-            "usage": usage_data,
             "model": model_data,
             "run": run_metadata,
+            "usage": model_usage or usage_data,
         }
-        if model_usage:
-            assistant_metadata["model_usage"] = model_usage
+        if model_cost:
+            assistant_metadata["cost"] = model_cost
 
         with get_session() as db_session:
             if user_message_id:
@@ -238,8 +239,8 @@ class SessionManager:
             db_session.commit()
             return True
 
-    @staticmethod
-    def get_run_model_usage(session_id: str, run_id: str) -> dict[str, object] | None:
+    @classmethod
+    def get_run_model_usage(cls, session_id: str, run_id: str) -> dict[str, object] | None:
         with get_session() as db_session:
             message = db_session.exec(
                 select(MessageModel).where(
@@ -250,8 +251,8 @@ class SessionManager:
             ).first()
             if not message:
                 return None
-            model_usage = (message.metadata_ or {}).get("model_usage")
-            return dict(model_usage) if isinstance(model_usage, dict) else None
+            usage = (message.metadata_ or {}).get("usage")
+            return dict(usage) if cls._is_model_usage_payload(usage) else None
 
     @classmethod
     def get_session_model_usage(cls, session_id: str) -> dict[str, object]:
@@ -264,9 +265,9 @@ class SessionManager:
                 )
             ).all()
             for message in messages:
-                model_usage = (message.metadata_ or {}).get("model_usage")
-                if isinstance(model_usage, dict):
-                    cls._merge_model_usage(aggregate, model_usage)
+                usage = (message.metadata_ or {}).get("usage")
+                if cls._is_model_usage_payload(usage):
+                    cls._merge_model_usage(aggregate, usage)
         return {
             "session_id": session_id,
             "model_usage": aggregate,
@@ -368,9 +369,9 @@ class SessionManager:
             model_usage_totals = self._empty_model_usage_payload()
 
             for message in messages:
-                model_usage = (message.metadata_ or {}).get("model_usage")
-                if message.role == "assistant" and isinstance(model_usage, dict):
-                    self._merge_model_usage(model_usage_totals, model_usage)
+                usage_payload = (message.metadata_ or {}).get("usage")
+                if message.role == "assistant" and self._is_model_usage_payload(usage_payload):
+                    self._merge_model_usage(model_usage_totals, usage_payload)
 
                 if not self._is_usage_message(message):
                     continue
@@ -538,6 +539,19 @@ class SessionManager:
         if not isinstance(usage, dict):
             return None
 
+        request = usage.get("request")
+        if isinstance(request, dict):
+            request_total = request.get("total")
+            if isinstance(request_total, dict):
+                input_tokens = int(request_total.get("input_tokens") or 0)
+                output_tokens = int(request_total.get("output_tokens") or 0)
+                total_tokens = int(request_total.get("total_tokens") or input_tokens + output_tokens)
+                return {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                }
+
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
         total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
@@ -599,6 +613,10 @@ class SessionManager:
                 "models": [],
             },
         }
+
+    @staticmethod
+    def _is_model_usage_payload(value: object) -> bool:
+        return isinstance(value, dict) and isinstance(value.get("request"), dict)
 
     @classmethod
     def _merge_model_usage(cls, aggregate: dict[str, object], model_usage: dict[str, object]) -> None:

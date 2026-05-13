@@ -625,7 +625,6 @@ class RoutingModel(WrapperModel):
                 "classifier": decision.classifier_usage.model_dump(),
                 "request": request_usage.model_dump(),
             },
-            "estimated_cost_usd": None,
             "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         logger.info({"message": route_event})

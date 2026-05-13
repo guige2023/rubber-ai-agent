@@ -93,6 +93,8 @@
     "copy_model_usage_json": "复制模型用量JSON",
     "model_usage_requests": "次请求",
     "model_usage_classifier": "分类器",
+    "model_cost_incomplete": "价格不完整",
+    "model_cost_missing_pricing": "缺少定价",
     "unknown_model": "未知模型",
     "quick_actions": {
       "hotspot_title": "AI新闻采收",

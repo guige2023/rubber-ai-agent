@@ -127,8 +127,6 @@ def test_websocket_llm_and_model_config_flow(client):
             return ["deepseek-v4-pro", "deepseek-v4-flash"]
         if provider == "kimi":
             return ["kimi-k2.5"]
-        if provider == "doubao":
-            return ["doubao-seed-2-0-pro-260215"]
         return []
 
     def fake_validator(self, provider: str, api_key: str, base_url: str = "", model: str = ""):
@@ -157,17 +155,13 @@ def test_websocket_llm_and_model_config_flow(client):
             openai_config = next((c for c in response["result"] if c["provider"] == "openai"), None)
             deepseek_config = next((c for c in response["result"] if c["provider"] == "deepseek"), None)
             kimi_config = next((c for c in response["result"] if c["provider"] == "kimi"), None)
-            doubao_config = next((c for c in response["result"] if c["provider"] == "doubao"), None)
             assert openai_config is not None
             assert deepseek_config is not None
             assert kimi_config is not None
-            assert doubao_config is not None
             assert deepseek_config["metadata"]["label"] == "DeepSeek"
             assert deepseek_config["metadata"]["placeholder_base_url"] == "https://api.deepseek.com"
             assert kimi_config["metadata"]["label"] == "Kimi"
             assert kimi_config["metadata"]["placeholder_base_url"] == "https://api.moonshot.cn/v1"
-            assert doubao_config["metadata"]["label"] == "Doubao"
-            assert doubao_config["metadata"]["placeholder_base_url"] == "https://ark.cn-beijing.volces.com/api/v3"
             assert openai_config["api_key"] == "sk-test-key"
             assert openai_config["base_url"] == "https://test.api"
 
@@ -241,20 +235,6 @@ def test_websocket_llm_and_model_config_flow(client):
 
             response = send_rpc(websocket, "get_available_models", request_id=8)
             assert response["result"]["kimi"] == ["kimi-k2.5"]
-
-            response = send_rpc(
-                websocket,
-                "set_llm_config",
-                {
-                    "provider": "doubao",
-                    "api_key": "sk-doubao",
-                },
-                request_id=9,
-            )
-            assert response["result"] == {"status": "success"}
-
-            response = send_rpc(websocket, "get_available_models", request_id=10)
-            assert response["result"]["doubao"] == ["doubao-seed-2-0-pro-260215"]
 
             response = send_rpc(
                 websocket,

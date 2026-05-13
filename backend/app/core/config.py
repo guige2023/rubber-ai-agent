@@ -42,6 +42,10 @@ class Settings(BaseSettings):
         default="noreply@ferryman.app",
         validation_alias="FERRYMAN_RESEND_DEFAULT_FROM",
     )
+    model_pricing_refresh_enabled: bool = Field(
+        default=True,
+        validation_alias="FERRYMAN_MODEL_PRICING_REFRESH_ENABLED",
+    )
 
     @property
     def user_dir(self) -> Path:

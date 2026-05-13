@@ -36,10 +36,33 @@ export interface MessageModelUsage {
   };
 }
 
+export interface MessageModelCost {
+  version: number;
+  currency: string;
+  complete: boolean;
+  estimated: boolean;
+  total?: {
+    input_cost: number;
+    output_cost: number;
+    total_cost: number;
+  };
+  request?: {
+    total?: {
+      input_cost: number;
+      output_cost: number;
+      total_cost: number;
+    };
+    by_model?: Record<string, any>;
+  };
+  classifier?: Record<string, any>;
+  missing_pricing?: string[];
+  [key: string]: any;
+}
+
 export interface MessageMetadata {
   run?: MessageRunMetadata;
-  usage?: Usage;
-  model_usage?: MessageModelUsage;
+  usage?: Usage | MessageModelUsage;
+  cost?: MessageModelCost;
   model?: {
     name?: string | null;
     provider?: string | null;
@@ -511,15 +534,12 @@ export function useSessions({
         }
 
         const nextAssistantMetadata: MessageMetadata = {
-          usage,
+          ...(latestAssistantMessage?.metadata || {}),
           run: nextRunMetadata,
         };
 
-        if (latestAssistantMessage?.metadata?.model) {
-          nextAssistantMetadata.model = latestAssistantMessage.metadata.model;
-        }
-        if (latestAssistantMessage?.metadata?.model_usage) {
-          nextAssistantMetadata.model_usage = latestAssistantMessage.metadata.model_usage;
+        if (!nextAssistantMetadata.usage) {
+          nextAssistantMetadata.usage = usage;
         }
 
         return prev.map((message) => {

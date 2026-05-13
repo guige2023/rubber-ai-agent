@@ -237,34 +237,15 @@ def test_create_active_model_supports_custom_kimi_base_url(monkeypatch):
     assert captured["provider_kwargs"] == {"openai_client": captured["client_instance"]}
 
 
-def test_create_active_model_uses_openai_provider_for_doubao(monkeypatch):
+def test_create_active_model_rejects_removed_doubao_provider(monkeypatch):
     settings = create_test_settings()
     monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "doubao:doubao-seed-2-0-pro-260215")
     monkeypatch.setattr(ModelManager, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
 
-    captured = {}
-
-    class FakeOpenAIProvider:
-        def __init__(self, **kwargs):
-            captured["provider_kwargs"] = kwargs
-
-    def fake_openai_chat_model(model_name, provider):
-        captured["model_name"] = model_name
-        captured["provider"] = provider
-        return "doubao-model"
-
-    monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
-    monkeypatch.setattr("pydantic_ai.providers.openai.OpenAIProvider", FakeOpenAIProvider)
-
     kernel = FerrymanRuntime(settings=settings)
 
-    assert kernel.model_manager.create_active_model() == "doubao-model"
-    assert captured["model_name"] == "doubao-seed-2-0-pro-260215"
-    assert isinstance(captured["provider"], FakeOpenAIProvider)
-    assert captured["provider_kwargs"] == {
-        "api_key": "sk-test",
-        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-    }
+    with pytest.raises(LLMConfigurationError, match="provider `doubao` is not supported"):
+        kernel.model_manager.create_active_model()
 
 
 def test_create_active_model_uses_openai_provider_for_deepseek(monkeypatch):

@@ -41,6 +41,7 @@ UTC_DATETIME_COLUMNS: dict[str, tuple[str, ...]] = {
 #   overloading this one.
 UTC_DATETIME_MIGRATION_KEY = "system.utc_datetime_storage_migration_v1"
 MODEL_ROUTING_THRESHOLD_MIGRATION_KEY = "system.model_routing_threshold_migration_v1"
+DOUBAO_PROVIDER_REMOVAL_MIGRATION_KEY = "system.remove_doubao_provider_config_v1"
 
 
 def migrate_session_memory_json_payloads() -> None:
@@ -257,6 +258,65 @@ def migrate_model_routing_threshold_default() -> None:
         conn.commit()
 
 
+def migrate_remove_doubao_provider_config() -> None:
+    """Remove the disabled Doubao provider from local LLM settings."""
+    try:
+        inspector = inspect(engine)
+        table_names = set(inspector.get_table_names())
+    except Exception as e:
+        logger.exception(f"⚠️ Could not inspect app_configs for Doubao removal migration with exception: {e}")
+        return
+
+    if "app_configs" not in table_names:
+        return
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+    with engine.connect() as conn:
+        migration_marker = conn.execute(
+            text("SELECT 1 FROM app_configs WHERE key = :key LIMIT 1"),
+            {"key": DOUBAO_PROVIDER_REMOVAL_MIGRATION_KEY},
+        ).first()
+        if migration_marker:
+            return
+
+        conn.execute(text("DELETE FROM app_configs WHERE key = :key"), {"key": "llm.doubao"})
+
+        active_model_row = conn.execute(
+            text("SELECT value FROM app_configs WHERE key = :key LIMIT 1"),
+            {"key": "system.llm.active_model"},
+        ).first()
+        if active_model_row is not None:
+            active_model = active_model_row[0]
+            if isinstance(active_model, str):
+                try:
+                    parsed_active_model = json.loads(active_model)
+                except json.JSONDecodeError:
+                    parsed_active_model = active_model
+                active_model = parsed_active_model
+            if isinstance(active_model, str) and active_model.strip().startswith("doubao:"):
+                conn.execute(
+                    text("DELETE FROM app_configs WHERE key = :key"),
+                    {"key": "system.llm.active_model"},
+                )
+
+        conn.execute(
+            text(
+                """
+                INSERT OR REPLACE INTO app_configs (key, value, category, metadata, updated_at)
+                VALUES (:key, :value, :category, :metadata, :updated_at)
+                """
+            ),
+            {
+                "key": DOUBAO_PROVIDER_REMOVAL_MIGRATION_KEY,
+                "value": json.dumps(True),
+                "category": "system",
+                "metadata": json.dumps({"migration": "remove_doubao_provider_config_v1"}),
+                "updated_at": now,
+            },
+        )
+        conn.commit()
+
+
 def auto_migrate_schema():
     """
     Automatically detects missing columns in the database and adds them.
@@ -314,6 +374,7 @@ def init_db():
         migrate_session_memory_json_payloads()
         migrate_datetime_columns_to_utc_storage()
         migrate_model_routing_threshold_default()
+        migrate_remove_doubao_provider_config()
     except Exception as e:
         logger.exception("🚨 DB Initialization Error")
         # Re-raise to prevent the app from starting in a broken state

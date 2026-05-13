@@ -103,10 +103,12 @@ async def lifespan(fastapi_app: FastAPI):
     reconcile_stale_pending_runs_on_startup()
     fastapi_app.state.runtime.skill_manager.scan_skills()
     fastapi_app.state.schedule_manager = fastapi_app.state.runtime.schedule_manager
+    await fastapi_app.state.runtime.model_pricing_service.start()
     await fastapi_app.state.schedule_manager.start()
 
     yield
     await fastapi_app.state.schedule_manager.shutdown()
+    await fastapi_app.state.runtime.model_pricing_service.shutdown()
     await fastapi_app.state.runtime.browser_manager.shutdown()
     logger.info("🛑 Ferryman Sidecar shutting down...")
 

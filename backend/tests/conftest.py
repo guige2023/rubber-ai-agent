@@ -12,6 +12,9 @@ TEST_DATABASE_URL = "sqlite:///:memory:"
 @pytest.fixture(name="session", autouse=True)
 def session_fixture(monkeypatch, request):
     monkeypatch.setenv("FERRYMAN_BEARER_TOKEN", "test-bearer-token")
+    monkeypatch.setenv("FERRYMAN_MODEL_PRICING_REFRESH_ENABLED", "false")
+    from app.core.config import get_settings
+    get_settings.cache_clear()
 
     # Use real DB for live tests to allow debugging/persistence
     if "test_live" in request.node.name:

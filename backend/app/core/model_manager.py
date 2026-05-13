@@ -126,17 +126,6 @@ class ModelManager:
                     "claude-3-5-sonnet-latest",
                 ],
             },
-            "doubao": {
-                "label": "Doubao",
-                "placeholder_base_url": "https://ark.cn-beijing.volces.com/api/v3",
-                "list_mode": "openai_compatible",
-                "models": [
-                    "doubao-seed-2-0-pro-260215",
-                    "doubao-seed-2-0-lite-260215",
-                    "doubao-seed-2-0-mini-260215",
-                    "doubao-seed-2-0-code-preview-260215",
-                ],
-            },
             "custom": {
                 "label": "Custom",
                 "placeholder_base_url": "https://api.example.com/v1",
@@ -372,8 +361,6 @@ class ModelManager:
                 return ModelManager._filter_deepseek_models(model_ids)
             if provider == "kimi":
                 return ModelManager._filter_kimi_models(model_ids)
-            if provider == "doubao":
-                return ModelManager._filter_doubao_models(model_ids)
             return ModelManager._filter_chat_model_ids(model_ids)
         except HTTPError as exc:
             if exc.code in {404, 405, 501}:
@@ -785,48 +772,6 @@ class ModelManager:
         return ModelManager._dedupe_preserve_order([item[2] for item in candidates])[:4]
 
     @staticmethod
-    def _filter_doubao_models(model_ids: list[str]) -> list[str]:
-        excluded_keywords = (
-            "embedding",
-            "embed",
-            "image",
-            "seedream",
-            "seededit",
-            "speech",
-            "tts",
-            "asr",
-            "audio",
-            "video-generation",
-            "rerank",
-        )
-
-        candidates = []
-        for model_id in model_ids:
-            normalized = model_id.lower().strip()
-            if not normalized.startswith("doubao-seed-"):
-                continue
-            if any(keyword in normalized for keyword in excluded_keywords):
-                continue
-            match = re.match(r"doubao-seed-(\d+)-(\d+)", normalized)
-            if not match:
-                continue
-            family = (int(match.group(1)), int(match.group(2)))
-            candidates.append((
-                family,
-                ModelManager._variant_priority(normalized, ("pro", "lite", "mini", "code")),
-                ModelManager._model_date_score(normalized),
-                model_id,
-            ))
-
-        if not candidates:
-            return []
-
-        latest_family = max(candidate[0] for candidate in candidates)
-        selected = [candidate for candidate in candidates if candidate[0] == latest_family]
-        selected.sort(key=lambda item: (item[1], tuple(-part for part in item[2])))
-        return ModelManager._dedupe_preserve_order([item[3] for item in selected])[:6]
-
-    @staticmethod
     def _extract_model_ids(payload: dict[str, object]) -> list[str]:
         data = payload.get("data", [])
         model_ids: list[str] = []
@@ -950,16 +895,16 @@ class ModelManager:
             api_key = api_key.strip()
 
         provider_catalog = self.get_llm_provider_catalog()
-        if provider in {"qwen", "deepseek", "kimi", "doubao"} and not base_url:
+        if provider not in provider_catalog:
+            raise LLMConfigurationError(f"Active model provider `{provider}` is not supported.")
+
+        if provider in {"qwen", "deepseek", "kimi"} and not base_url:
             base_url = provider_catalog[provider]["placeholder_base_url"]
         if provider == "anthropic" and isinstance(base_url, str) and base_url.rstrip("/").endswith("/v1"):
             base_url = base_url.rstrip("/")[:-3]
 
-        if provider not in provider_catalog:
-            raise LLMConfigurationError(f"Active model provider `{provider}` is not supported.")
-
         missing_fields: list[str] = []
-        if provider in {"gemini", "openai", "anthropic", "qwen", "deepseek", "kimi", "doubao", "custom"} and not api_key:
+        if provider in {"gemini", "openai", "anthropic", "qwen", "deepseek", "kimi", "custom"} and not api_key:
             missing_fields.append("API Key")
         if provider == "custom" and not base_url:
             missing_fields.append("Base URL")
@@ -974,7 +919,7 @@ class ModelManager:
         p_kwargs = {k: v for k, v in {"api_key": api_key, "base_url": base_url}.items() if v is not None}
 
         try:
-            if provider in {"openai", "qwen", "deepseek", "doubao", "custom"}:
+            if provider in {"openai", "qwen", "deepseek", "custom"}:
                 from pydantic_ai.models.openai import OpenAIChatModel
                 from pydantic_ai.providers.openai import OpenAIProvider
 

@@ -48,6 +48,14 @@ def test_session_manager_records_successful_agent_run_atomically(session):
                 "request_count": 1,
             },
         },
+        model_cost={
+            "version": 1,
+            "currency": "USD",
+            "complete": True,
+            "estimated": True,
+            "total": {"input_cost": 0.001, "output_cost": 0.002, "total_cost": 0.003},
+            "missing_pricing": [],
+        },
     )
 
     session.expire_all()
@@ -60,15 +68,17 @@ def test_session_manager_records_successful_agent_run_atomically(session):
     assert refreshed_session.output_tokens == 5
     assert refreshed_user_message.metadata_["run"]["status"] == "success"
     assert refreshed_assistant_message.content == "Done"
-    assert refreshed_assistant_message.metadata_["usage"]["total_tokens"] == 16
+    assert refreshed_assistant_message.metadata_["usage"]["request"]["total"]["total_tokens"] == 16
     assert refreshed_assistant_message.metadata_["model"]["name"] == "test-model"
-    assert refreshed_assistant_message.metadata_["model_usage"]["request"]["by_model"]["test-provider:test-model"] == {
+    assert refreshed_assistant_message.metadata_["usage"]["request"]["by_model"]["test-provider:test-model"] == {
         "input_tokens": 11,
         "output_tokens": 5,
         "total_tokens": 16,
         "request_count": 1,
     }
-    assert manager.get_run_model_usage("chat-1", "run-1") == refreshed_assistant_message.metadata_["model_usage"]
+    assert refreshed_assistant_message.metadata_["cost"]["total"]["total_cost"] == 0.003
+    assert "model_usage" not in refreshed_assistant_message.metadata_
+    assert manager.get_run_model_usage("chat-1", "run-1") == refreshed_assistant_message.metadata_["usage"]
 
 
 def test_session_manager_aggregates_session_model_usage(session):
@@ -82,7 +92,7 @@ def test_session_manager_aggregates_session_model_usage(session):
             type="text",
             metadata_={
                 "run": {"id": "run-1", "status": "success"},
-                "model_usage": {
+                "usage": {
                     "version": 1,
                     "request": {
                         "total": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
@@ -112,7 +122,7 @@ def test_session_manager_aggregates_session_model_usage(session):
             type="text",
             metadata_={
                 "run": {"id": "run-2", "status": "success"},
-                "model_usage": {
+                "usage": {
                     "version": 1,
                     "request": {
                         "total": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30},

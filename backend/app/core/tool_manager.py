@@ -22,6 +22,7 @@ from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.email import EmailToolkit
 from app.core.toolkits.file import FileToolkit
 from app.core.toolkits.image import ImageToolkit
+from app.core.toolkits.pricing import PricingToolkit
 from app.core.toolkits.skill import SkillToolkit
 from app.core.toolkits.task import TaskToolkit
 from app.core.toolkits.time import TimeToolkit
@@ -38,6 +39,7 @@ DEFAULT_TOOLKITS: tuple[type[Toolkit], ...] = (
     WebToolkit,
     TaskToolkit,
     TimeToolkit,
+    PricingToolkit,
     EmailToolkit,
     ImageToolkit,
     CommandToolkit,

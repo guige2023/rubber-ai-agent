@@ -93,6 +93,8 @@
     "copy_model_usage_json": "Copy model usage JSON",
     "model_usage_requests": "requests",
     "model_usage_classifier": "Classifier",
+    "model_cost_incomplete": "Incomplete pricing",
+    "model_cost_missing_pricing": "Missing pricing",
     "unknown_model": "Unknown model",
     "quick_actions": {
       "hotspot_title": "AI Hotspot Miner",

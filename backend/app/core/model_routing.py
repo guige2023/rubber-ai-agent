@@ -205,6 +205,7 @@ class ModelRouteDecision(BaseModel):
     classifier_threshold: int
     classifier_reasoning: str | None = None
     classifier_usage: UsageSnapshot = Field(default_factory=UsageSnapshot)
+    flash_fallback_model_id: str | None = None
     fallback_model_id: str | None = None
     fallback_reason: str | None = None
 
@@ -242,10 +243,16 @@ class ModelRouter:
 
         classifier_model_id = str(config["classifier_model"])
         flash_model_id = str(config["flash_model"])
+        flash_fallback_model_id = str(config.get("flash_fallback_model") or "")
 
         try:
             classifier_model_id = self._model_manager.resolve_model_id(classifier_model_id)
             flash_model_id = self._model_manager.resolve_model_id(flash_model_id)
+            flash_fallback_model_id = (
+                self._model_manager.resolve_model_id(flash_fallback_model_id)
+                if flash_fallback_model_id
+                else None
+            )
             classifier_output, classifier_usage = await asyncio.wait_for(
                 self._classify(
                     classifier_model_id=classifier_model_id,
@@ -278,15 +285,66 @@ class ModelRouter:
         selected_route: Literal["flash", "default"] = (
             "flash" if classifier_output.classifier_score < threshold else "default"
         )
+        selected_model_id = default_model_id
+        if selected_route == "flash":
+            available_flash_model_id = self._select_available_flash_model(
+                primary_model_id=flash_model_id,
+                fallback_model_id=flash_fallback_model_id,
+                context=context,
+            )
+            if available_flash_model_id is not None:
+                selected_model_id = available_flash_model_id
+            else:
+                selected_route = "default"
+                logger.info({
+                    "message": {
+                        "event": "model_route_flash_unavailable",
+                        "session_id": context.session_id,
+                        "run_id": context.run_id,
+                        "primary_model": flash_model_id,
+                        "fallback_model": flash_fallback_model_id,
+                        "selected_model": default_model_id,
+                    }
+                })
         return ModelRouteDecision(
-            model_id=flash_model_id if selected_route == "flash" else default_model_id,
+            model_id=selected_model_id,
             selected_route=selected_route,
             classifier_model_id=classifier_model_id,
             classifier_score=classifier_output.classifier_score,
             classifier_threshold=threshold,
             classifier_reasoning=classifier_output.classifier_reasoning,
             classifier_usage=classifier_usage,
+            flash_fallback_model_id=flash_fallback_model_id,
         )
+
+    def _select_available_flash_model(
+        self,
+        *,
+        primary_model_id: str,
+        fallback_model_id: str | None,
+        context: RoutingContext,
+    ) -> str | None:
+        if self._can_create_model(primary_model_id):
+            return primary_model_id
+        if fallback_model_id and fallback_model_id != primary_model_id and self._can_create_model(fallback_model_id):
+            logger.info({
+                "message": {
+                    "event": "model_route_flash_fallback_selected",
+                    "session_id": context.session_id,
+                    "run_id": context.run_id,
+                    "primary_model": primary_model_id,
+                    "fallback_model": fallback_model_id,
+                }
+            })
+            return fallback_model_id
+        return None
+
+    def _can_create_model(self, model_id: str) -> bool:
+        try:
+            self._model_manager.create_model(model_id)
+            return True
+        except LLMConfigurationError:
+            return False
 
     async def _classify(
         self,

@@ -150,7 +150,8 @@ describe('App chat interactions', () => {
           return {
             enabled: false,
             classifier_model: 'gemini:gemini-3.1-flash-lite-preview',
-            flash_model: 'gemini:gemini-3-flash-preview',
+            flash_model: 'deepseek:deepseek-v4-flash',
+            flash_fallback_model: 'gemini:gemini-3-flash-preview',
             default_model: 'system.llm.active_model',
             classifier_threshold: 80,
             classifier_timeout_seconds: 8,
@@ -370,7 +371,8 @@ describe('App chat interactions', () => {
         return {
           enabled: false,
           classifier_model: 'gemini:gemini-3.1-flash-lite-preview',
-          flash_model: 'gemini:gemini-3-flash-preview',
+          flash_model: 'deepseek:deepseek-v4-flash',
+          flash_fallback_model: 'gemini:gemini-3-flash-preview',
           default_model: 'system.llm.active_model',
           classifier_threshold: 80,
           classifier_timeout_seconds: 8,

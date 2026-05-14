@@ -41,3 +41,11 @@ def test_model_routing_default_threshold_is_80(tmp_path):
     manager = ModelManager(Settings(root_dir=tmp_path))
 
     assert manager.get_model_routing_config()["classifier_threshold"] == 80
+
+
+def test_model_routing_default_flash_prefers_deepseek_with_gemini_fallback(tmp_path):
+    manager = ModelManager(Settings(root_dir=tmp_path))
+    config = manager.get_model_routing_config()
+
+    assert config["flash_model"] == "deepseek:deepseek-v4-flash"
+    assert config["flash_fallback_model"] == "gemini:gemini-3-flash-preview"

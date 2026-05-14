@@ -113,6 +113,7 @@ type ModelRoutingConfig = {
   enabled: boolean;
   classifier_model: string;
   flash_model: string;
+  flash_fallback_model?: string;
   default_model: string;
   classifier_threshold: number;
   classifier_timeout_seconds: number;

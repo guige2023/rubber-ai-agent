@@ -10,7 +10,7 @@ from pydantic_ai.usage import RequestUsage
 
 from app.core.config import Settings
 from app.core.agent_manager import AgentManager
-from app.core.model_manager import ModelManager
+from app.core.model_manager import LLMConfigurationError, ModelManager
 from app.core.model_routing import ModelRouter, ModelUsageTracker, RoutingContext, RoutingModel
 
 
@@ -201,6 +201,139 @@ async def test_routing_model_disabled_uses_wrapped_active_model_without_classifi
         and isinstance(record.msg.get("message"), dict)
         and record.msg["message"].get("event") == "model_route"
     ]
+
+
+@pytest.mark.asyncio
+async def test_router_uses_gemini_flash_fallback_when_deepseek_flash_unavailable(tmp_path, monkeypatch):
+    settings = Settings(root_dir=tmp_path)
+    settings.set("system.llm.active_model", "openai:gpt-test", category="system")
+    settings.set(
+        "system.llm.routing",
+        {
+            "enabled": True,
+            "classifier_model": "gemini:gemini-3.1-flash-lite-preview",
+            "flash_model": "deepseek:deepseek-v4-flash",
+            "flash_fallback_model": "gemini:gemini-3-flash-preview",
+            "default_model": "system.llm.active_model",
+            "classifier_threshold": 80,
+            "classifier_timeout_seconds": 8,
+        },
+        category="system",
+    )
+    manager = ModelManager(settings)
+    classifier = function_model(
+        "gemini-3.1-flash-lite-preview",
+        '{"classifier_reasoning":"Routine task.","classifier_score":34}',
+        RequestUsage(input_tokens=10, output_tokens=2),
+    )
+    gemini_flash = function_model(
+        "gemini-3-flash-preview",
+        "done",
+        RequestUsage(input_tokens=100, output_tokens=25),
+    )
+
+    def create_model(model_id: str):
+        resolved = manager.resolve_model_id(model_id)
+        if resolved == "gemini:gemini-3.1-flash-lite-preview":
+            return classifier
+        if resolved == "deepseek:deepseek-v4-flash":
+            raise LLMConfigurationError("DeepSeek is missing API Key.")
+        if resolved == "gemini:gemini-3-flash-preview":
+            return gemini_flash
+        return function_model("gpt-test", "default", RequestUsage(input_tokens=999, output_tokens=999))
+
+    monkeypatch.setattr(manager, "create_model", create_model)
+
+    decision = await ModelRouter(manager).route(
+        messages=[ModelRequest(parts=[UserPromptPart(content="format this list")])],
+        context=RoutingContext(session_id="s1", run_id="r1"),
+    )
+
+    assert decision.selected_route == "flash"
+    assert decision.model_id == "gemini:gemini-3-flash-preview"
+    assert decision.flash_fallback_model_id == "gemini:gemini-3-flash-preview"
+
+
+@pytest.mark.asyncio
+async def test_router_uses_active_model_when_all_flash_models_unavailable(tmp_path, monkeypatch):
+    settings = Settings(root_dir=tmp_path)
+    settings.set("system.llm.active_model", "openai:gpt-test", category="system")
+    settings.set(
+        "system.llm.routing",
+        {
+            "enabled": True,
+            "classifier_model": "gemini:gemini-3.1-flash-lite-preview",
+            "flash_model": "deepseek:deepseek-v4-flash",
+            "flash_fallback_model": "gemini:gemini-3-flash-preview",
+            "default_model": "system.llm.active_model",
+            "classifier_threshold": 80,
+            "classifier_timeout_seconds": 8,
+        },
+        category="system",
+    )
+    manager = ModelManager(settings)
+    classifier = function_model(
+        "gemini-3.1-flash-lite-preview",
+        '{"classifier_reasoning":"Routine task.","classifier_score":34}',
+        RequestUsage(input_tokens=10, output_tokens=2),
+    )
+
+    def create_model(model_id: str):
+        resolved = manager.resolve_model_id(model_id)
+        if resolved == "gemini:gemini-3.1-flash-lite-preview":
+            return classifier
+        if resolved in {"deepseek:deepseek-v4-flash", "gemini:gemini-3-flash-preview"}:
+            raise LLMConfigurationError(f"{resolved} is not configured.")
+        return function_model("gpt-test", "default", RequestUsage(input_tokens=999, output_tokens=999))
+
+    monkeypatch.setattr(manager, "create_model", create_model)
+
+    decision = await ModelRouter(manager).route(
+        messages=[ModelRequest(parts=[UserPromptPart(content="format this list")])],
+        context=RoutingContext(session_id="s1", run_id="r1"),
+    )
+
+    assert decision.selected_route == "default"
+    assert decision.model_id == "openai:gpt-test"
+    assert decision.classifier_score == 34
+
+
+@pytest.mark.asyncio
+async def test_router_uses_active_model_when_classifier_unavailable(tmp_path, monkeypatch):
+    settings = Settings(root_dir=tmp_path)
+    settings.set("system.llm.active_model", "openai:gpt-test", category="system")
+    settings.set(
+        "system.llm.routing",
+        {
+            "enabled": True,
+            "classifier_model": "gemini:gemini-3.1-flash-lite-preview",
+            "flash_model": "deepseek:deepseek-v4-flash",
+            "flash_fallback_model": "gemini:gemini-3-flash-preview",
+            "default_model": "system.llm.active_model",
+            "classifier_threshold": 80,
+            "classifier_timeout_seconds": 8,
+        },
+        category="system",
+    )
+    manager = ModelManager(settings)
+
+    def create_model(model_id: str):
+        resolved = manager.resolve_model_id(model_id)
+        if resolved == "gemini:gemini-3.1-flash-lite-preview":
+            raise LLMConfigurationError("Gemini Lite is not configured.")
+        return function_model("gpt-test", "default", RequestUsage(input_tokens=999, output_tokens=999))
+
+    monkeypatch.setattr(manager, "create_model", create_model)
+
+    decision = await ModelRouter(manager).route(
+        messages=[ModelRequest(parts=[UserPromptPart(content="format this list")])],
+        context=RoutingContext(session_id="s1", run_id="r1"),
+    )
+
+    assert decision.selected_route == "default"
+    assert decision.model_id == "openai:gpt-test"
+    assert decision.classifier_score is None
+
 
 def test_agent_manager_builds_routing_context_with_session_and_run_ids(tmp_path):
     settings = Settings(root_dir=tmp_path)

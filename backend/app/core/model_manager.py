@@ -30,7 +30,8 @@ class ModelManager:
     DEFAULT_MODEL_ROUTING_CONFIG: dict[str, object] = {
         "enabled": False,
         "classifier_model": "gemini:gemini-3.1-flash-lite-preview",
-        "flash_model": "gemini:gemini-3-flash-preview",
+        "flash_model": "deepseek:deepseek-v4-flash",
+        "flash_fallback_model": "gemini:gemini-3-flash-preview",
         "default_model": "system.llm.active_model",
         "classifier_threshold": 80,
         "classifier_timeout_seconds": 8,
@@ -168,7 +169,7 @@ class ModelManager:
         config["classifier_timeout_seconds"] = max(timeout, 1.0)
 
         config["enabled"] = bool(config["enabled"])
-        for key in ("classifier_model", "flash_model", "default_model"):
+        for key in ("classifier_model", "flash_model", "flash_fallback_model", "default_model"):
             config[key] = str(config[key]).strip()
         return config
 
@@ -200,7 +201,7 @@ class ModelManager:
             raise LLMConfigurationError("classifier_timeout_seconds must be positive.")
         next_config["classifier_timeout_seconds"] = timeout
 
-        for key in ("classifier_model", "flash_model", "default_model"):
+        for key in ("classifier_model", "flash_model", "flash_fallback_model", "default_model"):
             model_ref = str(next_config[key]).strip()
             if not model_ref:
                 raise LLMConfigurationError(f"{key} cannot be empty.")

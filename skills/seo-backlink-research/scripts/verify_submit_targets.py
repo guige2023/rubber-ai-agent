@@ -2,6 +2,7 @@
 import json
 import re
 import sys
+from html import unescape
 from dataclasses import asdict, dataclass
 from typing import List, Optional
 from urllib.error import HTTPError, URLError
@@ -17,43 +18,122 @@ USER_AGENT = (
 
 SUBMIT_PATTERNS = [
     r"submit\s+your\s+tool",
+    r"submit\s+your\s+product",
+    r"submit\s+your\s+startup",
+    r"submit\s+your\s+app",
     r"submit\s+tool",
     r"submit\s+site",
+    r"submit\s+startup",
+    r"submit\s+app",
     r"add\s+your\s+tool",
+    r"add\s+your\s+product",
+    r"add\s+your\s+startup",
+    r"add\s+your\s+app",
     r"add\s+tool",
+    r"add\s+product",
+    r"add\s+startup",
+    r"add\s+app",
     r"list\s+your\s+tool",
+    r"list\s+your\s+product",
+    r"list\s+your\s+startup",
     r"list\s+tool",
+    r"list\s+product",
+    r"list\s+startup",
     r"get\s+listed",
     r"suggest\s+a\s+tool",
+    r"suggest\s+a\s+product",
+    r"suggest\s+a\s+startup",
+    r"launch\s+your\s+product",
+    r"launch\s+product",
+    r"post\s+product",
     r"submit\s+website",
     r"submit\s+product",
     r"add\s+listing",
     r"submit\s+listing",
+    r"claim\s+listing",
 ]
 
 RAW_HTML_PATTERNS = [
     r'href=["\'][^"\']*/submit[^"\']*["\']',
+    r'href=["\'][^"\']*/submit-startup[^"\']*["\']',
+    r'href=["\'][^"\']*/submit-product[^"\']*["\']',
     r'href=["\'][^"\']*/submit-tool[^"\']*["\']',
     r'href=["\'][^"\']*/submit-your-tool[^"\']*["\']',
     r'href=["\'][^"\']*/add-tool[^"\']*["\']',
+    r'href=["\'][^"\']*/add-product[^"\']*["\']',
+    r'href=["\'][^"\']*/add-startup[^"\']*["\']',
     r'href=["\'][^"\']*/get-listed[^"\']*["\']',
-    r'>\s*submit\s*<',
+    r'href=["\'][^"\']*/products/new[^"\']*["\']',
+    r'href=["\'][^"\']*/startups/new[^"\']*["\']',
+    r'href=["\'][^"\']*/launch[^"\']*["\']',
     r'>\s*add\s+tool\s*<',
+    r'>\s*add\s+product\s*<',
     r'>\s*submit\s+tool\s*<',
+    r'>\s*submit\s+product\s*<',
 ]
 
 ANCHOR_HREF_PATTERNS = [
     r'<a\b[^>]*href=["\']([^"\']*/submit[^"\']*)["\'][^>]*>(.*?)</a>',
+    r'<a\b[^>]*href=["\']([^"\']*/submit-startup[^"\']*)["\'][^>]*>(.*?)</a>',
+    r'<a\b[^>]*href=["\']([^"\']*/submit-product[^"\']*)["\'][^>]*>(.*?)</a>',
     r'<a\b[^>]*href=["\']([^"\']*/submit-tool[^"\']*)["\'][^>]*>(.*?)</a>',
     r'<a\b[^>]*href=["\']([^"\']*/submit-your-tool[^"\']*)["\'][^>]*>(.*?)</a>',
     r'<a\b[^>]*href=["\']([^"\']*/add-tool[^"\']*)["\'][^>]*>(.*?)</a>',
+    r'<a\b[^>]*href=["\']([^"\']*/add-product[^"\']*)["\'][^>]*>(.*?)</a>',
+    r'<a\b[^>]*href=["\']([^"\']*/add-startup[^"\']*)["\'][^>]*>(.*?)</a>',
     r'<a\b[^>]*href=["\']([^"\']*/get-listed[^"\']*)["\'][^>]*>(.*?)</a>',
+    r'<a\b[^>]*href=["\']([^"\']*/products/new[^"\']*)["\'][^>]*>(.*?)</a>',
+    r'<a\b[^>]*href=["\']([^"\']*/startups/new[^"\']*)["\'][^>]*>(.*?)</a>',
+    r'<a\b[^>]*href=["\']([^"\']*/launch[^"\']*)["\'][^>]*>(.*?)</a>',
 ]
 
 GENERIC_CTA_ELEMENT_PATTERNS = [
     r'<a\b([^>]*)>(.*?)</a>',
     r'<button\b([^>]*)>(.*?)</button>',
 ]
+
+STRONG_CTA_MARKERS = (
+    "submit your tool",
+    "submit your product",
+    "submit your startup",
+    "submit your app",
+    "submit tool",
+    "submit site",
+    "submit product",
+    "submit startup",
+    "submit app",
+    "submit ai tool",
+    "add your tool",
+    "add your product",
+    "add your startup",
+    "add your app",
+    "add tool",
+    "add product",
+    "add startup",
+    "add app",
+    "get listed",
+    "list your tool",
+    "list your product",
+    "list your startup",
+    "suggest a tool",
+    "suggest a product",
+    "suggest a startup",
+    "launch product",
+    "launch your product",
+    "post product",
+    "claim listing",
+)
+
+WEAK_SUBMIT_CONTEXT_EXCLUSIONS = (
+    "newsletter",
+    "subscribe",
+    "comment",
+    "search",
+    "contact",
+    "login",
+    "sign in",
+    "email address",
+)
 
 SOFT_BLOCK_PATTERNS = [
     r"checking\s+your\s+browser",
@@ -99,9 +179,18 @@ def _normalize_text(html: str) -> str:
     text = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
     text = re.sub(r"(?is)<style.*?>.*?</style>", " ", text)
     text = re.sub(r"(?s)<[^>]+>", " ", text)
-    text = text.replace("&nbsp;", " ")
+    text = unescape(text).replace("\xa0", " ")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _is_generic_submit_false_positive(text: str, attrs: str = "") -> bool:
+    lowered = f"{text} {attrs}".lower()
+    if text.strip().lower() == "submit":
+        return True
+    if any(marker in lowered for marker in WEAK_SUBMIT_CONTEXT_EXCLUSIONS):
+        return True
+    return lowered.strip() == "submit"
 
 
 def _extract_submit_signal(text: str) -> Optional[str]:
@@ -124,22 +213,12 @@ def _extract_submit_signal_from_html(html: str) -> Optional[str]:
             lowered = text.lower()
             if not text:
                 continue
-            if any(
-                marker in lowered
-                for marker in (
-                    "submit your tool",
-                    "submit tool",
-                    "submit site",
-                    "submit product",
-                    "add your tool",
-                    "add tool",
-                    "get listed",
-                    "list your tool",
-                    "suggest a tool",
-                    "submit ai tool",
-                    "submit",
-                )
-            ):
+            if any(marker in lowered for marker in STRONG_CTA_MARKERS):
+                href_match = re.search(r'href=["\']([^"\']+)["\']', attrs, re.I)
+                if href_match:
+                    return f"{text} ({href_match.group(1)})"
+                return text
+            if "submit" in lowered and not _is_generic_submit_false_positive(text, attrs):
                 href_match = re.search(r'href=["\']([^"\']+)["\']', attrs, re.I)
                 if href_match:
                     return f"{text} ({href_match.group(1)})"

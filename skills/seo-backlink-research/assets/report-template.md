@@ -8,36 +8,55 @@
 - [What backlink pattern we are pursuing]
 - [Short conclusion]
 
-## 2. Competitors Observed
+## 2. Product Submission Profile
+
+| Field | Value |
+|---|---|
+| Tool/Product name | |
+| Alternative name | |
+| Website URL | |
+| Short description | |
+| Long description factual | |
+| Long description marketing | |
+| Keywords/tags | |
+| Target categories | |
+| Pricing model | |
+| Logo URL | |
+| Image URLs | |
+| Contact email | |
+| Founder/name | |
+| Location | |
+
+## 3. Competitors Observed
 
 | Competitor | Why It Matters | Notes |
 |---|---|---|
 | | | |
 
-## 3. High-Value Free Submission Targets
+## 4. High-Value Free Submission Targets
 
-| URL | Type | accessible | submit_signal_found | submit_signal_snippet | free_status | replicable_status | entry_path | browser_fallback_recommended | browser_fallback_reason | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|
-| | | | | | | | | | | |
+| Target | Priority | Type | Submission URL | accessible | submit_signal_found | submit_signal_snippet | free_status | replicable_status | entry_path | confidence | browser_fallback_recommended | Task Created | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | | | | | |
 
-## 4. Worth Reviewing But Verification Failed
+## 5. Worth Reviewing But Verification Failed
 
-| URL | Why It Still Looks Valuable | failure_reason | free_status | replicable_status | entry_path | browser_fallback_recommended | browser_fallback_reason |
-|---|---|---|---|---|---|---|---|
-| | | | | | | | |
+| Target | Priority | Submission URL | Why It Still Looks Valuable | failure_reason | free_status | replicable_status | entry_path | confidence | browser_fallback_recommended | Task Created | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | | | |
 
-## 5. Query Patterns That Worked
+## 6. Query Patterns That Worked
 
 - [Query 1]
 - [Query 2]
 - [Query 3]
 
-## 6. Tasks Created For Execution
+## 7. Tasks Created For Execution
 
-| Task ID | Title | Target Domain | Platform URL | Task Type | Notes |
-|---|---|---|---|---|---|
-| | | | | | |
+| Task ID | Title | Product Domain | Target Domain | Submission URL | Priority | Task Type | Notes |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
 
-## 7. Recommended Next Step
+## 8. Recommended Next Step
 
 - [What should happen next]

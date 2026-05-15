@@ -53,7 +53,7 @@ class ModelManager:
         for k in valid_keys:
             val = raw.get(k)
             # Only pass values that are non-empty strings (after stripping)
-            # This allows PydanticAI to use defaults if the field is empty in Ferryman
+            # This allows PydanticAI to use defaults if the field is empty in RabAiAgent
             if val and str(val).strip():
                 config[k] = str(val)
 
@@ -61,8 +61,69 @@ class ModelManager:
 
     @staticmethod
     def get_llm_provider_catalog() -> dict[str, dict[str, object]]:
-        """Returns the provider metadata used by the settings UI and model registry."""
+        """Returns the provider metadata used by the settings UI and model registry.
+
+        Includes providers from both built-in sources and Hermes model-providers plugins.
+        """
         return {
+            # Hermes Providers
+            "openrouter": {
+                "label": "OpenRouter",
+                "description": "统一 API，支持 200+ 模型",
+                "placeholder_base_url": "https://openrouter.ai/api/v1",
+                "list_mode": "openai_compatible",
+                "supports_model": False,
+                "models": [
+                    "anthropic/claude-opus-4.7",
+                    "anthropic/claude-opus-4.6",
+                    "anthropic/claude-sonnet-4.6",
+                    "moonshotai/kimi-k2.6",
+                    "openai/gpt-5.5",
+                    "openai/gpt-5.5-pro",
+                    "google/gemini-3-pro-image-preview",
+                    "google/gemini-3-flash-preview",
+                    "deepseek/deepseek-v4-pro",
+                    "qwen/qwen3.6-plus",
+                ],
+            },
+            "nous": {
+                "label": "Nous Portal",
+                "description": "Nous Research 门户",
+                "placeholder_base_url": "https://api.nousresearch.com/v1",
+                "list_mode": "openai_compatible",
+                "supports_model": False,
+                "models": [
+                    "anthropic/claude-opus-4.7",
+                    "anthropic/claude-opus-4.6",
+                    "anthropic/claude-sonnet-4.6",
+                    "moonshotai/kimi-k2.6",
+                    "openai/gpt-5.5",
+                    "google/gemini-3-flash-preview",
+                    "deepseek/deepseek-v4-pro",
+                    "qwen/qwen3.6-plus",
+                ],
+            },
+            "minimax": {
+                "label": "MiniMax",
+                "description": "MiniMax 国际版",
+                "placeholder_base_url": "https://api.minimax.io/anthropic",
+                "list_mode": "anthropic",
+                "supports_model": False,
+                "models": [
+                    "minimax/minimax-m2.7",
+                ],
+            },
+            "minimax-cn": {
+                "label": "MiniMax CN",
+                "description": "MiniMax 中国版",
+                "placeholder_base_url": "https://api.minimaxi.com/anthropic",
+                "list_mode": "anthropic",
+                "supports_model": False,
+                "models": [
+                    "minimax/minimax-m2.7",
+                ],
+            },
+            # Standard Providers
             "kimi": {
                 "label": "Kimi",
                 "placeholder_base_url": "https://api.moonshot.cn/v1",
@@ -328,10 +389,19 @@ class ModelManager:
                     )
                 except ModelListEndpointUnavailable as exc:
                     logger.exception(f"Model list endpoint unavailable for provider {provider}: {exc}")
-                    provider_models = []
+                    # Fall back to catalog models if live fetch fails
+                    fallback = definition.get("models", [])
+                    provider_models = list(fallback) if fallback else []
                 except Exception as exc:
                     logger.exception(f"Failed to fetch models for provider {provider}: {exc}")
-                    provider_models = []
+                    # Fall back to catalog models if live fetch fails
+                    fallback = definition.get("models", [])
+                    provider_models = list(fallback) if fallback else []
+            elif not api_key and not stored_base_url:
+                # No credentials provided - show catalog models as suggestions
+                fallback = definition.get("models", [])
+                if fallback:
+                    provider_models = list(fallback)
 
             deduped_models = list(dict.fromkeys(model for model in provider_models if model))
             if deduped_models:
@@ -899,13 +969,13 @@ class ModelManager:
         if provider not in provider_catalog:
             raise LLMConfigurationError(f"Active model provider `{provider}` is not supported.")
 
-        if provider in {"qwen", "deepseek", "kimi"} and not base_url:
+        if provider in {"qwen", "deepseek", "kimi", "openrouter", "nous", "minimax", "minimax-cn"} and not base_url:
             base_url = provider_catalog[provider]["placeholder_base_url"]
-        if provider == "anthropic" and isinstance(base_url, str) and base_url.rstrip("/").endswith("/v1"):
+        if provider in {"anthropic", "minimax", "minimax-cn"} and isinstance(base_url, str) and base_url.rstrip("/").endswith("/v1"):
             base_url = base_url.rstrip("/")[:-3]
 
         missing_fields: list[str] = []
-        if provider in {"gemini", "openai", "anthropic", "qwen", "deepseek", "kimi", "custom"} and not api_key:
+        if provider in {"gemini", "openai", "anthropic", "qwen", "deepseek", "kimi", "openrouter", "nous", "minimax", "minimax-cn", "custom"} and not api_key:
             missing_fields.append("API Key")
         if provider == "custom" and not base_url:
             missing_fields.append("Base URL")
@@ -920,7 +990,7 @@ class ModelManager:
         p_kwargs = {k: v for k, v in {"api_key": api_key, "base_url": base_url}.items() if v is not None}
 
         try:
-            if provider in {"openai", "qwen", "deepseek", "custom"}:
+            if provider in {"openai", "qwen", "deepseek", "openrouter", "nous", "custom"}:
                 from pydantic_ai.models.openai import OpenAIChatModel
                 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -932,7 +1002,7 @@ class ModelManager:
 
                 openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
                 return OpenAIChatModel(model_name, provider=MoonshotAIProvider(openai_client=openai_client))
-            if provider == "anthropic":
+            if provider in {"anthropic", "minimax", "minimax-cn"}:
                 from pydantic_ai.models.anthropic import AnthropicModel
                 from pydantic_ai.providers.anthropic import AnthropicProvider
 

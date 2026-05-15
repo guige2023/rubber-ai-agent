@@ -6,7 +6,7 @@ description: >
   and ad group structuring, or executable ASA keyword CSV generation for an
   App Store app.
 version: 0.1.19
-author: Ferryman
+author: RabAiAgent
 updated: 2026-05-07
 ---
 

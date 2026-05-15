@@ -78,7 +78,7 @@ async def get_active_model(context):
 
 @method
 async def get_model_readiness(context):
-    """Return whether Ferryman has a usable active model for chat."""
+    """Return whether RabAiAgent has a usable active model for chat."""
     return Success(context.runtime.model_manager.get_model_readiness())
 
 

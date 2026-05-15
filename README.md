@@ -1,11 +1,11 @@
-# Ferryman
+# RabAiAgent
 
-Ferryman is a local-first desktop AI agent platform built with Tauri, React,
+RabAiAgent is a local-first desktop AI agent platform built with Tauri, React,
 and a Python sidecar backend. It packages reusable automations as file-based
-Skills and keeps runtime data under the local Ferryman data root instead of a
+Skills and keeps runtime data under the local RabAiAgent data root instead of a
 shared cloud workspace.
 
-## What Ferryman Is For
+## What RabAiAgent Is For
 
 - Local-first desktop agent workflows
 - Skill-based automation distributed as folders and files
@@ -19,7 +19,7 @@ shared cloud workspace.
 - `backend/`: FastAPI/WebSocket sidecar, kernel, storage models, toolkits, and Python tests
 - `skills/`: built-in Skills with `SKILL.md`, optional `scripts/`, `assets/`, and references
 
-Ferryman uses JSON-RPC 2.0 over WebSocket between the desktop shell and the
+RabAiAgent uses JSON-RPC 2.0 over WebSocket between the desktop shell and the
 local Python process. Local app data is designed to live under `~/.ferryman/`.
 
 ## Implementation Details
@@ -35,24 +35,24 @@ bridge.
 
 The backend exposes a local WebSocket endpoint and uses JSON-RPC 2.0 for
 request and event flow. The frontend connects only to the local sidecar and
-does not require a Ferryman cloud control plane for core operation.
+does not require a RabAiAgent cloud control plane for core operation.
 
 ### Skills and Execution
 
 Skills are stored as folders with `SKILL.md` plus optional private scripts,
-assets, and references. Runtime work is performed against the local Ferryman
+assets, and references. Runtime work is performed against the local RabAiAgent
 workspace, and built-in Skills are bundled into the desktop application for
 distribution.
 
 ### Data Model
 
-Ferryman stores local state in SQLite and keeps app data under `~/.ferryman/`.
+RabAiAgent stores local state in SQLite and keeps app data under `~/.ferryman/`.
 The backend tracks sessions, messages, tasks, schedules, and app configuration
 through local models and sidecar-managed persistence.
 
 ### Model Access
 
-Ferryman is designed for BYOK usage. Provider credentials are kept local and
+RabAiAgent is designed for BYOK usage. Provider credentials are kept local and
 the app can route to OpenAI-compatible APIs, Anthropic, Gemini, and related
 providers depending on local configuration.
 
@@ -90,7 +90,7 @@ them on the local machine instead of in a restricted sandbox.
 
 ### macOS Desktop Build
 
-Ferryman currently ships a macOS desktop packaging flow from the frontend
+RabAiAgent currently ships a macOS desktop packaging flow from the frontend
 workspace:
 
 ```bash
@@ -134,7 +134,7 @@ and copies the final artifacts into `dist/`.
 Do not commit local credentials, API keys, signing certificates, notarization
 keys, `.env` files, local database files, or generated release artifacts.
 
-Ferryman includes two layers of secret protection:
+RabAiAgent includes two layers of secret protection:
 
 1. Local hooks in `.githooks/` for `pre-commit` and `pre-push`
 2. A GitHub Actions workflow that scans pushes and pull requests
@@ -168,7 +168,7 @@ API writes, and GitHub MCP interactions in supported public repositories:
 ## Trademark
 
 The Apache 2.0 license covers the source code. It does not grant rights to use
-the Ferryman name, official logos, application icons,
+the RabAiAgent name, official logos, application icons,
 or signing and distribution identities in a way that suggests an official
 release or endorsement.
 
@@ -178,5 +178,5 @@ channels unless written permission is granted.
 
 ## License
 
-Ferryman source code is licensed under the Apache License, Version 2.0. See
+RabAiAgent source code is licensed under the Apache License, Version 2.0. See
 [LICENSE](LICENSE) and [NOTICE](NOTICE).

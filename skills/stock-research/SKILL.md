@@ -7,7 +7,7 @@ description: >
   undervalued, overvalued, or worth buying. Produces a data-backed research
   report using provider financials, scenario valuation, and price/volume timing.
 version: 0.2.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-04-12
 updated: 2026-05-12
 ---

@@ -10,7 +10,7 @@ import pytest
 from pydantic_ai.exceptions import ModelRetry
 
 from app.core.config import Settings
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.core.skill_manager import SkillManager
 from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.file import FileToolkit
@@ -18,7 +18,7 @@ from app.core.toolkits.skill import SkillToolkit
 from app.models.schemas import SkillModel
 
 # Setup paths for tests
-TEST_ROOT = Path("/tmp/ferryman_skill_test")
+TEST_ROOT = Path("/tmp/rabaiagent_skill_test")
 TEST_USER_SKILLS = TEST_ROOT / "user" / "skills"
 TEST_BUNDLED_SKILLS = TEST_ROOT / "bundled" / "skills"
 TEST_WORKSPACES = TEST_ROOT / "workspaces"
@@ -125,7 +125,7 @@ def test_scan_skills_and_text_index():
     create_mock_skill("user_skill", "User skill desc", TEST_USER_SKILLS)
     create_mock_skill("internal_skill", "Internal skill desc", TEST_BUNDLED_SKILLS)
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
     assert "user_skill" in kernel.skill_manager.skills
     assert "internal_skill" in kernel.skill_manager.skills
@@ -139,7 +139,7 @@ def test_scan_skills_and_text_index():
 def test_skill_index_flattens_multiline_descriptions():
     create_mock_skill_with_multiline_description("multiline_skill", TEST_USER_SKILLS)
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     skill_index = kernel.skill_manager.get_skill_index_text()
@@ -148,7 +148,7 @@ def test_skill_index_flattens_multiline_descriptions():
 
 def test_read_skill_sop():
     create_mock_skill("target_skill", "Test", TEST_USER_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
     
     sop = kernel.skill_manager.read_skill_sop("target_skill")
@@ -163,7 +163,7 @@ def test_read_skill_sop():
 @pytest.mark.asyncio
 async def test_skill_context_can_list_its_own_bundled_scripts():
     create_mock_skill_with_script("bundled_skill", "Bundled skill desc", TEST_BUNDLED_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
     skill = kernel.skill_manager.skills["bundled_skill"]
 
@@ -185,7 +185,7 @@ async def test_read_skill_file_reads_current_skill_resource():
         "Bundled skill desc",
         TEST_BUNDLED_SKILLS,
     )
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
@@ -206,7 +206,7 @@ async def test_read_skill_file_requires_skill_context():
         "Bundled skill desc",
         TEST_BUNDLED_SKILLS,
     )
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
@@ -225,7 +225,7 @@ async def test_read_skill_file_rejects_absolute_paths():
         "Bundled skill desc",
         TEST_BUNDLED_SKILLS,
     )
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
@@ -247,7 +247,7 @@ def test_runtime_augmented_instruction_includes_current_skill_dir():
         "Bundled skill desc",
         TEST_BUNDLED_SKILLS,
     )
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     prompt = kernel.prompt_builder.build_runtime_augmented_instruction(
@@ -262,7 +262,7 @@ def test_runtime_augmented_instruction_includes_current_skill_dir():
 @pytest.mark.asyncio
 async def test_skill_context_keeps_writes_inside_session_workspace():
     create_mock_skill_with_script("bundled_skill", "Bundled skill desc", TEST_BUNDLED_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
     skill = kernel.skill_manager.skills["bundled_skill"]
 
@@ -279,7 +279,7 @@ async def test_skill_context_keeps_writes_inside_session_workspace():
 @pytest.mark.asyncio
 async def test_skill_context_rejects_out_of_scope_read_with_model_retry():
     create_mock_skill_with_script("bundled_skill", "Bundled skill desc", TEST_BUNDLED_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
@@ -296,7 +296,7 @@ async def test_skill_context_rejects_out_of_scope_read_with_model_retry():
 @pytest.mark.asyncio
 async def test_skill_context_rejects_out_of_scope_list_with_model_retry():
     create_mock_skill_with_script("bundled_skill", "Bundled skill desc", TEST_BUNDLED_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
@@ -312,7 +312,7 @@ async def test_skill_context_rejects_out_of_scope_list_with_model_retry():
 
 @pytest.mark.asyncio
 async def test_read_file_requests_retry_when_file_is_missing():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
         session_id="skill-session",
         run_id="run-read-missing-file",
@@ -325,7 +325,7 @@ async def test_read_file_requests_retry_when_file_is_missing():
 @pytest.mark.asyncio
 async def test_run_skill_script_requests_retry_when_script_is_missing():
     create_mock_skill("bundled_skill", "Bundled skill desc", TEST_BUNDLED_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
@@ -341,7 +341,7 @@ async def test_run_skill_script_requests_retry_when_script_is_missing():
 # --- Publish Skill Tests ---
 @pytest.mark.asyncio
 async def test_publish_skill_copies_draft_and_registers_it():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     session_id = "publish-session"
     workspace = kernel.get_session_workspace(session_id)
     draft_dir = workspace / "draft-skill"
@@ -365,7 +365,7 @@ async def test_publish_skill_copies_draft_and_registers_it():
 
 @pytest.mark.asyncio
 async def test_publish_skill_rejects_paths_outside_workspace():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     session_id = "publish-session"
     outside_dir = TEST_ROOT / "outside-skill"
     create_draft_skill(outside_dir, name="outside-skill")
@@ -382,7 +382,7 @@ async def test_publish_skill_rejects_paths_outside_workspace():
 @pytest.mark.asyncio
 async def test_skill_creator_draft_publish_lifecycle_stays_in_allowed_paths():
     shutil.copytree(REPO_ROOT / "skills" / "skill-creator", TEST_BUNDLED_SKILLS / "skill-creator")
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     session_id = "creator-session"
@@ -434,7 +434,7 @@ async def test_run_skill_script_returns_parsed_stdout_and_ignores_success_stderr
         "import json\nimport sys\nsys.stderr.write('debug noise\\n')\nprint(json.dumps({'value': 42}))\n",
         encoding="utf-8",
     )
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
         session_id="skill-session",
@@ -456,7 +456,7 @@ async def test_run_skill_script_returns_lightweight_failure_with_cmd_and_optiona
         "import json\nimport sys\nprint(json.dumps({'partial': True}))\nsys.stderr.write('boom\\n')\nsys.exit(2)\n",
         encoding="utf-8",
     )
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
     ctx = SimpleNamespace(deps=kernel.create_agent_deps(
         session_id="skill-session",
@@ -497,7 +497,7 @@ def test_init_skill_creates_draft_structure(tmp_path):
     assert skill_md.exists()
     skill_content = skill_md.read_text(encoding="utf-8")
     assert "version: 0.1.0" in skill_content
-    assert "author: Ferryman" in skill_content
+    assert "author: RabAiAgent" in skill_content
     assert f"created: {date.today().isoformat()}" in skill_content
     assert f"updated: {date.today().isoformat()}" in skill_content
     assert (draft_dir / "scripts").is_dir()
@@ -512,7 +512,7 @@ def test_quick_validate_accepts_valid_skill(tmp_path):
 name: demo-skill
 description: Demo trigger description
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-04-14
 updated: 2026-04-14
 ---
@@ -544,7 +544,7 @@ def test_quick_validate_accepts_incremented_semantic_version(tmp_path):
 name: demo-skill
 description: Demo trigger description
 version: 0.1.2
-author: Ferryman
+author: RabAiAgent
 created: 2026-04-14
 updated: 2026-04-14
 ---
@@ -573,7 +573,7 @@ def test_quick_validate_rejects_name_mismatch(tmp_path):
 name: demo-skill
 description: Demo trigger description
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-04-14
 updated: 2026-04-14
 ---
@@ -598,12 +598,12 @@ updated: 2026-04-14
 def test_run_skill_script_uses_frozen_sidecar_entrypoint_for_python(monkeypatch):
     script_path = Path("/tmp/demo.py")
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", "/tmp/ferryman")
+    monkeypatch.setattr(sys, "executable", "/tmp/rabaiagent")
 
     command = CommandToolkit._build_command(script_path, ["--flag", "value"])
 
     assert command == [
-        "/tmp/ferryman",
+        "/tmp/rabaiagent",
         "--run-python-script",
         "/tmp/demo.py",
         "--flag",

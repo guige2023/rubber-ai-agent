@@ -4,10 +4,12 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { useBackendConnection, type ToolActivityPayload } from './hooks/useBackendConnection';
 import { useSessions, type Message, type MessageModelCost, type MessageModelUsage, type MessageRunStatus } from './hooks/useSessions';
 import { useI18n } from './hooks/useI18n';
-import { 
-  Settings, 
-  Send, 
-  Cpu, 
+import { useCommands } from './hooks/useCommands';
+import { useSessionSearch } from './hooks/useSessionSearch';
+import {
+  Settings,
+  Send,
+  Cpu,
   Activity,
   CalendarClock,
   ChevronDown,
@@ -28,7 +30,10 @@ import {
   TrendingUp,
   Gauge,
   ExternalLink,
-  BarChart3
+  BarChart3,
+  Search,
+  Slash,
+  Brain
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -37,14 +42,18 @@ import { Markdown } from './components/Markdown';
 import { RefreshIconButton } from './components/RefreshIconButton';
 import { ScheduleManager } from './components/ScheduleManager';
 import { TaskManager } from './components/TaskManager';
+import { MemoryManager } from './components/MemoryManager';
 import { SessionInsightsDrawer } from './components/SessionInsightsDrawer';
+import { CommandPalette } from './components/CommandPalette';
+import { InlineToolPreview } from './components/InlineToolPreview';
+import { SessionSearch } from './components/SessionSearch';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 const DEFAULT_FERRYMAN_WS_URL = 'ws://127.0.0.1:8000/ws';
-const DEFAULT_FERRYMAN_BEARER_TOKEN = 'dev-token';
+const DEFAULT_FERRYMAN_BEARER_TOKEN = 'dev_token_12345';
 const CHAT_RAIL_CLASS = 'mx-auto w-full max-w-[72rem]';
 
 function buildWebSocketUrl(baseUrl: string, token?: string) {
@@ -320,10 +329,10 @@ export default function App() {
   });
   const [input, setInput] = useState('');
   const [sendMode, setSendMode] = useState<SendMode>(() => (
-    localStorage.getItem('ferryman_send_mode') === 'enter' ? 'enter' : 'mod_enter'
+    localStorage.getItem('rabaiagent_send_mode') === 'enter' ? 'enter' : 'mod_enter'
   ));
   const [isSendMenuOpen, setIsSendMenuOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<'chat' | 'tasks' | 'schedules' | 'skills' | 'settings'>('chat');
+  const [currentView, setCurrentView] = useState<'chat' | 'tasks' | 'schedules' | 'skills' | 'memory' | 'settings'>('chat');
   const [settingsTab, setSettingsTab] = useState<'models' | 'logs'>('models');
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [modelReadiness, setModelReadiness] = useState<ModelReadiness | null>(null);
@@ -344,6 +353,17 @@ export default function App() {
   const [expandedToolActivityKeys, setExpandedToolActivityKeys] = useState<Set<string>>(() => new Set());
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingSessionTitle, setEditingSessionTitle] = useState('');
+
+  // Command palette state
+  const commandPalette = useCommands();
+  const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
+
+  // Session search state
+  const sessionSearch = useSessionSearch();
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // Inline tool preview state
+  const [isInlineToolsExpanded, setIsInlineToolsExpanded] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -369,6 +389,27 @@ export default function App() {
       sessionTitleInputRef.current?.select();
     });
   }, [editingSessionId]);
+
+  // Global keyboard shortcuts for command palette and search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+K or Cmd+K to open command palette
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        commandPalette.open();
+        return;
+      }
+      // Ctrl+Shift+F or Cmd+Shift+F to open search
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
+        e.preventDefault();
+        setIsSearchOpen(true);
+        return;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [commandPalette.open]);
 
   const startRenamingSession = useCallback((sessionId: string, title: string) => {
     isSavingSessionTitleRef.current = false;
@@ -417,6 +458,64 @@ export default function App() {
     });
   }, []);
 
+  // Command palette handlers
+  const handleCommandExecute = useCallback((commandId: string, args?: string) => {
+    switch (commandId) {
+      case 'new-session':
+        createNewSession();
+        break;
+      case 'search':
+        if (args) {
+          setInput(`/search ${args}`);
+          inputRef.current?.focus();
+        }
+        break;
+      case 'image':
+        if (args) {
+          setInput(`/image ${args}`);
+          inputRef.current?.focus();
+        }
+        break;
+      case 'code':
+        if (args) {
+          setInput(`/code ${args}`);
+          inputRef.current?.focus();
+        }
+        break;
+      case 'summarize':
+        setInput('/summarize');
+        inputRef.current?.focus();
+        break;
+      case 'export':
+        // TODO: Implement export
+        break;
+      case 'help':
+        setCurrentView('settings');
+        break;
+      case 'clear':
+        // Clear would need a handler - for now just show in input
+        setInput('/clear');
+        inputRef.current?.focus();
+        break;
+      case 'status':
+        // Show status in current view
+        break;
+      case 'model':
+        if (args) {
+          setInput(`/model ${args}`);
+          inputRef.current?.focus();
+        } else {
+          setCurrentView('settings');
+        }
+        break;
+    }
+  }, [createNewSession]);
+
+  // Configure command palette actions
+  useEffect(() => {
+    commandPalette.executeById = handleCommandExecute;
+  }, [commandPalette, handleCommandExecute]);
+
   const scrollChatToBottom = useCallback(() => {
     const scrollContainer = chatScrollRef.current;
     if (!scrollContainer) {
@@ -430,7 +529,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('ferryman_send_mode', sendMode);
+    localStorage.setItem('rabaiagent_send_mode', sendMode);
   }, [sendMode]);
 
   useEffect(() => {
@@ -558,7 +657,7 @@ export default function App() {
           setWsUrl(buildWebSocketUrl(connection.wsUrl, connection.accessToken));
         }
       } catch (error) {
-        console.error('Failed to initialize Ferryman backend connection:', error);
+        console.error('Failed to initialize RabAiAgent backend connection:', error);
         if (!cancelled) {
           setWsUrl(getDefaultWebSocketUrl());
         }
@@ -810,7 +909,7 @@ export default function App() {
       <aside className="w-72 border-r border-white/5 flex flex-col glass z-10 transition-all duration-300">
         <div className="p-6 pb-4">
           <div className="flex items-center gap-3">
-            <img src="/favicon.png" alt="Ferryman Logo" className="w-10 h-10 rounded-xl shadow-xl ring-1 ring-white/10 object-cover" />
+            <img src="/favicon.svg" alt="RabAiAgent Logo" className="w-10 h-10 rounded-xl shadow-xl ring-1 ring-white/10 object-cover" />
             <div>
               <h1 className="font-bold text-lg leading-tight tracking-tight">{t('app.title')}</h1>
               <p className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-bold">{t('app.subtitle')}</p>
@@ -924,9 +1023,15 @@ export default function App() {
             active={currentView === 'skills'}
             onClick={() => setCurrentView('skills')}
           />
-          <NavItem 
-            icon={<Settings size={18}/>} 
-            label={t('nav.settings')} 
+          <NavItem
+            icon={<Brain size={18}/>}
+            label={t('nav.memory') || 'Memory'}
+            active={currentView === 'memory'}
+            onClick={() => setCurrentView('memory')}
+          />
+          <NavItem
+            icon={<Settings size={18}/>}
+            label={t('nav.settings')}
             active={currentView === 'settings'}
             onClick={() => {
               setSettingsTab('models');
@@ -1365,6 +1470,16 @@ export default function App() {
                   </div>
                 )}
                 <div ref={messagesEndRef} />
+
+                {/* Inline Tool Preview */}
+                {toolActivities.length > 0 && currentSessionId && (
+                  <div className="px-8 py-4">
+                    <InlineToolPreview
+                      toolActivities={toolActivities}
+                      sessionId={currentSessionId}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Input Area */}
@@ -1372,6 +1487,24 @@ export default function App() {
                 {isModelReady ? (
                   <div className={cn(CHAT_RAIL_CLASS, "relative z-20 bg-white/[0.025] backdrop-blur-xl rounded-xl p-1 shadow-2xl group border border-white/10 focus-within:border-white/25 transition-colors")}>
                     <div className="flex items-center gap-3 p-2">
+                      {/* Command palette button */}
+                      <button
+                        type="button"
+                        onClick={() => commandPalette.open()}
+                        className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03] text-white/35 transition-colors hover:border-white/20 hover:bg-white/[0.06] hover:text-white/55"
+                        title="Commands (Ctrl+K)"
+                      >
+                        <Slash size={16} />
+                      </button>
+                      {/* Search button */}
+                      <button
+                        type="button"
+                        onClick={() => setIsSearchOpen(true)}
+                        className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03] text-white/35 transition-colors hover:border-white/20 hover:bg-white/[0.06] hover:text-white/55"
+                        title="Search (Ctrl+Shift+F)"
+                      >
+                        <Search size={16} />
+                      </button>
                       <textarea
                         ref={inputRef}
                         value={input}
@@ -1558,8 +1691,18 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
+          ) : currentView === 'memory' ? (
+            <motion.div
+              key="memory"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="flex-1 overflow-hidden"
+            >
+              <MemoryManager call={call} isConnected={isConnected} t={t} />
+            </motion.div>
           ) : (
-            <motion.div 
+            <motion.div
               key="settings"
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -1785,6 +1928,36 @@ export default function App() {
           call={call}
           onClose={() => setIsInsightsOpen(false)}
           t={t}
+        />
+
+        {/* Command Palette */}
+        <CommandPalette
+          isOpen={commandPalette.isOpen}
+          query={commandPalette.query}
+          commands={commandPalette.filteredCommands}
+          selectedIndex={commandPalette.selectedIndex}
+          onQueryChange={commandPalette.setQuery}
+          onSelect={commandPalette.selectNext}
+          onExecute={commandPalette.executeSelected}
+          onClose={commandPalette.close}
+        />
+
+        {/* Session Search */}
+        <SessionSearch
+          isOpen={isSearchOpen}
+          sessions={sessions.map((s) => ({ id: s.id, title: s.title }))}
+          onSearch={async (sessionId, query) => {
+            try {
+              const res: any = await call('list_messages', { session_id: sessionId, limit: 100 });
+              return res.messages || [];
+            } catch {
+              return [];
+            }
+          }}
+          onSelectSession={(sessionId) => {
+            switchSession(sessionId);
+          }}
+          onClose={() => setIsSearchOpen(false)}
         />
       </main>
     </div>

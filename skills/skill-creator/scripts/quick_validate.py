@@ -17,7 +17,7 @@ REQUIRED_FRONTMATTER_FIELDS = ("name", "description", "version", "author", "crea
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Quick validation for a Ferryman skill draft.")
+    parser = argparse.ArgumentParser(description="Quick validation for a RabAiAgent skill draft.")
     parser.add_argument("skill_dir", help="Path to the draft skill directory.")
     return parser
 

@@ -1,2 +1,2 @@
-"""JSON-RPC transport modules for the Ferryman sidecar."""
+"""JSON-RPC transport modules for the RabAiAgent sidecar."""
 

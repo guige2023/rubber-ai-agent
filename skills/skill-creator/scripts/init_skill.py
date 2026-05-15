@@ -10,7 +10,7 @@ NAME_RE = re.compile(r"^[a-z0-9-]{1,64}$")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Initialize a Ferryman skill draft in the current workspace.")
+    parser = argparse.ArgumentParser(description="Initialize a RabAiAgent skill draft in the current workspace.")
     parser.add_argument("skill_name", help="Hyphen-case skill name.")
     parser.add_argument("--description", default="", help="Short trigger-oriented description.")
     parser.add_argument("--output-dir", default=".", help="Workspace-relative or absolute output directory.")
@@ -43,7 +43,7 @@ def main() -> int:
 name: {args.skill_name}
 description: {description}
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: {today}
 updated: {today}
 ---

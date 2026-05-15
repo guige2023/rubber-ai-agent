@@ -4,7 +4,7 @@ description: >
   Discover free or replicable SEO backlink opportunities, verify submission paths,
   create structured follow-up tasks, and save a concise research report.
 version: 0.2.1
-author: Ferryman
+author: RabAiAgent
 created: 2026-03-19
 updated: 2026-05-14
 ---

@@ -5,7 +5,7 @@ description: >
   pages, components, dashboards, prototypes, or full frontend experiences. Optimizes
   for distinctive production-grade visual design, accessibility, and implementation polish.
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-04-13
 updated: 2026-04-14
 ---
@@ -174,7 +174,7 @@ Before building components, establish the design system in CSS:
 1. **Working Code**: Every output must be runnable. No placeholder `// TODO` blocks.
 2. **Semantic HTML**: Use `<header>`, `<nav>`, `<main>`, `<section>`, `<article>`, `<aside>`, `<footer>`.
 3. **Accessibility**: Proper ARIA labels, sufficient color contrast (WCAG AA minimum), keyboard navigable.
-4. **CJK Typography**: Follow Ferryman convention — no spaces between Chinese characters and English/numbers.
+4. **CJK Typography**: Follow RabAiAgent convention — no spaces between Chinese characters and English/numbers.
 5. **File Output**: Save completed pages/components to the workspace. Provide the file path in your response.
 
 ## Aesthetic Inspiration Palette

@@ -13,13 +13,13 @@ from sqlmodel import desc, select
 from app.core.db import get_session
 from app.core.run_registry import RunAlreadyActiveError
 from app.models.database import MessageModel, SessionModel
-from app.models.events import FerrymanEventEnvelope
+from app.models.events import RabAiAgentEventEnvelope
 from app.rpc.events import build_emit_ws_event, emit_refresh_event
 
 logger = logging.getLogger(__name__)
 
 
-def load_persisted_chat_run_event(session_id: str, run_id: str) -> FerrymanEventEnvelope | None:
+def load_persisted_chat_run_event(session_id: str, run_id: str) -> RabAiAgentEventEnvelope | None:
     from app.models.events import ChatFinalPayload, EventNamespace
 
     with get_session() as db_session:
@@ -38,7 +38,7 @@ def load_persisted_chat_run_event(session_id: str, run_id: str) -> FerrymanEvent
 
         metadata = dict(assistant_message.metadata_ or {})
         usage = metadata.get("usage") or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-        return FerrymanEventEnvelope(
+        return RabAiAgentEventEnvelope(
             namespace=EventNamespace.AGENT,
             event="chat_final",
             session_id=session_id,
@@ -61,7 +61,7 @@ def persist_failed_chat_run(
     run_id: str,
     error_message: str,
     instruction: str | None = None,
-) -> FerrymanEventEnvelope:
+) -> RabAiAgentEventEnvelope:
     from app.models.events import ChatFinalPayload, EventNamespace
 
     failure_content = f"Run failed: {error_message}"
@@ -133,7 +133,7 @@ def persist_failed_chat_run(
     if persisted_event is not None:
         return persisted_event
 
-    return FerrymanEventEnvelope(
+    return RabAiAgentEventEnvelope(
         namespace=EventNamespace.AGENT,
         event="chat_final",
         session_id=session_id,
@@ -151,7 +151,7 @@ def persist_failed_chat_run(
     )
 
 
-def persist_canceled_chat_run(session_id: str, run_id: str) -> FerrymanEventEnvelope:
+def persist_canceled_chat_run(session_id: str, run_id: str) -> RabAiAgentEventEnvelope:
     from app.models.events import ChatFinalPayload, EventNamespace
 
     canceled_message = {
@@ -196,7 +196,7 @@ def persist_canceled_chat_run(session_id: str, run_id: str) -> FerrymanEventEnve
 
         db_session.commit()
 
-    return FerrymanEventEnvelope(
+    return RabAiAgentEventEnvelope(
         namespace=EventNamespace.AGENT,
         event="chat_final",
         session_id=session_id,
@@ -282,7 +282,7 @@ async def background_execute_run(
             return
 
         try:
-            final_event = FerrymanEventEnvelope.model_validate(result)
+            final_event = RabAiAgentEventEnvelope.model_validate(result)
         except Exception as exc:
             logger.exception(f"Failed to validate final event for session {session_id}")
             fallback_event = load_persisted_chat_run_event(session_id, run_id)

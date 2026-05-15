@@ -17,20 +17,20 @@ BACKEND_CACHE_ROOT = BACKEND_BUILD_ROOT / "cache"
 BACKEND_DST = GEN_ROOT / "backend-sidecar"
 SKILLS_DST = GEN_ROOT / "skills"
 FORBIDDEN_PROMPT_FILES = {"GEMINI.md", "AGENT.md", "CLAUDE.md"}
-PYINSTALLER_SPEC = ROOT / "backend" / "ferryman_backend.spec"
+PYINSTALLER_SPEC = ROOT / "backend" / "rabaiagent_backend.spec"
 
 
 def candidate_backend_pythons() -> list[Path]:
     candidates: list[Path] = []
-    env_override = os.environ.get("FERRYMAN_BACKEND_PYTHON")
+    env_override = os.environ.get("RABAIAGENT_BACKEND_PYTHON")
     if env_override:
         candidates.append(Path(env_override).expanduser())
 
     home = Path.home()
     candidates.extend(
         [
-            home / "miniconda3" / "envs" / "ferryman" / "bin" / "python",
-            home / "anaconda3" / "envs" / "ferryman" / "bin" / "python",
+            home / "miniconda3" / "envs" / "rabaiagent" / "bin" / "python",
+            home / "anaconda3" / "envs" / "rabaiagent" / "bin" / "python",
         ]
     )
 
@@ -47,8 +47,8 @@ def resolve_backend_python() -> Path:
         if candidate.exists():
             return candidate
     raise RuntimeError(
-        "Could not locate a Python interpreter for the ferryman backend build. "
-        "Set FERRYMAN_BACKEND_PYTHON or activate the ferryman environment first."
+        "Could not locate a Python interpreter for the RabAiAgent backend build. "
+        "Set RABAIAGENT_BACKEND_PYTHON or activate the rabaiagent environment first."
     )
 
 
@@ -104,7 +104,7 @@ def build_backend_sidecar() -> None:
             f"`{python_executable} -m pip install -r backend/requirements-build.txt`."
         ) from exc
 
-    built_dir = BACKEND_DIST_ROOT / "ferryman"
+    built_dir = BACKEND_DIST_ROOT / "rabaiagent"
     if not built_dir.exists():
         raise RuntimeError(f"Expected built backend sidecar at {built_dir}")
     shutil.copytree(built_dir, BACKEND_DST, dirs_exist_ok=True)

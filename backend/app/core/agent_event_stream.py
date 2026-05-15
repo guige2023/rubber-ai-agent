@@ -1,4 +1,4 @@
-"""Map PydanticAI stream events into Ferryman agent websocket events."""
+"""Map PydanticAI stream events into RabAiAgent agent websocket events."""
 
 from __future__ import annotations
 

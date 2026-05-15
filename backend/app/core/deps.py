@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from app.core.schedule_manager import ScheduleManager
     from app.core.skill_manager import SkillManager
     from app.core.task_manager import TaskManager
-    from app.models.events import FerrymanEventEnvelope
+    from app.models.events import RabAiAgentEventEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +36,13 @@ class AgentDeps:
     skill_name: Optional[str] = None
     model_usage_tracker: "ModelUsageTracker | None" = None
     model_pricing_service: "ModelPricingService | None" = None
-    emit_event_cb: Optional[Callable[["FerrymanEventEnvelope"], Awaitable[None]]] = None
+    emit_event_cb: Optional[Callable[["RabAiAgentEventEnvelope"], Awaitable[None]]] = None
     schedule_manager: "ScheduleManager | None" = None
     _tool_event_seq: int = field(default=0, init=False, repr=False)
 
     async def emit_tool_event(self, run_id: str, tool_name: str, phase: str, **kwargs: object) -> None:
         if self.emit_event_cb:
-            from app.models.events import FerrymanEventEnvelope, EventNamespace, ToolActivityPayload, ToolPhase
+            from app.models.events import RabAiAgentEventEnvelope, EventNamespace, ToolActivityPayload, ToolPhase
             self._tool_event_seq += 1
             event_id = shortuuid.uuid()
             payload = ToolActivityPayload(
@@ -53,7 +53,7 @@ class AgentDeps:
                 phase=ToolPhase(phase),
                 **kwargs
             )
-            event = FerrymanEventEnvelope(
+            event = RabAiAgentEventEnvelope(
                 namespace=EventNamespace.AGENT,
                 event="tool_activity",
                 session_id=self.session_id,

@@ -7,10 +7,10 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry, SkipToolExecution
 
 from app.core.config import Settings
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.core.tool_activity_payload import compact_tool_event_text, summarize_tool_input_value
 from app.core.tool_manager import (
-    FerrymanToolValidationCapability,
+    RabAiAgentToolValidationCapability,
     ToolManager,
 )
 from app.core.toolkits.base import Toolkit
@@ -115,7 +115,7 @@ def test_non_web_tools_are_not_registered_as_sequential():
 
 @pytest.mark.asyncio
 async def test_tool_validation_capability_normalizes_json_string_array_args():
-    capability = FerrymanToolValidationCapability()
+    capability = RabAiAgentToolValidationCapability()
     tool_def = SimpleNamespace(
         parameters_json_schema={
             "type": "object",
@@ -149,7 +149,7 @@ async def test_tool_validation_capability_normalizes_json_string_array_args():
 
 @pytest.mark.asyncio
 async def test_tool_validation_capability_normalizes_with_real_send_email_schema():
-    capability = FerrymanToolValidationCapability()
+    capability = RabAiAgentToolValidationCapability()
     agent = Agent("test")
     ToolManager().register_toolkit(agent, EmailToolkit)
     tool_def = agent._function_toolset.tools["send_email"].function_schema
@@ -175,7 +175,7 @@ async def test_tool_validation_capability_normalizes_with_real_send_email_schema
 
 @pytest.mark.asyncio
 async def test_tool_validation_capability_returns_tool_error_for_validation_failures():
-    capability = FerrymanToolValidationCapability()
+    capability = RabAiAgentToolValidationCapability()
     args = await capability.on_tool_validate_error(
         SimpleNamespace(),
         call=SimpleNamespace(tool_name="send_email"),
@@ -199,7 +199,7 @@ async def test_tool_validation_capability_returns_tool_error_for_validation_fail
 
 @pytest.mark.asyncio
 async def test_tool_manager_registers_wrapped_tool_without_emitting_ui_events(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     manager = ToolManager()
     agent = Agent("test")
     agent.tool = MagicMock()
@@ -226,7 +226,7 @@ async def test_tool_manager_registers_wrapped_tool_without_emitting_ui_events(tm
 
 @pytest.mark.asyncio
 async def test_tool_manager_soft_fails_model_retry_on_last_attempt(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     manager = ToolManager()
     agent = Agent("test")
     agent.tool = MagicMock()

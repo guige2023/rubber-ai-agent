@@ -1,21 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from app.core.config import Settings
 from app.core.db import init_db
+from app.core.heartbeat.runner import HeartbeatRunner, DEFAULT_HEARTBEAT_TASKS
+from app.core.evolution.evolution_manager import EvolutionManager
+from app.core.evolution.nudge import NudgeSignal
+from app.core.memory.memory_manager import MemoryManager
 
 if TYPE_CHECKING:
     from app.core.deps import AgentDeps
-    from app.models.events import FerrymanEventEnvelope
+    from app.models.events import RabAiAgentEventEnvelope
 
 logger = logging.getLogger(__name__)
 
 
-class FerrymanRuntime:
-    """Composition root for the Ferryman local sidecar runtime."""
+class RabAiAgentRuntime:
+    """Composition root for the RabAiAgent local sidecar runtime."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -69,6 +74,70 @@ class FerrymanRuntime:
         )
         self.run_registry = RunRegistry(self)
 
+        # Initialize MemoryManager
+        self.memory_manager = MemoryManager()
+
+        # Initialize EvolutionManager
+        self.evolution_manager = EvolutionManager()
+
+        # Initialize HeartbeatRunner with default tasks
+        self.heartbeat_runner = HeartbeatRunner(tasks=DEFAULT_HEARTBEAT_TASKS)
+
+    async def start(self) -> None:
+        """Start all runtime systems."""
+        # Set up heartbeat handler that processes signals via evolution manager
+        async def heartbeat_handler(tasks: list[dict]) -> None:
+            for task in tasks:
+                # Extract prompt from heartbeat task
+                task_prompt = task.get("prompt", "")
+                if not task_prompt:
+                    continue
+
+                # Detect signals from the heartbeat task
+                signals = self.evolution_manager.detect_signals(
+                    user_message=task_prompt,
+                    agent_response="",
+                    tool_calls=[],
+                )
+
+                # Process any detected signals
+                if signals:
+                    await self.evolution_manager.process_signals(
+                        signals,
+                        {"source": "heartbeat", "task_name": task.get("name", "unknown")},
+                    )
+
+        self.heartbeat_runner.set_heartbeat_handler(heartbeat_handler)
+
+        # Initialize and start memory manager
+        await self.memory_manager.initialize()
+
+        # Initialize evolution manager (starts background reviewer and curator)
+        await self.evolution_manager.initialize()
+
+        # Start heartbeat runner
+        await self.heartbeat_runner.start()
+
+        logger.info("RabAiAgentRuntime started: heartbeat, evolution, and memory systems initialized")
+
+    async def shutdown(self) -> None:
+        """Shutdown all runtime systems gracefully."""
+        logger.info("Shutting down RabAiAgentRuntime...")
+
+        # Stop heartbeat runner
+        if hasattr(self, 'heartbeat_runner') and self.heartbeat_runner:
+            await self.heartbeat_runner.stop()
+
+        # Shutdown evolution manager
+        if hasattr(self, 'evolution_manager') and self.evolution_manager:
+            await self.evolution_manager.shutdown()
+
+        # Shutdown memory manager
+        if hasattr(self, 'memory_manager') and self.memory_manager:
+            await self.memory_manager.shutdown()
+
+        logger.info("RabAiAgentRuntime shutdown complete")
+
     @staticmethod
     def _init_directories(settings: Settings) -> None:
         sub_dirs = [
@@ -96,7 +165,7 @@ class FerrymanRuntime:
         *,
         run_id: str,
         skill_name: Optional[str] = None,
-        emit_event_cb: Optional[Callable[["FerrymanEventEnvelope"], Awaitable[None]]] = None,
+        emit_event_cb: Optional[Callable[["RabAiAgentEventEnvelope"], Awaitable[None]]] = None,
     ) -> "AgentDeps":
         from app.core.deps import AgentDeps
 
@@ -122,7 +191,7 @@ class FerrymanRuntime:
         session_id: str,
         *,
         run_id: str,
-        emit_event_cb: Optional[Callable[["FerrymanEventEnvelope"], Awaitable[None]]] = None,
+        emit_event_cb: Optional[Callable[["RabAiAgentEventEnvelope"], Awaitable[None]]] = None,
     ) -> dict[str, object]:
         deps = self.create_agent_deps(
             session_id=session_id,

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to Ferryman.
+Thanks for contributing to RabAiAgent.
 
 ## Before You Start
 

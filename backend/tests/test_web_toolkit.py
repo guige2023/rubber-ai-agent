@@ -125,7 +125,7 @@ async def test_web_toolkit_browser_e2e(tmp_path):
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Ferryman Browser E2E</title>
+  <title>RabAiAgent Browser E2E</title>
   <style>
     body { font-family: sans-serif; margin: 0; }
     main { padding: 24px; }
@@ -134,7 +134,7 @@ async def test_web_toolkit_browser_e2e(tmp_path):
 </head>
 <body>
   <main>
-    <h1>Ferryman Browser E2E</h1>
+    <h1>RabAiAgent Browser E2E</h1>
     <label for="name">Name</label>
     <input id="name" placeholder="Type here" />
     <button id="save">Save</button>
@@ -172,7 +172,7 @@ async def test_web_toolkit_browser_e2e(tmp_path):
     try:
         navigate_result = await WebToolkit.browser_navigate(ctx, page_path.as_uri(), include_snapshot=True)
         assert navigate_result["status"] == "success"
-        assert navigate_result["title"] == "Ferryman Browser E2E"
+        assert navigate_result["title"] == "RabAiAgent Browser E2E"
         assert navigate_result["snapshot_included"] is True
         assert "[Browser content: untrusted]" in navigate_result["interactive_snapshot"]
         assert "textbox" in navigate_result["interactive_snapshot"]

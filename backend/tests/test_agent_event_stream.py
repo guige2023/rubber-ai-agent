@@ -6,13 +6,13 @@ from pydantic_ai.messages import RetryPromptPart, ToolCallPart
 
 from app.core.agent_event_stream import emit_agent_stream_event
 from app.core.config import Settings
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.models.events import ToolPhase
 
 
 @pytest.mark.asyncio
 async def test_agent_event_stream_emits_retry_prompt_error_output(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     mock_emit = AsyncMock()
     deps = runtime.create_agent_deps(
         session_id="s-retry-event",

@@ -31,20 +31,20 @@ class Settings(BaseSettings):
         populate_by_name=True
     )
 
-    # Base directory for all Ferryman persistence
-    root_dir: Path = Field(default=Path.home() / ".ferryman", validation_alias="FERRYMAN_ROOT_DIR")
+    # Base directory for all RabAiAgent persistence
+    root_dir: Path = Field(default=Path.home() / ".rabaiagent", validation_alias="RABAIAGENT_ROOT_DIR")
     port: int = 8000
     log_level: str = Field(
         default="DEBUG",
-        validation_alias=AliasChoices("FERRYMAN_LOG_LEVEL", "LOG_LEVEL"),
+        validation_alias=AliasChoices("RABAIAGENT_LOG_LEVEL", "LOG_LEVEL"),
     )
     resend_default_from: str = Field(
-        default="noreply@ferryman.app",
-        validation_alias="FERRYMAN_RESEND_DEFAULT_FROM",
+        default="noreply@rabaiagent.app",
+        validation_alias="RABAIAGENT_RESEND_DEFAULT_FROM",
     )
     model_pricing_refresh_enabled: bool = Field(
         default=True,
-        validation_alias="FERRYMAN_MODEL_PRICING_REFRESH_ENABLED",
+        validation_alias="RABAIAGENT_MODEL_PRICING_REFRESH_ENABLED",
     )
 
     @property
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         # DB must be inside user_dir to migrate sessions and settings
-        return self.user_dir / "ferryman.db"
+        return self.user_dir / "rabaiagent.db"
 
     @property
     def log_dir(self) -> Path:
@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     @property
     def bundled_skills_dir(self) -> Path:
         """Return the built-in skills directory for the current runtime."""
-        env_override = os.environ.get("FERRYMAN_BUNDLED_SKILLS_DIR")
+        env_override = os.environ.get("RABAIAGENT_BUNDLED_SKILLS_DIR")
         if env_override:
             return Path(env_override).expanduser()
 

@@ -2,7 +2,7 @@
 
 ## Our Standard
 
-Contributors should help keep Ferryman collaborative, respectful, and useful.
+Contributors should help keep RabAiAgent collaborative, respectful, and useful.
 We expect participants to:
 
 - communicate professionally and constructively

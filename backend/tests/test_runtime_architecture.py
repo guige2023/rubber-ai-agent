@@ -40,7 +40,7 @@ def test_backend_has_no_kernel_compatibility_surface():
     assert not Path("backend/app/core/kernel.py").exists()
 
     forbidden_patterns = (
-        "FerrymanKernel",
+        "RabAiAgentKernel",
         "app.core.kernel",
         "ctx.deps.kernel",
         "deps.kernel",

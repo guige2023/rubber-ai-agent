@@ -18,7 +18,7 @@ BUNDLE_SMOKE_SKILL_NAME = "bundle-smoke-skill"
 def required_paths(app_path: Path) -> list[Path]:
     resources = app_path / "Contents" / "Resources" / "gen"
     return [
-        resources / "backend-sidecar" / "ferryman",
+        resources / "backend-sidecar" / "rabaiagent",
         resources / "backend-sidecar" / "_internal" / "playwright_stealth" / "js" / "generate.magic.arrays.js",
         resources / "backend-sidecar" / "_internal" / "trafilatura" / "settings.cfg",
         resources / "backend-sidecar" / "_internal" / "justext" / "stoplists",
@@ -27,11 +27,11 @@ def required_paths(app_path: Path) -> list[Path]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Verify the packaged Ferryman macOS bundle.")
+    parser = argparse.ArgumentParser(description="Verify the packaged RabAiAgent macOS bundle.")
     parser.add_argument(
         "--app-path",
-        default=str(ROOT / "src-tauri" / "target" / "release" / "bundle" / "macos" / "Ferryman.app"),
-        help="Path to the built Ferryman.app bundle.",
+        default=str(ROOT / "src-tauri" / "target" / "release" / "bundle" / "macos" / "RabAiAgent.app"),
+        help="Path to the built RabAiAgent.app bundle.",
     )
     return parser.parse_args()
 
@@ -67,7 +67,7 @@ def write_bundle_smoke_skill(skills_dir: Path) -> None:
             f"name: {BUNDLE_SMOKE_SKILL_NAME}\n"
             "description: Internal release bundle verification skill.\n"
             "version: 1.0.0\n"
-            "author: Ferryman\n"
+            "author: RabAiAgent\n"
             "created: 2026-04-15\n"
             "updated: 2026-04-15\n"
             "---\n\n"
@@ -76,11 +76,11 @@ def write_bundle_smoke_skill(skills_dir: Path) -> None:
         encoding="utf-8",
     )
     (assets_dir / "sample.txt").write_text(
-        "Ferryman bundled skill asset check.\n",
+        "RabAiAgent bundled skill asset check.\n",
         encoding="utf-8",
     )
     (references_dir / "sample.md").write_text(
-        "# Bundle Smoke Reference\nFerryman bundled skill reference check.\n",
+        "# Bundle Smoke Reference\nRabAiAgent bundled skill reference check.\n",
         encoding="utf-8",
     )
     (scripts_dir / "verify_bundle_resources.py").write_text(
@@ -113,11 +113,11 @@ def build_smoke_skills_dir(packaged_skills_dir: Path, temp_root: Path) -> Path:
 
 def run_frontend_ui_smoke(app_path: Path) -> None:
     executable = app_executable(app_path)
-    with tempfile.TemporaryDirectory(prefix="ferryman-frontend-smoke-") as temp_root:
+    with tempfile.TemporaryDirectory(prefix="rabaiagent-frontend-smoke-") as temp_root:
         marker_path = Path(temp_root) / "frontend-smoke.json"
         env = os.environ.copy()
-        env["FERRYMAN_FRONTEND_SMOKE_MARKER"] = str(marker_path)
-        env["FERRYMAN_FRONTEND_SMOKE_AUTO_EXIT"] = "1"
+        env["RABAIAGENT_FRONTEND_SMOKE_MARKER"] = str(marker_path)
+        env["RABAIAGENT_FRONTEND_SMOKE_AUTO_EXIT"] = "1"
         env.setdefault("PYDANTIC_DISABLE_PLUGINS", "1")
 
         process = subprocess.Popen(
@@ -172,14 +172,14 @@ def main() -> int:
     if not any(stoplists_dir.glob("*.txt")):
         raise RuntimeError(f"Packaged jusText stoplists directory is empty: {stoplists_dir}")
 
-    sidecar = app_path / "Contents" / "Resources" / "gen" / "backend-sidecar" / "ferryman"
+    sidecar = app_path / "Contents" / "Resources" / "gen" / "backend-sidecar" / "rabaiagent"
     packaged_skills_dir = app_path / "Contents" / "Resources" / "gen" / "skills"
 
-    with tempfile.TemporaryDirectory(prefix="ferryman-release-smoke-") as temp_root:
+    with tempfile.TemporaryDirectory(prefix="rabaiagent-release-smoke-") as temp_root:
         staged_skills_dir = build_smoke_skills_dir(packaged_skills_dir, Path(temp_root))
         env = os.environ.copy()
-        env["FERRYMAN_ROOT_DIR"] = temp_root
-        env["FERRYMAN_BUNDLED_SKILLS_DIR"] = str(staged_skills_dir)
+        env["RABAIAGENT_ROOT_DIR"] = temp_root
+        env["RABAIAGENT_BUNDLED_SKILLS_DIR"] = str(staged_skills_dir)
         env["PYDANTIC_DISABLE_PLUGINS"] = "1"
         result = subprocess.run(
             [str(sidecar), "--smoke-test-bundle"],

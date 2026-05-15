@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea"/>
+      <stop offset="100%" style="stop-color:#764ba2"/>
+    </linearGradient>
+    <linearGradient id="ear" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ffecd2"/>
+      <stop offset="100%" style="stop-color:#fcb69f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="url(#bg)"/>
+
+  <!-- Left ear outer -->
+  <ellipse cx="42" cy="32" rx="14" ry="28" fill="url(#ear)" transform="rotate(-15 42 32)"/>
+  <!-- Left ear inner -->
+  <ellipse cx="42" cy="32" rx="8" ry="20" fill="#ffb6c1" transform="rotate(-15 42 32)"/>
+
+  <!-- Right ear outer -->
+  <ellipse cx="86" cy="32" rx="14" ry="28" fill="url(#ear)" transform="rotate(15 86 32)"/>
+  <!-- Right ear inner -->
+  <ellipse cx="86" cy="32" rx="8" ry="20" fill="#ffb6c1" transform="rotate(15 86 32)"/>
+
+  <!-- Face -->
+  <ellipse cx="64" cy="72" rx="38" ry="36" fill="#ffffff"/>
+
+  <!-- Eyes -->
+  <ellipse cx="50" cy="68" rx="8" ry="10" fill="#2d3748"/>
+  <ellipse cx="78" cy="68" rx="8" ry="10" fill="#2d3748"/>
+  <!-- Eye shine -->
+  <circle cx="53" cy="65" r="3" fill="#ffffff"/>
+  <circle cx="81" cy="65" r="3" fill="#ffffff"/>
+
+  <!-- Nose -->
+  <ellipse cx="64" cy="80" rx="6" ry="4" fill="#ffb6c1"/>
+
+  <!-- Mouth -->
+  <path d="M 58 86 Q 64 92 70 86" stroke="#2d3748" stroke-width="2" fill="none" stroke-linecap="round"/>
+
+  <!-- Cheeks -->
+  <circle cx="42" cy="78" r="6" fill="#ffb6c1" opacity="0.5"/>
+  <circle cx="86" cy="78" r="6" fill="#ffb6c1" opacity="0.5"/>
+
+  <!-- Whiskers -->
+  <line x1="20" y1="76" x2="36" y2="78" stroke="#e2e8f0" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="20" y1="82" x2="36" y2="82" stroke="#e2e8f0" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="92" y1="78" x2="108" y2="76" stroke="#e2e8f0" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="92" y1="82" x2="108" y2="82" stroke="#e2e8f0" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- AI sparkle -->
+  <g fill="#fbbf24">
+    <polygon points="100,20 102,26 108,26 103,30 105,36 100,32 95,36 97,30 92,26 98,26" transform="scale(0.6) translate(80, 10)"/>
+    <polygon points="100,20 102,26 108,26 103,30 105,36 100,32 95,36 97,30 92,26 98,26" transform="scale(0.4) translate(220, 45)"/>
+  </g>
+</svg>

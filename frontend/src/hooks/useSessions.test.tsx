@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { FerrymanEvent } from './useBackendConnection';
+import type { RabAiAgentEvent } from './useBackendConnection';
 import { useSessions, type ExecuteResult } from './useSessions';
 
 describe('useSessions', () => {
@@ -86,7 +86,7 @@ describe('useSessions', () => {
     const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-cancel-1' });
     const cancelRun = vi.fn();
     const clearToolActivities = vi.fn();
-    let lastEvent: FerrymanEvent | null = null;
+    let lastEvent: RabAiAgentEvent | null = null;
 
     const { result, rerender } = renderHook(() =>
       useSessions({
@@ -162,7 +162,7 @@ describe('useSessions', () => {
     const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-success-1' });
     const cancelRun = vi.fn();
     const clearToolActivities = vi.fn();
-    let lastEvent: FerrymanEvent | null = null;
+    let lastEvent: RabAiAgentEvent | null = null;
 
     const { result, rerender } = renderHook(() =>
       useSessions({
@@ -311,7 +311,7 @@ describe('useSessions', () => {
     });
     const cancelRun = vi.fn();
     const clearToolActivities = vi.fn();
-    const lastEvent: FerrymanEvent | null = null;
+    const lastEvent: RabAiAgentEvent | null = null;
 
     const { result } = renderHook(() =>
       useSessions({
@@ -461,7 +461,7 @@ describe('useSessions', () => {
     const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-reconcile-1' });
     const cancelRun = vi.fn();
     const clearToolActivities = vi.fn();
-    let lastEvent: FerrymanEvent | null = null;
+    let lastEvent: RabAiAgentEvent | null = null;
 
     const { result, rerender } = renderHook(() =>
       useSessions({
@@ -575,7 +575,7 @@ describe('useSessions', () => {
     const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-focus-reconcile-1' });
     const cancelRun = vi.fn();
     const clearToolActivities = vi.fn();
-    const lastEvent: FerrymanEvent | null = null;
+    const lastEvent: RabAiAgentEvent | null = null;
 
     const { result } = renderHook(() =>
       useSessions({
@@ -669,7 +669,7 @@ describe('useSessions', () => {
     const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-focus-pending-1' });
     const cancelRun = vi.fn();
     const clearToolActivities = vi.fn();
-    const lastEvent: FerrymanEvent | null = null;
+    const lastEvent: RabAiAgentEvent | null = null;
 
     const { result } = renderHook(() =>
       useSessions({
@@ -763,7 +763,7 @@ describe('useSessions', () => {
     const executeInstruction = vi.fn().mockResolvedValue({ status: 'started', run_id: 'run-cross-session-1' });
     const cancelRun = vi.fn();
     const clearToolActivities = vi.fn();
-    let lastEvent: FerrymanEvent | null = null;
+    let lastEvent: RabAiAgentEvent | null = null;
 
     const { result, rerender } = renderHook(() =>
       useSessions({

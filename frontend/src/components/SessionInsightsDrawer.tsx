@@ -250,9 +250,18 @@ export function SessionInsightsDrawer({
     }
 
     try {
+      // Try Tauri command first (works in Tauri app)
       await invoke('open_local_file', { path: activeWorkspace });
-    } catch (openError) {
-      console.error('Failed to open session workspace:', openError);
+    } catch {
+      // Fallback for development mode
+      try {
+        const fileUrl = `file://${activeWorkspace}`;
+        window.open(fileUrl, '_blank');
+      } catch {
+        // Last resort: copy path to clipboard
+        await navigator.clipboard.writeText(activeWorkspace);
+        alert(`路径已复制到剪贴板:\n${activeWorkspace}`);
+      }
     }
   };
 

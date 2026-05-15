@@ -1,11 +1,11 @@
 ---
 name: skill-creator
 description: >
-  Create or update Ferryman skills by drafting in the current session workspace,
+  Create or update RabAiAgent skills by drafting in the current session workspace,
   validating structure and local links, and optionally publishing to the installed
   skills directory after explicit approval.
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-04-08
 updated: 2026-04-14
 ---

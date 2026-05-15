@@ -9,6 +9,7 @@ from pydantic_ai.usage import UsageLimits
 
 from app.core.agent_event_stream import build_agent_event_stream_handler
 from app.core.deps import AgentDeps
+from app.core.evolution import EvolutionManager, NudgeEngine
 from app.core.model_routing import ModelRouter, ModelUsageTracker, RoutingContext, RoutingModel
 
 if TYPE_CHECKING:
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentManager:
-    """Build and run Ferryman agents."""
+    """Build and run RabAiAgent agents."""
 
     def __init__(
         self,
@@ -36,6 +37,8 @@ class AgentManager:
         session_manager: "SessionManager",
         context_manager: "ContextManager",
         model_pricing_service: "ModelPricingService | None" = None,
+        nudge_engine: "NudgeEngine | None" = None,
+        evolution_manager: "EvolutionManager | None" = None,
     ) -> None:
         self._settings = settings
         self._model_manager = model_manager
@@ -48,6 +51,8 @@ class AgentManager:
         self._session_manager = session_manager
         self._context_manager = context_manager
         self._model_router = ModelRouter(model_manager)
+        self._nudge_engine = nudge_engine
+        self._evolution_manager = evolution_manager
 
     def build_agent(self, system_prompt: str, *, routing_context: RoutingContext | None = None) -> Agent:
         model = RoutingModel(
@@ -105,7 +110,7 @@ class AgentManager:
         return agent
 
     def _get_request_limit(self) -> int:
-        value = self._settings.get("system.llm.request_limit", 100)
+        value = self._settings.get("system.llm.request_limit", 300)
         if isinstance(value, int):
             return value
         try:
@@ -204,6 +209,39 @@ class AgentManager:
                     }
                 })
 
+            # Integrate self-improvement loop via nudge engine
+            if self._nudge_engine is not None:
+                # Track user turn
+                self._nudge_engine.on_user_turn()
+
+                # Extract tool calls from result messages for tracking
+                tool_calls = []
+                for msg in result.new_messages():
+                    msg_dict = ModelMessagesTypeAdapter.dump_python([msg], mode="json")[0]
+                    for part in msg_dict.get("parts", []):
+                        if part.get("type") == "tool-call" or "tool_call" in str(part):
+                            tool_calls.append(part)
+
+                # Track each tool iteration
+                for _ in tool_calls:
+                    self._nudge_engine.on_tool_iteration()
+
+                # Detect signals for evolution
+                signals = self._nudge_engine.detect_signals(
+                    user_message=instruction,
+                    agent_response=str(result_data),
+                    tool_calls=tool_calls,
+                )
+
+                # Process signals if any detected
+                if signals and self._evolution_manager is not None:
+                    session_context = {
+                        "session_id": session_id,
+                        "run_id": run_id,
+                        "summary": str(result_data)[:200],
+                    }
+                    await self._evolution_manager.process_signals(signals, session_context)
+
             model_usage = usage_tracker.snapshot() if usage_tracker.has_usage() else None
             model_cost = self._model_pricing_service.calculate_cost(model_usage)
             assistant_message = self._session_manager.record_agent_run_success(
@@ -277,7 +315,7 @@ class AgentManager:
         model_usage: dict[str, object] | None = None,
         model_cost: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        from app.models.events import ChatFinalPayload, EventNamespace, FerrymanEventEnvelope
+        from app.models.events import ChatFinalPayload, EventNamespace, RabAiAgentEventEnvelope
 
         run_metadata = {
             "id": run_id,
@@ -305,7 +343,7 @@ class AgentManager:
             ],
             usage=usage,
         )
-        final_res = FerrymanEventEnvelope(
+        final_res = RabAiAgentEventEnvelope(
             namespace=EventNamespace.AGENT,
             event="chat_final",
             session_id=session_id,

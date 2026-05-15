@@ -50,7 +50,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn legacy_root_dir() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".ferryman"))
+    home_dir().map(|home| home.join(".rabaiagent"))
 }
 
 fn candidate_conda_paths() -> Vec<PathBuf> {
@@ -81,7 +81,7 @@ fn resolve_conda_executable() -> Result<PathBuf, String> {
         }
     }
 
-    Err("Could not locate conda executable for Ferryman sidecar startup".to_string())
+    Err("Could not locate conda executable for RabAiAgent sidecar startup".to_string())
 }
 
 fn wait_for_backend(port: u16, timeout: Duration) -> Result<(), String> {
@@ -133,7 +133,7 @@ fn bundled_backend_sidecar_executable(app: &AppHandle) -> Result<PathBuf, String
 
     let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     let sidecar_dir = resource_dir.join("gen").join("backend-sidecar");
-    let executable = sidecar_dir.join("ferryman");
+    let executable = sidecar_dir.join("rabaiagent");
     if executable.exists() {
         return Ok(executable);
     }
@@ -168,7 +168,7 @@ fn backend_root_dir(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     let _ = app;
-    Err("Could not resolve HOME for Ferryman root directory".to_string())
+    Err("Could not resolve HOME for RabAiAgent root directory".to_string())
 }
 
 fn spawn_backend(app: &AppHandle) -> Result<BackendRuntime, String> {
@@ -177,7 +177,7 @@ fn spawn_backend(app: &AppHandle) -> Result<BackendRuntime, String> {
     let ws_url = format!("ws://127.0.0.1:{port}/ws");
     let root_dir = backend_root_dir(app)?;
     let skills_dir = bundled_skills_dir(app)?;
-    let ferryman_log = root_dir.join("user/logs/ferryman-tauri.log");
+    let ferryman_log = root_dir.join("user/logs/rabaiagent-tauri.log");
     if let Some(parent) = ferryman_log.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -185,10 +185,10 @@ fn spawn_backend(app: &AppHandle) -> Result<BackendRuntime, String> {
         .create(true)
         .append(true)
         .open(&ferryman_log)
-        .map_err(|e| format!("Failed to open Ferryman sidecar log: {e}"))?;
+        .map_err(|e| format!("Failed to open RabAiAgent sidecar log: {e}"))?;
     let stderr = stdout
         .try_clone()
-        .map_err(|e| format!("Failed to clone Ferryman sidecar log handle: {e}"))?;
+        .map_err(|e| format!("Failed to clone RabAiAgent sidecar log handle: {e}"))?;
 
     let mut command = if cfg!(debug_assertions) {
         let backend_dir = bundled_backend_dir(app)?;
@@ -201,7 +201,7 @@ fn spawn_backend(app: &AppHandle) -> Result<BackendRuntime, String> {
         command
             .arg("run")
             .arg("-n")
-            .arg("ferryman")
+            .arg("rabaiagent")
             .arg("python")
             .arg("-m")
             .arg("app.sidecar")
@@ -223,9 +223,9 @@ fn spawn_backend(app: &AppHandle) -> Result<BackendRuntime, String> {
     };
 
     let mut child = command
-        .env("FERRYMAN_BEARER_TOKEN", &access_token)
-        .env("FERRYMAN_ROOT_DIR", &root_dir)
-        .env("FERRYMAN_BUNDLED_SKILLS_DIR", &skills_dir)
+        .env("RABAIAGENT_BEARER_TOKEN", &access_token)
+        .env("RABAIAGENT_ROOT_DIR", &root_dir)
+        .env("RABAIAGENT_BUNDLED_SKILLS_DIR", &skills_dir)
         .env("PYDANTIC_DISABLE_PLUGINS", "1")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))

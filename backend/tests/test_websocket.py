@@ -280,7 +280,7 @@ def test_websocket_list_skills(client, monkeypatch):
             name="b-skill",
             description="Second skill",
             version="1.1.0",
-            author="Ferryman",
+            author="RabAiAgent",
             updated=date(2026, 4, 14),
         ),
         "a-skill": SimpleNamespace(
@@ -306,7 +306,7 @@ def test_websocket_list_skills(client, monkeypatch):
                 "name": "b-skill",
                 "description": "Second skill",
                 "version": "1.1.0",
-                "author": "Ferryman",
+                "author": "RabAiAgent",
                 "created": None,
                 "updated": "2026-04-14",
             },
@@ -331,8 +331,8 @@ def test_websocket_list_skills(client, monkeypatch):
 
 def test_websocket_backend_log_endpoints(client, monkeypatch):
     fake_paths = {
-        "app": "/tmp/ferryman.log",
-        "sidecar": "/tmp/ferryman-sidecar.log",
+        "app": "/tmp/rabaiagent.log",
+        "sidecar": "/tmp/rabaiagent-sidecar.log",
     }
 
     monkeypatch.setattr("app.rpc.logs.get_backend_log_paths", lambda: fake_paths)
@@ -354,7 +354,7 @@ def test_websocket_backend_log_endpoints(client, monkeypatch):
         assert response["result"] == {
             "source": "sidecar",
             "path": fake_paths["sidecar"],
-            "content": "ferryman-sidecar.log:20",
+            "content": "rabaiagent-sidecar.log:20",
         }
 
 
@@ -390,7 +390,7 @@ def test_websocket_execute_starts_background_run_and_emits_final_event(client, m
         assert len(response["result"]["run_id"]) == 22
 
         event = notifications[0] if notifications else json.loads(websocket.receive_text())
-        assert event["method"] == "ferryman_event"
+        assert event["method"] == "rabaiagent_event"
         assert event["params"] == {
             "namespace": "agent",
             "event": "chat_final",
@@ -428,7 +428,7 @@ def test_websocket_execute_emits_failed_terminal_event_on_unexpected_background_
         }
 
         event = notifications[0] if notifications else json.loads(websocket.receive_text())
-        assert event["method"] == "ferryman_event"
+        assert event["method"] == "rabaiagent_event"
         assert event["params"]["namespace"] == "agent"
         assert event["params"]["event"] == "chat_final"
         assert event["params"]["session_id"] == "session-background-fail"
@@ -746,7 +746,7 @@ def test_websocket_execute_can_be_canceled_while_socket_stays_responsive(client,
         }
 
         event = (start_notifications + cancel_notifications)[0] if (start_notifications + cancel_notifications) else json.loads(websocket.receive_text())
-        assert event["method"] == "ferryman_event"
+        assert event["method"] == "rabaiagent_event"
         assert event["params"]["namespace"] == "agent"
         assert event["params"]["event"] == "chat_final"
         assert event["params"]["session_id"] == "session-cancel"
@@ -1586,7 +1586,7 @@ def test_scheduler_runs_due_schedule_during_app_lifespan(session, monkeypatch):
     session.commit()
 
     monkeypatch.setattr("app.core.schedule_manager.build_cron_trigger", fake_build_cron_trigger)
-    monkeypatch.setattr("app.core.runtime.FerrymanRuntime.run_master_agent", fake_run_master_agent)
+    monkeypatch.setattr("app.core.runtime.RabAiAgentRuntime.run_master_agent", fake_run_master_agent)
 
     with TestClient(app):
         time.sleep(0.2)

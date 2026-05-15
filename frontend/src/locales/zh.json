@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "Ferryman",
-    "subtitle": "杯中咖啡尚温，繁杂琐事已了。",
+    "title": "RabAiAgent",
+    "subtitle": "人生很短，效率至上。",
     "byok_enabled": "使用自有密钥",
     "deterministic_kernel": "稳定执行"
   },
@@ -30,6 +30,7 @@
     "schedules": "定时任务",
     "settings": "系统设置",
     "skills": "技能中心",
+    "memory": "记忆中心",
     "new_chat": "开启新对话",
     "recent_sessions": "最近对话",
     "rename_session": "重命名对话",
@@ -49,11 +50,11 @@
     "unknown_date": "未知"
   },
   "chat": {
-    "welcome_title": "Ferryman",
-    "welcome_subtitle": "“把想法转化为可执行的结果。”",
+    "welcome_title": "RabAiAgent",
+    "welcome_subtitle": "把想法转化为可执行的结果。",
     "command_label": "常用工作流",
-    "placeholder": "向Ferryman下达指令...",
-    "placeholder_full": "向Ferryman下达指令... (⌘/Ctrl + Enter发送)",
+    "placeholder": "向RabAiAgent下达指令...",
+    "placeholder_full": "向RabAiAgent下达指令... (⌘/Ctrl + Enter发送)",
     "send_shortcut": "⌘/Ctrl↵",
     "send_shortcut_hint": "使用⌘/Ctrl + Enter发送",
     "send_shortcut_mod_enter_hint": "⌘/Ctrl + Enter发送",
@@ -175,7 +176,7 @@
     "setup_kicker": "连接模型",
     "setup_status_kicker": "配置状态",
     "setup_title": "先连接一个可用模型",
-    "setup_welcome_title": "先让Ferryman接上模型",
+    "setup_welcome_title": "先让RabAiAgent接上模型",
     "setup_status_title": "模型接入还差一步",
     "setup_locked_title": "当前还不能开始对话",
     "setup_no_runnable_model": "请填入模型的API密钥，然后选择要使用的模型。",
@@ -207,7 +208,7 @@
     "field_updated_at": "更新时间",
     "field_finished_at": "完成时间",
     "delete_title": "删除任务？",
-    "delete_description": "“{name}”及其保存的执行上下文将被删除。这个操作无法撤销。",
+    "delete_description": "{name}及其保存的执行上下文将被删除。这个操作无法撤销。",
     "confirm_delete": "确认删除",
     "total_count": "全部任务",
     "empty": "当前没有任务。",
@@ -226,7 +227,12 @@
       "failed": "失败",
       "pending": "排队中",
       "canceled": "已取消"
-    }
+    },
+    "search_placeholder": "搜索任务...",
+    "filter_all": "全部状态",
+    "filter_all_sessions": "全部会话",
+    "select_all": "全选",
+    "batch_status": "修改状态"
   },
   "schedules": {
     "title": "定时任务",
@@ -258,7 +264,39 @@
     "cron_hint": "示例：0 8 * * * 表示每天08:00执行。",
     "timezone_hint": "示例：Asia/Shanghai。留空时会使用本机默认时区。",
     "delete_title": "删除定时任务？",
-    "delete_description": "“{name}”将不再自动运行。这个操作无法撤销。",
-    "confirm_delete": "确认删除"
+    "delete_description": "{name}将不再自动运行。这个操作无法撤销。",
+    "confirm_delete": "确认删除",
+    "view_list": "列表",
+    "view_calendar": "日历",
+    "recent_failures": "近期失败",
+    "field_countdown": "距下次执行"
+  },
+  "memory": {
+    "title": "记忆中心",
+    "subtitle": "分层记忆系统状态与技能结晶管理。",
+    "refresh": "刷新",
+    "tier_l1": "L1 痕迹",
+    "tier_l2": "L2 策略",
+    "tier_l3": "L3 世界模型",
+    "tier_skill": "技能结晶",
+    "reliable": "可靠",
+    "status": "系统状态",
+    "neo4j_connected": "Neo4j 已连接",
+    "neo4j_disconnected": "Neo4j 未连接",
+    "consolidate": "触发整合",
+    "consolidating": "整合中...",
+    "consolidation_success": "记忆整合完成",
+    "skill_name": "技能名称",
+    "skill_reliability": "可靠度",
+    "skill_usage": "使用次数",
+    "skill_updated": "更新时间",
+    "skill_detail": "技能详情",
+    "no_skills": "暂无技能结晶",
+    "no_description": "暂无描述",
+    "successful": "成功",
+    "provenance": "来源",
+    "created": "创建时间",
+    "usage_count": "使用次数",
+    "description": "描述"
   }
 }

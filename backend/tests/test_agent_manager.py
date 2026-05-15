@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from app.core.agent_manager import AgentManager
 from app.core.config import Settings
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.models.database import MessageModel, SessionModel
 from app.models.events import ToolPhase
 from app.models.schemas import Usage
@@ -67,7 +67,7 @@ def streaming_function_model(model_logic):
 
 
 def test_prompt_builder_builds_runtime_augmented_instruction(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
 
     instruction = runtime.prompt_builder.build_runtime_augmented_instruction("Build SEO matrix", "s1")
 
@@ -77,7 +77,7 @@ def test_prompt_builder_builds_runtime_augmented_instruction(tmp_path):
 
 
 def test_system_prompt_warns_against_repeating_side_effect_tools(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
 
     prompt = runtime.prompt_builder.build_system_prompt("s1")
 
@@ -85,7 +85,7 @@ def test_system_prompt_warns_against_repeating_side_effect_tools(tmp_path):
 
 
 def test_skill_system_prompt_is_scoped_to_current_skill(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     skill_dir = tmp_path / "user" / "skills" / "demo-skill"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -106,7 +106,7 @@ def test_skill_system_prompt_is_scoped_to_current_skill(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_manager_run_master_agent_persists_success(session, tmp_path, monkeypatch):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     mock_agent = MockAgent()
     monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id, **_kwargs: mock_agent)
     monkeypatch.setattr(runtime.context_manager, "maybe_compact_session", AsyncMock())
@@ -195,7 +195,7 @@ def test_agent_manager_final_payload_includes_model_usage():
 
 @pytest.mark.asyncio
 async def test_agent_manager_run_master_agent_includes_exception_cause(session, tmp_path, monkeypatch):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     monkeypatch.setattr(runtime.agent_manager, "build_master_agent", lambda session_id, **_kwargs: FailingAgent())
 
     response = await runtime.agent_manager.run_master_agent(
@@ -226,7 +226,7 @@ async def test_agent_manager_continues_after_tool_argument_validation_error(
     tmp_path,
     monkeypatch,
 ):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     call_count = 0
 
     async def model_logic(messages, info):
@@ -280,7 +280,7 @@ async def test_agent_manager_emits_tool_activity_from_pydantic_event_stream(
     tmp_path,
     monkeypatch,
 ):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     call_count = 0
     mock_emit = AsyncMock()
 
@@ -338,7 +338,7 @@ async def test_agent_manager_emits_tool_error_from_pydantic_event_stream(
     tmp_path,
     monkeypatch,
 ):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     call_count = 0
     mock_emit = AsyncMock()
 

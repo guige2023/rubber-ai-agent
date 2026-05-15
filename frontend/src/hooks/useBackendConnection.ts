@@ -33,7 +33,7 @@ export interface RefreshPayload {
   delta?: Record<string, any>;
 }
 
-export interface FerrymanEvent {
+export interface RabAiAgentEvent {
   namespace: string;
   event: string;
   session_id?: string;
@@ -78,7 +78,7 @@ export function useBackendConnection(url: string | null) {
   const [isConnected, setIsConnected] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [toolActivities, setToolActivities] = useState<ToolActivityPayload[]>([]);
-  const [lastEvent, setLastEvent] = useState<FerrymanEvent | null>(null);
+  const [lastEvent, setLastEvent] = useState<RabAiAgentEvent | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -116,15 +116,15 @@ export function useBackendConnection(url: string | null) {
           return;
         }
 
-        if (data.method === 'ferryman_event') {
-          const evt = data.params as FerrymanEvent;
+        if (data.method === 'rabaiagent_event') {
+          const evt = data.params as RabAiAgentEvent;
           setLastEvent(evt);
           if (evt.namespace === "agent" && evt.event === "tool_activity") {
             const activityPayload = {
               ...evt.payload,
               session_id: evt.session_id,
             } as ToolActivityPayload;
-            console.debug('[ferryman][tool_activity]', {
+            console.debug('[rabaiagent][tool_activity]', {
               sessionId: activityPayload.session_id,
               runId: activityPayload.run_id,
               eventId: activityPayload.event_id,

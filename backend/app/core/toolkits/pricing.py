@@ -22,7 +22,7 @@ class PricingToolkit(Toolkit):
         """Return cached model pricing in USD per million tokens.
 
         Args:
-            model_id: Optional Ferryman model id such as
+            model_id: Optional RabAiAgent model id such as
                 "gemini:gemini-3-flash-preview" or "qwen:qwen3.6-plus".
                 If omitted, returns all cached model prices.
         """

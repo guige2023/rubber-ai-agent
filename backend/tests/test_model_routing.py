@@ -400,7 +400,7 @@ def test_classifier_input_filters_leading_system_prompt_and_keeps_current_reques
     long_tool_output = "stock report " * 1000
     messages = [
         ModelRequest(parts=[
-            SystemPromptPart(content="You are Ferryman. " * 300),
+            SystemPromptPart(content="You are RabAiAgent. " * 300),
             UserPromptPart(content="Analyze 中国建材."),
         ]),
         ModelRequest(parts=[
@@ -431,7 +431,7 @@ def test_classifier_input_filters_leading_system_prompt_and_keeps_current_reques
     tool_context = classifier_messages[2].parts[0].content
     final_context = classifier_messages[3].parts[0].content
     assert "Analyze 中国建材." in first_context
-    assert "You are Ferryman." not in first_context
+    assert "You are RabAiAgent." not in first_context
     assert "[truncated original_chars=" in tool_context
     assert len(tool_context) <= 2048
     assert tool_context != long_tool_output

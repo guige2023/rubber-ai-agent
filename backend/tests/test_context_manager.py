@@ -6,7 +6,7 @@ from sqlmodel import select
 
 from app.core.config import Settings
 from app.core.context_manager import ContextManager
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.models.database import MessageModel, SessionModel
 
 
@@ -37,7 +37,7 @@ def test_context_manager_selects_rolling_chunk():
 
 
 def test_context_manager_loads_summary_and_tail_messages(session, tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     session_id = "context-session"
     cutoff = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     session.add(
@@ -82,7 +82,7 @@ def test_context_manager_loads_summary_and_tail_messages(session, tmp_path):
 
 
 def test_context_manager_methods_are_used_directly(tmp_path, monkeypatch):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     calls = []
 
     monkeypatch.setattr(runtime.context_manager, "estimate_text_tokens", lambda text: calls.append(text) or 7)
@@ -95,7 +95,7 @@ def test_context_manager_methods_are_used_directly(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_context_manager_records_memory_compaction_message(session, tmp_path, monkeypatch):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
     session_id = "compact-session"
     first_created_at = datetime(2026, 5, 5, 1, 0, tzinfo=timezone.utc)
     second_created_at = datetime(2026, 5, 5, 2, 0, tzinfo=timezone.utc)

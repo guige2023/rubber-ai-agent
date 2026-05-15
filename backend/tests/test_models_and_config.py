@@ -30,7 +30,7 @@ from app.core.config import Settings as config
 from app.core.model_manager import ModelListEndpointUnavailable, ModelManager
 
 from app.models.events import (
-    FerrymanEventEnvelope,
+    RabAiAgentEventEnvelope,
     EventNamespace,
     ToolActivityPayload,
     ToolPhase,
@@ -302,7 +302,7 @@ def test_event_models_serialization():
         phase=ToolPhase.START,
         input={"url": "example.com"}
     )
-    env = FerrymanEventEnvelope(
+    env = RabAiAgentEventEnvelope(
         namespace=EventNamespace.AGENT,
         event="tool_activity",
         session_id="session-1",
@@ -320,7 +320,7 @@ def test_event_models_serialization():
         messages=[{"role": "assistant", "content": "Done"}],
         usage={"input_tokens": 10, "output_tokens": 5}
     )
-    env = FerrymanEventEnvelope(
+    env = RabAiAgentEventEnvelope(
         namespace=EventNamespace.AGENT,
         event="chat_final",
         payload=chat_payload
@@ -333,7 +333,7 @@ def test_event_models_serialization():
         action=EntityAction.UPDATED,
         entity_id="task-123"
     )
-    env = FerrymanEventEnvelope(
+    env = RabAiAgentEventEnvelope(
         namespace=EventNamespace.DATA,
         event="refresh",
         payload=refresh_payload

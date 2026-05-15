@@ -6,7 +6,7 @@ description: >
   Produces product case studies focused on why a product works, how it is productized,
   how it monetizes, and what builders can learn from it.
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-03-17
 updated: 2026-05-10
 ---

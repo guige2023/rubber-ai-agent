@@ -11,12 +11,14 @@ def register_rpc_methods() -> None:
     import app.rpc.agent_runs  # noqa: F401
     import app.rpc.browser  # noqa: F401
     import app.rpc.logs  # noqa: F401
+    import app.rpc.memory  # noqa: F401
     import app.rpc.schedules  # noqa: F401
     import app.rpc.sessions  # noqa: F401
     import app.rpc.settings  # noqa: F401
     import app.rpc.skills  # noqa: F401
     import app.rpc.system  # noqa: F401
     import app.rpc.tasks  # noqa: F401
+    import app.rpc.feishu  # noqa: F401 - Feishu webhook handlers
 
     _registered = True
 

@@ -2,7 +2,7 @@
 name: seo-new-keyword-discovery
 description: Opportunity engine for emerging SEO keywords. Discovers seed terms, expands candidates through public search signals, audits SERP feasibility, and produces build-or-reject decisions for fast SEO page or micro-site opportunities.
 version: 0.1.1
-author: Ferryman
+author: RabAiAgent
 created: 2026-05-05
 updated: 2026-05-07
 ---

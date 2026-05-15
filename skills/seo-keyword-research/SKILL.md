@@ -6,7 +6,7 @@ description: >
   strategy report plus a keyword CSV. Prefer this for keyword/content strategy requests;
   use backlink-specific skills for link-building discovery.
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-02-23
 updated: 2026-04-14
 ---

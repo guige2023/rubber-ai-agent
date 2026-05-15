@@ -17,7 +17,7 @@ from pydantic_ai.usage import RequestUsage, Usage
 
 from app.core.browser import BrowserController
 from app.core.config import get_settings
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.main import DEFAULT_FERRYMAN_BEARER_TOKEN, app as fastapi_app
 from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.file import FileToolkit
@@ -48,7 +48,7 @@ def _write_smoke_skill(skill_dir: Path, name: str) -> None:
             f"name: {name}\n"
             "description: Bundle smoke test skill\n"
             "version: 1.0.0\n"
-            "author: Ferryman\n"
+            "author: RabAiAgent\n"
             "created: 2026-04-14\n"
             "updated: 2026-04-14\n"
             "---\n\n"
@@ -76,13 +76,13 @@ def _write_smoke_page(target: Path) -> None:
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Ferryman Bundle Smoke</title>
+    <title>RabAiAgent Bundle Smoke</title>
   </head>
   <body>
     <main>
       <h1>Bundle smoke article</h1>
       <p>
-        Ferryman bundle smoke validation checks that packaged browser tools can navigate,
+        RabAiAgent bundle smoke validation checks that packaged browser tools can navigate,
         inspect page structure, distill readable content, and interact with form controls
         after the desktop release build is assembled.
       </p>
@@ -111,7 +111,7 @@ def _release_online_mode() -> str:
 
 
 def _load_local_gemini_config() -> dict[str, str] | None:
-    db_path = Path.home() / ".ferryman" / "user" / "ferryman.db"
+    db_path = Path.home() / ".rabaiagent" / "user" / "rabaiagent.db"
     if not db_path.exists():
         return None
 
@@ -204,7 +204,7 @@ async def _run_live_web_smoke(base_ctx, report: dict[str, object]) -> None:
 
 async def _run_live_gemini_smoke(report: dict[str, object]) -> None:
     config = _load_local_gemini_config()
-    _require(config is not None, "Local Gemini config was not found in ~/.ferryman/user/ferryman.db.")
+    _require(config is not None, "Local Gemini config was not found in ~/.rabaiagent/user/rabaiagent.db.")
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -225,7 +225,7 @@ async def _run_live_gemini_smoke(report: dict[str, object]) -> None:
 
 async def run_bundle_smoke_test() -> dict[str, object]:
     settings = get_settings()
-    runtime = FerrymanRuntime(settings)
+    runtime = RabAiAgentRuntime(settings)
     session_id = "bundle-smoke"
     workspace = runtime.get_session_workspace(session_id)
     base_ctx = SimpleNamespace(
@@ -293,7 +293,7 @@ async def run_bundle_smoke_test() -> dict[str, object]:
         bundled_assets = await FileToolkit.list_files(bundled_skill_ctx, "assets")
         _require("sample.txt" in bundled_assets, f"Bundled skill assets are missing: {bundled_assets}")
         bundled_asset_text = await FileToolkit.read_file(bundled_skill_ctx, "assets/sample.txt")
-        _require("Ferryman bundled skill asset check." in bundled_asset_text, f"Unexpected bundled asset contents: {bundled_asset_text!r}")
+        _require("RabAiAgent bundled skill asset check." in bundled_asset_text, f"Unexpected bundled asset contents: {bundled_asset_text!r}")
         bundled_reference_text = await FileToolkit.read_file(bundled_skill_ctx, "references/sample.md")
         _require("Bundle Smoke Reference" in bundled_reference_text, f"Unexpected bundled reference contents: {bundled_reference_text!r}")
         bundled_script_result = _coerce_json_object(
@@ -302,8 +302,8 @@ async def run_bundle_smoke_test() -> dict[str, object]:
         )
         _require(
             bundled_script_result == {
-                "asset": "Ferryman bundled skill asset check.",
-                "reference": "# Bundle Smoke Reference\nFerryman bundled skill reference check.",
+                "asset": "RabAiAgent bundled skill asset check.",
+                "reference": "# Bundle Smoke Reference\nRabAiAgent bundled skill reference check.",
                 "modules": ["requests", "frontmatter", "yfinance", "pandas", "numpy", "PIL"],
             },
             f"Bundled skill script returned unexpected payload: {bundled_script_result}",
@@ -377,14 +377,14 @@ async def run_bundle_smoke_test() -> dict[str, object]:
         _write_smoke_page(smoke_page)
         navigate_result = await WebToolkit.browser_navigate(base_ctx, smoke_page.as_uri())
         _require(navigate_result.get("status") == "success", f"browser_navigate failed: {navigate_result}")
-        _require(navigate_result.get("title") == "Ferryman Bundle Smoke", f"Unexpected page title: {navigate_result}")
+        _require(navigate_result.get("title") == "RabAiAgent Bundle Smoke", f"Unexpected page title: {navigate_result}")
         snapshot = await WebToolkit.browser_aria_snapshot(base_ctx)
         textbox_match = re.search(r'textbox.*\[(\d+)\]', snapshot)
         button_match = re.search(r'button.*\[(\d+)\]', snapshot)
         _require(textbox_match is not None, f"ARIA snapshot missing textbox id: {snapshot}")
         _require(button_match is not None, f"ARIA snapshot missing button id: {snapshot}")
 
-        type_result = await WebToolkit.browser_type(base_ctx, textbox_match.group(1), "Ferryman")
+        type_result = await WebToolkit.browser_type(base_ctx, textbox_match.group(1), "RabAiAgent")
         _require("Successfully typed" in type_result, f"browser_type failed: {type_result}")
         click_result = await WebToolkit.browser_click(base_ctx, button_match.group(1))
         _require("Successfully clicked" in click_result, f"browser_click failed: {click_result}")
@@ -395,7 +395,7 @@ async def run_bundle_smoke_test() -> dict[str, object]:
 
         browser = await runtime.browser_manager.get_browser(session_id)
         page_status = await browser._page.evaluate("document.getElementById('status').innerText")
-        _require(page_status == "Confirmed: Ferryman", f"Browser interaction did not update page state: {page_status}")
+        _require(page_status == "Confirmed: RabAiAgent", f"Browser interaction did not update page state: {page_status}")
         screenshot = await WebToolkit.browser_screenshot(base_ctx)
         _require(bool(getattr(screenshot, "data", b"")), "browser_screenshot returned empty image data.")
         report["checks"].append({"name": "web_tools"})

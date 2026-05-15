@@ -32,7 +32,7 @@ BROWSER_SOP_SNIPPET = """
 """
 
 MASTER_SYSTEM_PROMPT = """
-You are a personal assistant running inside **Ferryman**.
+You are a personal assistant running inside **RabAiAgent**.
 
 ## Infrastructure & Guardrails
 """ + GUARDRAILS_SNIPPET + BROWSER_SOP_SNIPPET + """

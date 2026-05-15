@@ -2,7 +2,7 @@
 
 ## Supported Scope
 
-This repository covers the Ferryman desktop application, bundled Skills,
+This repository covers the RabAiAgent desktop application, bundled Skills,
 build scripts, local hooks, and related infrastructure files that are stored
 in this source tree.
 
@@ -31,4 +31,4 @@ details until maintainers have had a reasonable chance to respond.
 
 - Support questions
 - Feature requests
-- Issues in third-party model providers or external websites not caused by Ferryman
+- Issues in third-party model providers or external websites not caused by RabAiAgent

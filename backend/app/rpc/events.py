@@ -8,13 +8,13 @@ from typing import Optional
 
 from fastapi import WebSocket
 
-from app.models.events import FerrymanEventEnvelope
+from app.models.events import RabAiAgentEventEnvelope
 
 logger = logging.getLogger(__name__)
 
 
 async def emit_refresh_event(
-    emit_event_cb: Optional[Callable[[FerrymanEventEnvelope], Awaitable[None]]],
+    emit_event_cb: Optional[Callable[[RabAiAgentEventEnvelope], Awaitable[None]]],
     *,
     entity: str,
     action: str,
@@ -27,7 +27,7 @@ async def emit_refresh_event(
 
     from app.models.events import DataEntity, EntityAction, EventNamespace, RefreshPayload
 
-    event = FerrymanEventEnvelope(
+    event = RabAiAgentEventEnvelope(
         namespace=EventNamespace.DATA,
         event="refresh",
         session_id=session_id,
@@ -49,7 +49,7 @@ async def send_text_locked(websocket: WebSocket, send_lock: asyncio.Lock, payloa
 async def send_event_notification(
     websocket: WebSocket,
     send_lock: asyncio.Lock,
-    event_model: FerrymanEventEnvelope,
+    event_model: RabAiAgentEventEnvelope,
 ) -> None:
     await send_text_locked(
         websocket,
@@ -57,7 +57,7 @@ async def send_event_notification(
         json.dumps(
             {
                 "jsonrpc": "2.0",
-                "method": "ferryman_event",
+                "method": "rabaiagent_event",
                 "params": event_model.model_dump(mode="json", exclude_none=True),
             }
         ),
@@ -78,8 +78,8 @@ async def send_event_notification(
     })
 
 
-def build_emit_ws_event(websocket: WebSocket, send_lock: asyncio.Lock) -> Callable[[FerrymanEventEnvelope], Awaitable[None]]:
-    async def emit_ws_event(event_model: FerrymanEventEnvelope) -> None:
+def build_emit_ws_event(websocket: WebSocket, send_lock: asyncio.Lock) -> Callable[[RabAiAgentEventEnvelope], Awaitable[None]]:
+    async def emit_ws_event(event_model: RabAiAgentEventEnvelope) -> None:
         try:
             if websocket.client_state.name == "CONNECTED":
                 await send_event_notification(websocket, send_lock, event_model)

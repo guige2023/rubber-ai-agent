@@ -21,9 +21,11 @@ from app.core.toolkits.base import Toolkit
 from app.core.toolkits.command import CommandToolkit
 from app.core.toolkits.email import EmailToolkit
 from app.core.toolkits.file import FileToolkit
+from app.core.toolkits.hermes.browser_toolkit import BrowserToolkit
 from app.core.toolkits.image import ImageToolkit
 from app.core.toolkits.pricing import PricingToolkit
 from app.core.toolkits.skill import SkillToolkit
+from app.core.toolkits.system import SystemToolkit
 from app.core.toolkits.task import TaskToolkit
 from app.core.toolkits.time import TimeToolkit
 from app.core.toolkits.web import WebToolkit
@@ -35,7 +37,9 @@ TOOL_VALIDATION_ERROR_KEY = "_tool_validation_error"
 
 DEFAULT_TOOLKITS: tuple[type[Toolkit], ...] = (
     SkillToolkit,
+    SystemToolkit,  # Full system access - OpenCLAW style
     FileToolkit,
+    BrowserToolkit,  # Browser automation + computer use (CUA)
     WebToolkit,
     TaskToolkit,
     TimeToolkit,
@@ -43,6 +47,14 @@ DEFAULT_TOOLKITS: tuple[type[Toolkit], ...] = (
     EmailToolkit,
     ImageToolkit,
     CommandToolkit,
+)
+
+# Hermes integration toolkits (optional, requires additional dependencies)
+HERMES_TOOLKITS: tuple[type[Toolkit], ...] = (
+    "app.core.toolkits.hermes.browser_toolkit:BrowserToolkit",
+    "app.core.toolkits.hermes.voice_toolkit:VoiceToolkit",
+    "app.core.toolkits.hermes.summarize_toolkit:SummarizeToolkit",
+    "app.core.toolkits.hermes.web_search_toolkit:WebSearchToolkit",
 )
 
 
@@ -114,7 +126,7 @@ def _coerce_tool_args_for_validation(args: str | dict[str, Any], schema: object)
     return normalized or args
 
 
-class FerrymanToolValidationCapability(AbstractCapability[AgentDeps]):
+class RabAiAgentToolValidationCapability(AbstractCapability[AgentDeps]):
     """Normalize model tool args and return validation failures as tool results."""
 
     async def before_tool_validate(
@@ -179,9 +191,33 @@ class ToolManager:
             self.register_toolkit(agent, toolkit_class)
         agent.tool(self.wrap_tool(FileToolkit.read_skill_file))
 
+    def register_hermes_toolkits(self, agent: Agent) -> None:
+        """
+        Register Hermes integration toolkits.
+
+        These are optional and require additional dependencies:
+        - playwright (for browser automation)
+        - edge-tts (for TTS)
+        - openai-whisper (for STT)
+        - duckduckgo-search (for web search)
+        - beautifulsoup4 (for content extraction)
+        """
+        for toolkit_spec in HERMES_TOOLKITS:
+            try:
+                module_path, class_name = toolkit_spec.split(":")
+                import importlib
+                module = importlib.import_module(module_path)
+                toolkit_class = getattr(module, class_name)
+                self.register_toolkit(agent, toolkit_class)
+                logger.info(f"Registered Hermes toolkit: {class_name}")
+            except ImportError as e:
+                logger.warning(f"Hermes toolkit {toolkit_spec} not available: {e}")
+            except Exception as e:
+                logger.error(f"Failed to load Hermes toolkit {toolkit_spec}: {e}")
+
     @staticmethod
     def get_capabilities() -> list[AbstractCapability[AgentDeps]]:
-        return [FerrymanToolValidationCapability()]
+        return [RabAiAgentToolValidationCapability()]
 
     def register_toolkit(self, agent: Agent, toolkit_class: type[Toolkit]) -> None:
         """Register all tools from a toolkit class using its get_tools() method."""

@@ -94,7 +94,7 @@ def main() -> int:
 
     version = read_source_version()
     sync_version(version)
-    print(f"Synchronized Ferryman version: {version}")
+    print(f"Synchronized RabAiAgent version: {version}")
     return 0
 
 

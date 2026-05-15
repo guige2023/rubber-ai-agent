@@ -12,7 +12,7 @@ if [[ -f "$LOCAL_RELEASE_ENV" ]]; then
   set +a
 fi
 
-APP_NAME="Ferryman.app"
+APP_NAME="RabAiAgent.app"
 APP_PATH="$ROOT_DIR/src-tauri/target/release/bundle/macos/$APP_NAME"
 BACKEND_SIDECAR="$APP_PATH/Contents/Resources/gen/backend-sidecar"
 PLAYWRIGHT_NODE="$BACKEND_SIDECAR/_internal/playwright/driver/node"
@@ -22,9 +22,9 @@ DMG_DIR="$ROOT_DIR/src-tauri/target/release/bundle/dmg"
 VERSION="$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("src-tauri/tauri.conf.json").read_text())["version"])')"
 BUILD_TIMESTAMP="${BUILD_TIMESTAMP:-$(date +%m%d-%H%M)}"
 ARCH="$(uname -m)"
-DMG_NAME="Ferryman_${VERSION}_${BUILD_TIMESTAMP}_${ARCH}.dmg"
+DMG_NAME="RabAiAgent_${VERSION}_${BUILD_TIMESTAMP}_${ARCH}.dmg"
 DMG_PATH="$DMG_DIR/$DMG_NAME"
-VOLUME_NAME="Ferryman"
+VOLUME_NAME="RabAiAgent"
 DIST_DIR="$PROJECT_ROOT/dist"
 SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
 NOTARY_ISSUER_ID="${APPLE_NOTARY_ISSUER_ID:-}"
@@ -66,7 +66,7 @@ if [[ ! -d "$BACKEND_SIDECAR" ]]; then
 fi
 
 STEALTH_JS="$APP_PATH/Contents/Resources/gen/backend-sidecar/_internal/playwright_stealth/js/generate.magic.arrays.js"
-PYINSTALLER_WARN_FILE="$ROOT_DIR/src-tauri/gen/build/work/ferryman_backend/warn-ferryman_backend.txt"
+PYINSTALLER_WARN_FILE="$ROOT_DIR/src-tauri/gen/build/work/rabaiagent_backend/warn-rabaiagent_backend.txt"
 
 if [[ -f "$PYINSTALLER_WARN_FILE" ]] && grep -q "playwright.sync_api" "$PYINSTALLER_WARN_FILE"; then
   echo "PyInstaller reported missing playwright.sync_api in $PYINSTALLER_WARN_FILE" >&2
@@ -123,7 +123,7 @@ codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 "$PLAYWRIGHT_NODE" "$PLAYWRIGHT_CLI" --version >/dev/null
 
 mkdir -p "$DMG_DIR"
-TMP_DIR="$(mktemp -d /tmp/ferryman-dmg.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/rabaiagent-dmg.XXXXXX)"
 MOUNT_DIR=""
 INSTALLED_APP_DIR=""
 cleanup() {
@@ -173,14 +173,14 @@ fi
 
 hdiutil verify "$DMG_PATH"
 
-MOUNT_DIR="$(mktemp -d /tmp/ferryman-dmg-mount.XXXXXX)"
+MOUNT_DIR="$(mktemp -d /tmp/rabaiagent-dmg-mount.XXXXXX)"
 hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_DIR" -nobrowse -readonly
 if [[ ! -d "$MOUNT_DIR/$APP_NAME" ]]; then
   echo "Mounted DMG does not contain $APP_NAME" >&2
   exit 1
 fi
 
-INSTALLED_APP_DIR="$(mktemp -d /tmp/ferryman-installed-app.XXXXXX)"
+INSTALLED_APP_DIR="$(mktemp -d /tmp/rabaiagent-installed-app.XXXXXX)"
 ditto "$MOUNT_DIR/$APP_NAME" "$INSTALLED_APP_DIR/$APP_NAME"
 python3 "$ROOT_DIR/scripts/verify_release_bundle.py" --app-path "$INSTALLED_APP_DIR/$APP_NAME"
 

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Awaitable, Callable, Optional
 
-from app.models.events import FerrymanEventEnvelope
+from app.models.events import RabAiAgentEventEnvelope
 
 
 class ActiveRunStatus(StrEnum):
@@ -37,7 +37,7 @@ class RunRegistry:
         instruction: str,
         run_id: str,
         source: str,
-        emit_event_cb: Optional[Callable[[FerrymanEventEnvelope], Awaitable[None]]] = None,
+        emit_event_cb: Optional[Callable[[RabAiAgentEventEnvelope], Awaitable[None]]] = None,
     ) -> asyncio.Task[dict[str, object]]:
         active_run = self.get_active_run_payload(session_id)
         if active_run is not None:
@@ -129,7 +129,7 @@ class RunRegistry:
         instruction: str,
         session_id: str,
         run_id: str,
-        emit_event_cb: Optional[Callable[[FerrymanEventEnvelope], Awaitable[None]]] = None,
+        emit_event_cb: Optional[Callable[[RabAiAgentEventEnvelope], Awaitable[None]]] = None,
     ) -> dict[str, object]:
         try:
             return await self._runtime.run_master_agent(

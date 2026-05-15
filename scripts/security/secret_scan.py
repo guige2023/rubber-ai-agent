@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Secret scanner used by Ferryman's local git hooks."""
+"""Secret scanner used by RabAiAgent's local git hooks."""
 
 from __future__ import annotations
 

@@ -8,7 +8,7 @@ type Translations = typeof en;
 const translations: Record<Locale, Translations> = { en, zh };
 
 export function getStoredLocale(): Locale {
-  const saved = localStorage.getItem('ferryman_locale');
+  const saved = localStorage.getItem('rabaiagent_locale');
   if (saved === 'zh' || saved === 'en') {
     return saved;
   }
@@ -39,7 +39,7 @@ export function useI18n() {
 
   const changeLanguage = (newLocale: Locale) => {
     setLocale(newLocale);
-    localStorage.setItem('ferryman_locale', newLocale);
+    localStorage.setItem('rabaiagent_locale', newLocale);
   };
 
   return { t, locale, changeLanguage };

@@ -25,7 +25,7 @@ from app.main import app
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Ferryman backend sidecar")
+    parser = argparse.ArgumentParser(description="RabAiAgent backend sidecar")
     parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind")
     parser.add_argument("--port", type=int, default=None, help="Port to bind")
     parser.add_argument("--smoke-test-bundle", action="store_true", help="Run bundled runtime smoke tests and exit")

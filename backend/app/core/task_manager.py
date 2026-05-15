@@ -43,7 +43,7 @@ def _require_non_empty(field_name: str, value: str) -> str:
 
 
 class TaskManager:
-    """Manage Ferryman task records and task state transitions."""
+    """Manage RabAiAgent task records and task state transitions."""
 
     @staticmethod
     def find_duplicate_task(title: str) -> Optional[TaskModel]:

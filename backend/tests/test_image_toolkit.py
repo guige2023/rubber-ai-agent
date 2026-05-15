@@ -7,7 +7,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 
 from app.core.config import Settings
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.core.tool_manager import ToolManager
 from app.core.toolkits.image import ImageToolkit
 from app.core.tool_activity_payload import summarize_tool_input_value
@@ -19,7 +19,7 @@ VALID_PNG_BYTES = base64.b64decode(
 
 def make_context(tmp_path: Path, session_id: str = "image-session"):
     settings = Settings(root_dir=tmp_path / "ferryman")
-    runtime = FerrymanRuntime(settings=settings)
+    runtime = RabAiAgentRuntime(settings=settings)
     deps = runtime.create_agent_deps(session_id=session_id, run_id="run-image-toolkit-test")
     return SimpleNamespace(deps=deps)
 

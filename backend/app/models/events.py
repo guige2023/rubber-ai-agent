@@ -6,11 +6,11 @@ from pydantic import BaseModel, Field
 
 
 # ==========================================
-# Ferryman EDA (Event-Driven Architecture) Protocol
+# RabAiAgent EDA (Event-Driven Architecture) Protocol
 # ==========================================
-# 本模块定义了 Ferryman 后端主动向前端推送的所有 WebSocket 事件协议格式。
+# 本模块定义了 RabAiAgent 后端主动向前端推送的所有 WebSocket 事件协议格式。
 # 所有事件统一封装在 JSON-RPC 2.0 的 Notification (无 id 字段) 中。
-# RPC Method 名称统一固定为: "ferryman_event"
+# RPC Method 名称统一固定为: "rabaiagent_event"
 # ==========================================
 
 
@@ -126,7 +126,7 @@ class SystemErrorPayload(BaseModel):
 # 协议统一 Envelope (信封)
 # ------------------------------------------
 
-class FerrymanEventEnvelope(BaseModel):
+class RabAiAgentEventEnvelope(BaseModel):
     """
     最顶层的事件模型，强制包裹了 `namespace`、`event` 与强类型的 `payload`。
     使用 Pydantic 的 discriminated union 可以直接做强类型反序列化。

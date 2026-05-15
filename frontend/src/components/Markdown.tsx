@@ -90,16 +90,29 @@ export const Markdown = ({ content }: MarkdownProps) => {
           const isAbsolutePath = text.startsWith('/') || /^[a-zA-Z]:(?:\\|\/)/.test(text);
 
           if (isAbsolutePath) {
+            const handleOpenPath = async (e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              try {
+                // Try Tauri command first (works in Tauri app)
+                await invoke('open_local_file', { path: text });
+              } catch {
+                // Fallback for development mode
+                try {
+                  const fileUrl = `file://${text}`;
+                  window.open(fileUrl, '_blank');
+                } catch {
+                  // Last resort: copy path to clipboard
+                  await navigator.clipboard.writeText(text);
+                  alert(`路径已复制到剪贴板:\n${text}`);
+                }
+              }
+            };
+
             return (
-              <span 
-                className="bg-white/10 px-1.5 py-0.5 rounded text-blue-400 hover:text-blue-300 font-mono text-[0.9em] cursor-pointer hover:underline transition-colors" 
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  invoke('open_local_file', { path: text }).catch(err => {
-                    console.error("Failed native open:", err);
-                  });
-                }}
+              <span
+                className="bg-white/10 px-1.5 py-0.5 rounded text-blue-400 hover:text-blue-300 font-mono text-[0.9em] cursor-pointer hover:underline transition-colors"
+                onClick={handleOpenPath}
                 title={`点击打开文件: ${text}`}
               >
                 {children}
@@ -146,24 +159,96 @@ export const Markdown = ({ content }: MarkdownProps) => {
             const decodedPath = decodeURIComponent(rawPath);
             // On Windows, the path might look like /C:/User...
             const cleanPath = decodedPath.replace(/^\/([a-zA-Z]:)/, '$1');
-            
+
+            const handleOpenFile = async (e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              try {
+                // Try Tauri command first (works in Tauri app)
+                await invoke('open_local_file', { path: cleanPath });
+              } catch {
+                // Fallback for development mode: try using file:// URL
+                try {
+                  // macOS can open file:// URLs directly
+                  window.open(href, '_blank');
+                } catch {
+                  // Last resort: copy path to clipboard
+                  await navigator.clipboard.writeText(cleanPath);
+                  alert(`路径已复制到剪贴板:\n${cleanPath}`);
+                }
+              }
+            };
+
             return (
-              <a 
+              <a
                 {...props}
                 className="cursor-pointer break-words text-blue-400 underline transition-colors [overflow-wrap:anywhere] hover:text-blue-300"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  invoke('open_local_file', { path: cleanPath }).catch(err => {
-                    console.error("Failed native open:", err);
-                  });
-                }}
+                onClick={handleOpenFile}
               >
                 {children}
               </a>
             );
           }
           return <a className="break-words text-blue-400 underline transition-colors [overflow-wrap:anywhere] hover:text-blue-300" target="_blank" rel="noopener noreferrer" href={href} {...props}>{children}</a>;
+        },
+        img({ node, src, alt, ...props }: any) {
+          if (!src) return null;
+
+          const isLocalFile = src.startsWith('file://') || isAbsoluteLocalPath(src);
+
+          const handleImageClick = async (e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (isLocalFile) {
+              const rawPath = src.startsWith('file://') ? src.replace('file://', '') : src;
+              const decodedPath = decodeURIComponent(rawPath);
+              const cleanPath = decodedPath.replace(/^\/([a-zA-Z]:)/, '$1');
+
+              try {
+                // Try Tauri command first
+                await invoke('open_local_file', { path: cleanPath });
+              } catch {
+                // Fallback: try window.open with file URL
+                try {
+                  window.open(src, '_blank');
+                } catch {
+                  // Last resort: copy path
+                  await navigator.clipboard.writeText(cleanPath);
+                  alert(`图片路径已复制到剪贴板:\n${cleanPath}`);
+                }
+              }
+            } else {
+              // For remote URLs, open in new tab
+              window.open(src, '_blank');
+            }
+          };
+
+          return (
+            <div className="relative group/image my-2">
+              <img
+                src={src}
+                alt={alt || ''}
+                {...props}
+                className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                onClick={handleImageClick}
+                onError={(e) => {
+                  // Fallback to text display if image fails to load
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  const parent = target.parentElement;
+                  if (parent) {
+                    parent.innerHTML = `<span class="text-red-400 text-sm">图片加载失败: ${alt || src}</span>`;
+                  }
+                }}
+              />
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity pointer-events-none">
+                <div className="bg-black/60 text-white text-xs px-2 py-1 rounded">
+                  {isLocalFile ? '点击打开图片' : '点击查看原图'}
+                </div>
+              </div>
+            </div>
+          );
         }
 
       }}

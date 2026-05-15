@@ -37,13 +37,13 @@ from app.core.context_manager import (
     _local_tiktoken_cache_dir,
 )
 from app.core.model_manager import LLMConfigurationError, ModelManager
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.core.tool_errors import RetryableToolError
 from app.core.toolkits.base import Toolkit
 from app.core.toolkits.skill import SkillToolkit
 from app.core.toolkits.web import WebToolkit
 from app.models.database import MessageModel, SessionModel
-from app.models.events import FerrymanEventEnvelope, EventNamespace, ToolPhase, ToolActivityPayload
+from app.models.events import RabAiAgentEventEnvelope, EventNamespace, ToolPhase, ToolActivityPayload
 from app.models.schemas import Usage
 
 
@@ -136,7 +136,7 @@ def test_tiktoken_encoder_uses_bundled_cache_without_remote_read(monkeypatch):
     encoder = _get_token_encoder()
 
     assert encoder.name == TOKEN_ESTIMATE_ENCODING
-    assert len(encoder.encode("Ferryman本地token估算")) > 0
+    assert len(encoder.encode("RabAiAgent本地token估算")) > 0
     assert Path(os.environ["TIKTOKEN_CACHE_DIR"]) == _local_tiktoken_cache_dir()
 
 
@@ -186,7 +186,7 @@ def test_create_active_model_uses_moonshot_provider_for_kimi(monkeypatch):
     monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
     monkeypatch.setattr("pydantic_ai.providers.moonshotai.MoonshotAIProvider", FakeMoonshotAIProvider)
 
-    kernel = FerrymanRuntime(settings=settings)
+    kernel = RabAiAgentRuntime(settings=settings)
 
     assert kernel.model_manager.create_active_model() == "kimi-model"
     assert captured["model_name"] == "kimi-k2.5"
@@ -227,7 +227,7 @@ def test_create_active_model_supports_custom_kimi_base_url(monkeypatch):
     monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
     monkeypatch.setattr("pydantic_ai.providers.moonshotai.MoonshotAIProvider", FakeMoonshotAIProvider)
 
-    kernel = FerrymanRuntime(settings=settings)
+    kernel = RabAiAgentRuntime(settings=settings)
 
     assert kernel.model_manager.create_active_model() == "kimi-model"
     assert captured["client_kwargs"] == {
@@ -242,7 +242,7 @@ def test_create_active_model_rejects_removed_doubao_provider(monkeypatch):
     monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "doubao:doubao-seed-2-0-pro-260215")
     monkeypatch.setattr(ModelManager, "get_provider_llm_config", lambda self, provider: {"api_key": "sk-test"})
 
-    kernel = FerrymanRuntime(settings=settings)
+    kernel = RabAiAgentRuntime(settings=settings)
 
     with pytest.raises(LLMConfigurationError, match="provider `doubao` is not supported"):
         kernel.model_manager.create_active_model()
@@ -267,7 +267,7 @@ def test_create_active_model_uses_openai_provider_for_deepseek(monkeypatch):
     monkeypatch.setattr("pydantic_ai.models.openai.OpenAIChatModel", fake_openai_chat_model)
     monkeypatch.setattr("pydantic_ai.providers.openai.OpenAIProvider", FakeOpenAIProvider)
 
-    kernel = FerrymanRuntime(settings=settings)
+    kernel = RabAiAgentRuntime(settings=settings)
 
     assert kernel.model_manager.create_active_model() == "deepseek-model"
     assert captured["model_name"] == "deepseek-v4-pro"
@@ -304,7 +304,7 @@ def test_create_active_model_strips_trailing_v1_for_anthropic(monkeypatch):
     monkeypatch.setattr("pydantic_ai.models.anthropic.AnthropicModel", fake_anthropic_model)
     monkeypatch.setattr("pydantic_ai.providers.anthropic.AnthropicProvider", FakeAnthropicProvider)
 
-    kernel = FerrymanRuntime(settings=settings)
+    kernel = RabAiAgentRuntime(settings=settings)
 
     assert kernel.model_manager.create_active_model() == "anthropic-model"
     assert captured["model_name"] == "claude-haiku-4-5-20251001"
@@ -320,7 +320,7 @@ def test_create_active_model_raises_clear_error_when_gemini_api_key_missing(monk
     monkeypatch.setattr(ModelManager, "get_active_model_id", lambda self: "gemini:gemini-3-flash-preview")
     monkeypatch.setattr(ModelManager, "get_provider_llm_config", lambda self, provider: {})
 
-    kernel = FerrymanRuntime(settings=settings)
+    kernel = RabAiAgentRuntime(settings=settings)
 
     with pytest.raises(LLMConfigurationError, match="missing API Key"):
         kernel.model_manager.create_active_model()
@@ -333,7 +333,7 @@ async def test_agent_execution_closure(monkeypatch):
     Verifies the full 'Closure' of a MasterAgent instruction using FunctionModel to simulate turns.
     """
     mock_settings = create_test_settings()
-    kernel = FerrymanRuntime(settings=mock_settings)
+    kernel = RabAiAgentRuntime(settings=mock_settings)
     
     from pydantic_ai.models.gemini import GeminiModel
     from pydantic_ai.models.openai import OpenAIModel
@@ -376,7 +376,7 @@ async def test_agent_execution_closure(monkeypatch):
 @pytest.mark.asyncio
 async def test_master_agent_can_recover_from_soft_failed_run_skill(monkeypatch):
     create_mock_skill("target_skill", "Test skill", TEST_USER_SKILLS)
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     kernel.skill_manager.scan_skills()
 
     from pydantic_ai.models.gemini import GeminiModel
@@ -462,7 +462,7 @@ async def test_run_master_agent_mocked(monkeypatch, caplog):
     def mock_build_master_agent(session_id: str, **_kwargs):
         return MockAgent()
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.agent_manager, "build_master_agent", mock_build_master_agent)
 
     with caplog.at_level(logging.INFO, logger="app.core.agent_manager"):
@@ -510,7 +510,7 @@ async def test_run_master_agent_history_keeps_system_prompt_and_token_estimates(
             captured["message_history"] = message_history
             return MockResult()
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda session_id, **_kwargs: MockAgent())
 
     await kernel.run_master_agent(
@@ -522,7 +522,7 @@ async def test_run_master_agent_history_keeps_system_prompt_and_token_estimates(
     history = captured["message_history"]
     assert isinstance(history[0], ModelRequest)
     assert isinstance(history[0].parts[0], SystemPromptPart)
-    assert "You are a personal assistant running inside **Ferryman**." in history[0].parts[0].content
+    assert "You are a personal assistant running inside **RabAiAgent**." in history[0].parts[0].content
 
     with get_session() as db_session:
         messages = list(
@@ -539,7 +539,7 @@ async def test_run_master_agent_history_keeps_system_prompt_and_token_estimates(
 
 
 def test_get_session_messages_includes_summary_and_only_tail_messages():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     session_id = "session-with-summary"
     cutoff = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
 
@@ -617,7 +617,7 @@ def test_get_session_messages_includes_summary_and_only_tail_messages():
 
 
 def test_get_session_messages_respects_microsecond_cutoff():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     session_id = "session-with-microsecond-cutoff"
     cutoff = datetime(2026, 4, 16, 12, 0, 0, 123456, tzinfo=timezone.utc)
 
@@ -665,7 +665,7 @@ def test_get_session_messages_respects_microsecond_cutoff():
 
 
 def test_get_session_messages_ignores_invalid_session_memory():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     session_id = "session-with-invalid-memory-timestamps"
 
     with get_session() as db_session:
@@ -745,7 +745,7 @@ async def test_run_master_agent_compacts_after_current_turn(monkeypatch):
             captured["compaction_input"] = instruction
             return CompactionResult()
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id, **_kwargs: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
@@ -829,7 +829,7 @@ async def test_run_master_agent_skips_failed_compaction_and_sets_guard(monkeypat
             captured["compaction_calls"] += 1
             raise RuntimeError("compaction backend unavailable")
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id, **_kwargs: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: FailingCompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
@@ -938,7 +938,7 @@ async def test_run_master_agent_backfills_legacy_zero_token_estimates_for_compac
             captured["compaction_calls"] += 1
             return CompactionResult()
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.agent_manager, "build_master_agent", lambda current_session_id, **_kwargs: MasterAgent())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
@@ -1019,7 +1019,7 @@ async def test_maybe_compact_session_uses_rolling_chunk_window(monkeypatch):
             captured["input"] = instruction
             return CompactionResult()
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -1082,7 +1082,7 @@ async def test_maybe_compact_session_rolls_forward_after_existing_cutoff(monkeyp
             captured["input"] = instruction
             return CompactionResult()
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -1157,7 +1157,7 @@ async def test_maybe_compact_session_includes_single_message_larger_than_chunk(m
             captured["input"] = instruction
             return CompactionResult()
 
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     monkeypatch.setattr(kernel.context_manager, "get_compaction_agent", lambda: CompactionAgent())
     kernel.context_manager._settings = SimpleNamespace(
         get=lambda key, default=None: (
@@ -1226,7 +1226,7 @@ def test_split_compaction_tail_preserves_recent_messages():
 
 # --- test_prompt_and_usage_limits.py ---
 def test_runtime_context_moves_to_user_prompt():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     session_id = "test-session"
 
     system_prompt = kernel.prompt_builder.build_system_prompt(session_id)
@@ -1247,7 +1247,7 @@ def test_runtime_context_moves_to_user_prompt():
 @pytest.mark.asyncio
 async def test_skill_run_uses_shared_usage_and_request_limit(monkeypatch):
     create_mock_skill("target_skill", "Test skill", TEST_USER_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
     
     def settings_get(key: str, default=None):
@@ -1296,7 +1296,7 @@ async def test_skill_run_uses_shared_usage_and_request_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_skill_run_missing_skill_requests_retry():
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     ctx = SimpleNamespace(
         deps=kernel.create_agent_deps(
             session_id="test-session",
@@ -1313,7 +1313,7 @@ async def test_skill_run_missing_skill_requests_retry():
 @pytest.mark.asyncio
 async def test_skill_run_returns_soft_failure_payload_when_delegate_fails(monkeypatch):
     create_mock_skill("target_skill", "Test skill", TEST_USER_SKILLS)
-    kernel = FerrymanRuntime(create_test_settings())
+    kernel = RabAiAgentRuntime(create_test_settings())
     kernel.skill_manager.scan_skills()
 
     class MockSkillAgent:
@@ -1344,7 +1344,7 @@ async def test_skill_run_returns_soft_failure_payload_when_delegate_fails(monkey
 @pytest.mark.asyncio
 async def test_agent_deps_emit_tool_event():
     mock_cb = AsyncMock()
-    runtime = FerrymanRuntime(create_test_settings())
+    runtime = RabAiAgentRuntime(create_test_settings())
     deps = runtime.create_agent_deps(
         session_id="test-session",
         run_id="run-agent-event",
@@ -1359,7 +1359,7 @@ async def test_agent_deps_emit_tool_event():
     )
 
     mock_cb.assert_awaited_once()
-    event_env: FerrymanEventEnvelope = mock_cb.call_args[0][0]
+    event_env: RabAiAgentEventEnvelope = mock_cb.call_args[0][0]
     
     assert event_env.namespace == EventNamespace.AGENT
     assert event_env.event == "tool_activity"
@@ -1377,7 +1377,7 @@ async def test_agent_deps_emit_tool_event():
 @pytest.mark.asyncio
 async def test_agent_deps_emit_tool_event_increments_seq():
     mock_cb = AsyncMock()
-    runtime = FerrymanRuntime(create_test_settings())
+    runtime = RabAiAgentRuntime(create_test_settings())
     deps = runtime.create_agent_deps(
         session_id="test-session",
         run_id="run-agent-event-seq",
@@ -1387,8 +1387,8 @@ async def test_agent_deps_emit_tool_event_increments_seq():
     await deps.emit_tool_event(run_id="xyz", tool_name="first_tool", phase="start")
     await deps.emit_tool_event(run_id="xyz", tool_name="second_tool", phase="complete")
 
-    first_event: FerrymanEventEnvelope = mock_cb.await_args_list[0].args[0]
-    second_event: FerrymanEventEnvelope = mock_cb.await_args_list[1].args[0]
+    first_event: RabAiAgentEventEnvelope = mock_cb.await_args_list[0].args[0]
+    second_event: RabAiAgentEventEnvelope = mock_cb.await_args_list[1].args[0]
 
     assert first_event.payload.seq == 1
     assert second_event.payload.seq == 2
@@ -1465,7 +1465,7 @@ class ImageDummyToolkit(Toolkit):
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_wrapper():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
     
     import unittest.mock
@@ -1507,7 +1507,7 @@ async def test_kernel_register_toolkit_wrapper():
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_preserves_each_tool_binding():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock
@@ -1535,7 +1535,7 @@ async def test_kernel_register_toolkit_preserves_each_tool_binding():
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_preserves_file_path_when_input_is_large():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock
@@ -1565,7 +1565,7 @@ async def test_kernel_register_toolkit_preserves_file_path_when_input_is_large()
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_retries_browser_action_error_before_last_attempt():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock
@@ -1595,7 +1595,7 @@ async def test_kernel_register_toolkit_retries_browser_action_error_before_last_
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_soft_fails_browser_action_error_on_last_attempt():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock
@@ -1631,7 +1631,7 @@ async def test_kernel_register_toolkit_soft_fails_browser_action_error_on_last_a
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_soft_fails_browser_screenshot_on_last_attempt():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock
@@ -1665,7 +1665,7 @@ async def test_kernel_register_toolkit_soft_fails_browser_screenshot_on_last_att
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_soft_fails_when_browser_boot_fails(monkeypatch):
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock
@@ -1705,7 +1705,7 @@ async def test_kernel_register_toolkit_soft_fails_when_browser_boot_fails(monkey
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_soft_fails_model_retry_on_last_attempt():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock
@@ -1737,7 +1737,7 @@ async def test_kernel_register_toolkit_soft_fails_model_retry_on_last_attempt():
 
 @pytest.mark.asyncio
 async def test_kernel_register_toolkit_wraps_binary_image_with_json_payload():
-    kernel = FerrymanRuntime(settings=create_test_settings())
+    kernel = RabAiAgentRuntime(settings=create_test_settings())
     agent = Agent('test')
 
     import unittest.mock

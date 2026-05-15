@@ -30,7 +30,7 @@ SYSTEM_CHROME_CANDIDATES = [
 
 CHROME_REQUIRED_MESSAGE = (
     "Chrome runtime is unavailable. Install Google Chrome from "
-    "https://www.google.com/chrome/ and restart Ferryman."
+    "https://www.google.com/chrome/ and restart RabAiAgent."
 )
 
 BROWSER_UNTRUSTED_NOTICE = (
@@ -69,7 +69,7 @@ def wrap_browser_content(text: str) -> str:
 
 class BrowserController:
     """
-    RISC Web Kernel for Ferryman.
+    RISC Web Kernel for RabAiAgent.
     Encapsulates Playwright headless browsing with stealth capabilities 
     and exposes only 4 core atomic actions to the LLM agent.
     """
@@ -176,13 +176,23 @@ class BrowserController:
 
     @classmethod
     def get_runtime_status(cls) -> dict[str, str | bool | None]:
-        browser_path = cls._resolve_system_browser_path()
+        # Check for agent-browser CLI (no local Chrome needed)
+        agent_browser_available = cls._check_agent_browser()
         return {
-            "available": browser_path is not None,
-            "path": str(browser_path) if browser_path else None,
-            "required": True,
-            "download_url": "https://www.google.com/chrome/",
+            "available": agent_browser_available,
+            "path": "/opt/homebrew/bin/agent-browser" if agent_browser_available else None,
+            "required": False,
+            "download_url": "https://www.npmjs.com/package/agent-browser",
         }
+
+    @classmethod
+    def _check_agent_browser(cls) -> bool:
+        """Check if agent-browser CLI is available."""
+        try:
+            import shutil
+            return shutil.which("agent-browser") is not None
+        except Exception:
+            return False
 
     def _build_launch_plans(self) -> list[dict]:
         plans: list[dict] = []
@@ -403,8 +413,8 @@ class BrowserController:
     def _normalize_selector(selector: str | None) -> str:
         """
         Normalizes selectors provided by the LLM. 
-        - Converts '[20]' -> '[data-ferryman-id="20"]'
-        - Converts '20'   -> '[data-ferryman-id="20"]'
+        - Converts '[20]' -> '[data-rabaiagent-id="20"]'
+        - Converts '20'   -> '[data-rabaiagent-id="20"]'
         """
         if not selector:
             return ""
@@ -413,11 +423,11 @@ class BrowserController:
 
         # Case 1: [20]
         if selector.startswith("[") and selector.endswith("]") and selector[1:-1].isdigit():
-            return f'[data-ferryman-id="{selector[1:-1]}"]'
+            return f'[data-rabaiagent-id="{selector[1:-1]}"]'
 
         # Case 2: 20 (Naked number)
         if selector.isdigit():
-            return f'[data-ferryman-id="{selector}"]'
+            return f'[data-rabaiagent-id="{selector}"]'
 
         return selector
 
@@ -613,9 +623,9 @@ class BrowserController:
                     let idStr = '';
                     if (isInteractive(role)) {
                         const id = nextId++;
-                        el.setAttribute('data-ferryman-id', id.toString());
+                        el.setAttribute('data-rabaiagent-id', id.toString());
                         idStr = ` [${id}]`;
-                        mapping[id] = `[data-ferryman-id="${id}"]`;
+                        mapping[id] = `[data-rabaiagent-id="${id}"]`;
                     }
                     result += `${indent}- ${role}${name ? ' "' + name + '"' : ''}${idStr}\\n`;
                     depth++;
@@ -640,10 +650,10 @@ class BrowserController:
         overlay_js = """
         () => {
             const createOverlay = () => {
-                if (document.getElementById('ferryman-status-overlay')) return;
-                
+                if (document.getElementById('rabaiagent-status-overlay')) return;
+
                 const container = document.createElement('div');
-                container.id = 'ferryman-status-overlay';
+                container.id = 'rabaiagent-status-overlay';
                 Object.assign(container.style, {
                     position: 'fixed',
                     top: '20px',
@@ -678,8 +688,8 @@ class BrowserController:
                 pulse.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 1000, iterations: Infinity, direction: 'alternate' });
 
                 const text = document.createElement('span');
-                text.id = 'ferryman-status-text';
-                text.innerText = 'Ferryman: Initializing...';
+                text.id = 'rabaiagent-status-text';
+                text.innerText = 'RabAiAgent: Initializing...';
 
                 container.appendChild(pulse);
                 container.appendChild(text);
@@ -705,7 +715,7 @@ class BrowserController:
         try:
             # We use try/except because the page might be navigating
             await self._page.evaluate(
-                f"(msg) => {{ const el = document.getElementById('ferryman-status-text'); if(el) el.innerText = 'Ferryman: ' + msg; }}",
+                f"(msg) => {{ const el = document.getElementById('rabaiagent-status-text'); if(el) el.innerText = 'RabAiAgent: ' + msg; }}",
                 message)
         except PlaywrightError:
             pass

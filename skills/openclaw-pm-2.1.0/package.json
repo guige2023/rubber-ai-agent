@@ -1,0 +1,34 @@
+{
+  "name": "@1va7/openclaw-pm",
+  "version": "2.0.0",
+  "description": "OpenClaw 项目经理配置升级工具 V2 - 任务管理、Session 隔离、自动恢复",
+  "main": "index.js",
+  "bin": {
+    "openclaw-pm": "./index.js"
+  },
+  "scripts": {
+    "test": "node index.js"
+  },
+  "keywords": [
+    "openclaw",
+    "ai",
+    "agent",
+    "project-manager",
+    "pm",
+    "configuration",
+    "v2",
+    "task-management",
+    "session-isolation",
+    "auto-recovery"
+  ],
+  "author": "VA7",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/1va7/openclaw-pm"
+  },
+  "files": [
+    "index.js",
+    "config/"
+  ]
+}

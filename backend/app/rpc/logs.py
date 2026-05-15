@@ -12,8 +12,8 @@ def get_backend_log_paths() -> dict[str, str]:
     settings = get_settings()
     log_dir = settings.log_dir
     return {
-        "app": str(log_dir / "ferryman.log"),
-        "sidecar": str(log_dir / "ferryman-tauri.log"),
+        "app": str(log_dir / "rabaiagent.log"),
+        "sidecar": str(log_dir / "rabaiagent-tauri.log"),
     }
 
 

@@ -101,7 +101,7 @@ describe('App chat interactions', () => {
       t: (key: string) =>
         (
           {
-            'app.title': 'Ferryman',
+            'app.title': 'RabAiAgent',
             'app.subtitle': 'Busywork, handled.',
             'chat.header_title': 'Chat',
             'chat.placeholder': 'Prompt',

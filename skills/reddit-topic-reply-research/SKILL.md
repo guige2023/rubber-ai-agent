@@ -7,7 +7,7 @@ description: >
   responses for the user to post manually. Produces subreddit/topic maps, candidate
   post lists, and suggested replies; never posts to Reddit.
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-05-04
 updated: 2026-05-04
 ---

@@ -3,7 +3,7 @@ from app.core.browser_manager import BrowserManager
 from app.core.context_manager import ContextManager
 from app.core.model_manager import ModelManager
 from app.core.prompt_builder import PromptBuilder
-from app.core.runtime import FerrymanRuntime
+from app.core.runtime import RabAiAgentRuntime
 from app.core.schedule_manager import ScheduleManager
 from app.core.config import Settings
 from app.core.session_manager import SessionManager
@@ -13,9 +13,9 @@ from app.core.tool_manager import ToolManager
 
 
 def test_runtime_composes_core_managers(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
 
-    assert isinstance(runtime, FerrymanRuntime)
+    assert isinstance(runtime, RabAiAgentRuntime)
     assert runtime.settings.root_dir == tmp_path
     assert not hasattr(runtime, "skills")
     assert not hasattr(runtime, "tasks")
@@ -34,7 +34,7 @@ def test_runtime_composes_core_managers(tmp_path):
 
 
 def test_runtime_does_not_expose_manager_forwarding_methods(tmp_path):
-    runtime = FerrymanRuntime(Settings(root_dir=tmp_path))
+    runtime = RabAiAgentRuntime(Settings(root_dir=tmp_path))
 
     forbidden_methods = (
         "scan_skills",

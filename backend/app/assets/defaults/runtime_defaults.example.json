@@ -2,7 +2,7 @@
   "email": {
     "resend": {
       "api_key": "",
-      "default_from": "noreply@ferryman.app"
+      "default_from": "noreply@rabaiagent.app"
     }
   }
 }

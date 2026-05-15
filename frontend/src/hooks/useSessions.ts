@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { FerrymanEvent, RefreshPayload, Usage } from './useBackendConnection';
+import type { RabAiAgentEvent, RefreshPayload, Usage } from './useBackendConnection';
 import { translateStatic } from './useI18n';
 
 const MESSAGE_PAGE_SIZE = 20;
@@ -101,7 +101,7 @@ interface UseSessionsArgs {
   executeInstruction: (instruction: string, sessionId: string) => Promise<any>;
   cancelRun: (runId: string, sessionId?: string) => Promise<any>;
   clearToolActivities: () => void;
-  lastEvent: FerrymanEvent | null;
+  lastEvent: RabAiAgentEvent | null;
   isConnected?: boolean;
 }
 

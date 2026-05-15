@@ -1,4 +1,4 @@
-title = "Ferryman secret scanning"
+title = "RabAiAgent secret scanning"
 
 [allowlist]
 description = "Allow examples and dependency lockfiles"

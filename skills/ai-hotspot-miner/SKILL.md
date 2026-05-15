@@ -5,7 +5,7 @@ description: >
   launches, benchmarks, and public technical discussion. Produces an evidence-backed hotspot
   brief and a publishable article tailored to the user's audience, channel, and growth goals.
 version: 0.1.0
-author: Ferryman
+author: RabAiAgent
 created: 2026-04-09
 updated: 2026-05-10
 ---

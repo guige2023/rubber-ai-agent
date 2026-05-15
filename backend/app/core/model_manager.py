@@ -928,12 +928,10 @@ class ModelManager:
             if provider == "kimi":
                 from openai import AsyncOpenAI
                 from pydantic_ai.models.openai import OpenAIChatModel
-                from pydantic_ai.providers.openai import OpenAIProvider
+                from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 
-                if base_url:
-                    openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
-                    return OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=openai_client))
-                return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_key))
+                openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+                return OpenAIChatModel(model_name, provider=MoonshotAIProvider(openai_client=openai_client))
             if provider == "anthropic":
                 from pydantic_ai.models.anthropic import AnthropicModel
                 from pydantic_ai.providers.anthropic import AnthropicProvider

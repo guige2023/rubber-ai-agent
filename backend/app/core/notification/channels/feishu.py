@@ -41,7 +41,11 @@ def _get_tenant_token() -> Optional[str]:
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
 
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
             data = json.loads(resp.read())
             if data.get("code") == 0:
                 token = data["tenant_access_token"]
@@ -115,7 +119,11 @@ class FeishuNotifier(NotificationChannel):
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
                 result = json.loads(resp.read())
                 if result.get("code") == 0:
                     self._log_result(event, True)

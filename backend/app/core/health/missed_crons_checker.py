@@ -20,9 +20,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.core.notification import NotificationManager
 
 DEFAULT_OPENCLAW_DIR = Path.home() / ".openclaw"
 DEFAULT_GATEWAY_PORT = 18789
@@ -82,6 +85,10 @@ class MissedCronsChecker:
         if self.config.critical_jobs is None:
             self.config.critical_jobs = DEFAULT_CRITICAL_JOBS.copy()
 
+    def set_notification_manager(self, nm: "NotificationManager") -> None:
+        """Inject NotificationManager for proactive alerting."""
+        self._notification_manager: "NotificationManager" = nm
+
     async def check(self, run_missed: bool = False) -> MissedCronsResult:
         """
         Check critical cron jobs.
@@ -139,13 +146,36 @@ class MissedCronsChecker:
         if self.config.log_to_file:
             self._log_check(ok_count, missed_count, error_count)
 
-        return MissedCronsResult(
+        result = MissedCronsResult(
             ok_count=ok_count,
             missed_count=missed_count,
             error_count=error_count,
             jobs=tuple(job_statuses),
             all_ok=missed_count == 0 and error_count == 0,
         )
+
+        # Dispatch notification if there are missed or error jobs
+        if (missed_count > 0 or error_count > 0) and hasattr(self, "_notification_manager"):
+            from app.core.notification.events import NotificationEvent, NotificationSeverity
+
+            missed_jobs = [j.name for j in job_statuses if j.status == JobStatus.MISSED]
+            error_jobs = [j.name for j in job_statuses if j.status == JobStatus.ERROR]
+
+            body_parts = []
+            if missed_jobs:
+                body_parts.append(f"未执行：{', '.join(missed_jobs)}")
+            if error_jobs:
+                body_parts.append(f"检查失败：{', '.join(error_jobs)}")
+
+            notification = NotificationEvent(
+                severity=NotificationSeverity.CRITICAL if error_count > 0 else NotificationSeverity.WARNING,
+                source="missed_crons",
+                title="有关键 Cron 任务漏跑",
+                body="\n".join(body_parts),
+            )
+            await self._notification_manager.dispatch(notification)
+
+        return result
 
     # ------------------------------------------------------------------
     # Gateway communication

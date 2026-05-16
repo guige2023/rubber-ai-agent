@@ -98,6 +98,11 @@ class HeartbeatRunner:
         self._next_due_ms: int = 0
         self._heartbeat_handler: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self._lock = asyncio.Lock()
+        self._notification_manager: Optional[object] = None
+
+    def set_notification_manager(self, nm: object) -> None:
+        """Inject NotificationManager for use in health checks."""
+        self._notification_manager = nm
 
     def set_heartbeat_handler(self, handler: Callable[[list[dict]], Awaitable[None]]) -> None:
         """
@@ -221,6 +226,11 @@ class HeartbeatRunner:
                 check_missed_crons,
                 get_daily_stats,
             )
+            from app.core.health.health_checker import HealthChecker
+            from app.core.health.unanswered_checker import UnansweredChecker
+            from app.core.health.missed_crons_checker import MissedCronsChecker
+
+            nm = self._notification_manager
 
             for task in self.tasks:
                 if task.get("name") not in HEALTH_CHECK_TASKS:
@@ -229,7 +239,10 @@ class HeartbeatRunner:
                 task_name = task["name"]
                 try:
                     if task_name == "gateway-health":
-                        result = await check_gateway_health()
+                        checker = HealthChecker()
+                        if nm:
+                            checker.set_notification_manager(nm)
+                        result = await checker.run_health_check()
                         if not result.all_ok:
                             logger.warning(
                                 f"Gateway health check issues: "
@@ -237,13 +250,19 @@ class HeartbeatRunner:
                                 f"{result.issues_fixed} fixed"
                             )
                     elif task_name == "unanswered-check":
-                        result = await check_unanswered_sessions()
+                        checker = UnansweredChecker()
+                        if nm:
+                            checker.set_notification_manager(nm)
+                        result = await checker.check()
                         if not result.all_ok:
                             logger.warning(
                                 f"Unanswered sessions detected: {result.count}"
                             )
                     elif task_name == "missed-crons-check":
-                        result = await check_missed_crons()
+                        checker = MissedCronsChecker()
+                        if nm:
+                            checker.set_notification_manager(nm)
+                        result = await checker.check()
                         if not result.all_ok:
                             logger.warning(
                                 f"Missed cron jobs: {result.missed_count}"

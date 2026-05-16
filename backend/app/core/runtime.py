@@ -80,8 +80,17 @@ class RabAiAgentRuntime:
         # Initialize EvolutionManager
         self.evolution_manager = EvolutionManager()
 
+        # Initialize TriggerManager
+        from app.core.trigger_manager import TriggerManager
+        self.trigger_manager = TriggerManager(self)
+
+        # Initialize NotificationManager
+        from app.core.notification import NotificationManager
+        self.notification_manager = NotificationManager()
+
         # Initialize HeartbeatRunner with default tasks
         self.heartbeat_runner = HeartbeatRunner(tasks=DEFAULT_HEARTBEAT_TASKS)
+        self.heartbeat_runner.set_notification_manager(self.notification_manager)
 
     async def start(self) -> None:
         """Start all runtime systems."""

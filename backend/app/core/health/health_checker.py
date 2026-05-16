@@ -22,9 +22,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.core.notification import NotificationManager
 
 # Default OpenCLAW directory (can be overridden via config)
 DEFAULT_OPENCLAW_DIR = Path.home() / ".openclaw"
@@ -103,6 +106,10 @@ class HealthChecker:
         self._issues_detected = 0
         self._issues: list[HealthIssue] = []
 
+    def set_notification_manager(self, nm: "NotificationManager") -> None:
+        """Inject NotificationManager for proactive alerting."""
+        self._notification_manager: "NotificationManager" = nm
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -135,13 +142,43 @@ class HealthChecker:
         # Log results
         self._log_health_check(timestamp)
 
-        return HealthResult(
+        result = HealthResult(
             timestamp=timestamp,
             issues_fixed=self._issues_fixed,
             issues_detected=self._issues_detected,
             issues=tuple(self._issues),
             all_ok=len(self._issues) == 0,
         )
+
+        # Dispatch notification for critical issues
+        if not result.all_ok and hasattr(self, "_notification_manager"):
+            from app.core.notification.events import NotificationEvent, NotificationSeverity
+
+            # Group issues by severity
+            critical_issues = [i for i in self._issues if i.severity == IssueSeverity.ERROR]
+            warning_issues = [i for i in self._issues if i.severity == IssueSeverity.WARNING]
+
+            if critical_issues:
+                body = "\n".join(f"• [{i.code}] {i.message}" for i in critical_issues[:5])
+                notification = NotificationEvent(
+                    severity=NotificationSeverity.CRITICAL,
+                    source="health_checker",
+                    title="Gateway 健康检查发现严重问题",
+                    body=body,
+                )
+                await self._notification_manager.dispatch(notification)
+
+            if warning_issues:
+                body = "\n".join(f"• [{i.code}] {i.message}" for i in warning_issues[:5])
+                notification = NotificationEvent(
+                    severity=NotificationSeverity.WARNING,
+                    source="health_checker",
+                    title="Gateway 健康检查发现警告",
+                    body=body,
+                )
+                await self._notification_manager.dispatch(notification)
+
+        return result
 
     def get_status(self) -> dict:
         """Get current health checker status (sync)."""

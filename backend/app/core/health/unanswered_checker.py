@@ -18,9 +18,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.core.notification import NotificationManager
 
 DEFAULT_OPENCLAW_DIR = Path.home() / ".openclaw"
 DEFAULT_MAX_AGE_HOURS = 24
@@ -68,6 +71,10 @@ class UnansweredChecker:
 
     def __init__(self, config: Optional[UnansweredCheckerConfig] = None) -> None:
         self.config = config or UnansweredCheckerConfig()
+
+    def set_notification_manager(self, nm: "NotificationManager") -> None:
+        """Inject NotificationManager for proactive alerting."""
+        self._notification_manager: "NotificationManager" = nm
 
     async def check(self) -> UnansweredCheckerResult:
         """
@@ -169,6 +176,24 @@ class UnansweredChecker:
         logger.info(
             f"[UnansweredChecker] Found {len(unanswered)} unanswered sessions"
         )
+
+        # Dispatch notification if there are unanswered sessions
+        if not result.all_ok and hasattr(self, "_notification_manager"):
+            from app.core.notification.events import NotificationEvent, NotificationSeverity
+            session_list = "\n".join(
+                f"• {s.session_key}: {s.content_preview[:50]}"
+                for s in result.sessions[:10]
+            )
+            if result.count > 10:
+                session_list += f"\n... 还有 {result.count - 10} 条"
+            notification = NotificationEvent(
+                severity=NotificationSeverity.WARNING,
+                source="unanswered",
+                title="有未回复的用户消息",
+                body=f"检测到 {result.count} 条未回复的用户消息：\n{session_list}",
+            )
+            await self._notification_manager.dispatch(notification)
+
         return result
 
     def format_text(self, result: UnansweredCheckerResult) -> str:

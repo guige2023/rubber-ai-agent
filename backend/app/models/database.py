@@ -81,6 +81,27 @@ class ScheduleModel(SQLModel, table=True):
         sa_column=SAColumn(DateTime(timezone=True), nullable=False),
     )
 
+class TriggerModel(SQLModel, table=True):
+    __tablename__ = "triggers"
+    id: str = Field(default_factory=shortuuid.uuid, primary_key=True)
+    name: str
+    type: str = Field(default="webhook")  # webhook | file_watch | schedule | mqtt
+    config: dict[str, object] = Field(default_factory=dict, sa_column=SAColumn(JSON))
+    instruction: str = Field(default="")
+    enabled: bool = Field(default=True)
+    last_triggered_at: Optional[datetime] = Field(default=None, sa_column=SAColumn(DateTime(timezone=True), nullable=True))
+    trigger_count: int = Field(default=0)
+    last_run_result: Optional[dict[str, object]] = Field(default=None, sa_column=SAColumn(JSON, nullable=True))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=SAColumn(DateTime(timezone=True), nullable=False),
+    )
+
+
 class AppConfigModel(SQLModel, table=True):
     __tablename__ = "app_configs"
     key: str = Field(primary_key=True)  # e.g., "llm.openai.api_key", "system.llm.active_model"
@@ -107,6 +128,7 @@ def _normalize_datetime_fields(target: object) -> None:
         MessageModel: ("created_at",),
         TaskModel: ("created_at", "updated_at", "finished_at"),
         ScheduleModel: ("last_run_at", "next_run_at", "created_at", "updated_at"),
+        TriggerModel: ("last_triggered_at", "created_at", "updated_at"),
         AppConfigModel: ("updated_at",),
     }.get(type(target), ())
     for field_name in field_names:
@@ -121,6 +143,6 @@ def _normalize_on_refresh(target: object, context: object, attrs: object) -> Non
     _normalize_datetime_fields(target)
 
 
-for _model in (SessionModel, MessageModel, TaskModel, ScheduleModel, AppConfigModel):
+for _model in (SessionModel, MessageModel, TaskModel, ScheduleModel, TriggerModel, AppConfigModel):
     event.listen(_model, "load", _normalize_on_load)
     event.listen(_model, "refresh", _normalize_on_refresh)

@@ -19,6 +19,7 @@ def register_rpc_methods() -> None:
     import app.rpc.system  # noqa: F401
     import app.rpc.tasks  # noqa: F401
     import app.rpc.feishu  # noqa: F401 - Feishu webhook handlers
+    import app.rpc.trigger  # noqa: F401 - Trigger CRUD + webhook receiver
 
     _registered = True
 

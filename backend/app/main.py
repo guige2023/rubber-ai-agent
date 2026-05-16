@@ -146,6 +146,7 @@ async def lifespan(fastapi_app: FastAPI):
     fastapi_app.state.schedule_manager = fastapi_app.state.runtime.schedule_manager
     await fastapi_app.state.runtime.model_pricing_service.start()
     await fastapi_app.state.schedule_manager.start()
+    await fastapi_app.state.runtime.trigger_manager.sync_all()
 
     # Start HeartbeatRunner, EvolutionManager, MemoryManager
     await fastapi_app.state.runtime.start()
@@ -277,6 +278,11 @@ register_websocket(app)
 # Register Feishu webhook router
 from app.rpc.feishu import router as feishu_router
 app.include_router(feishu_router)
+
+# Register trigger router
+from app.rpc.trigger import router as trigger_router, webhook_router as trigger_webhook_router
+app.include_router(trigger_router)
+app.include_router(trigger_webhook_router)
 
 
 if __name__ == "__main__":

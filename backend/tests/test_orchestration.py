@@ -145,8 +145,11 @@ class TestOrchestrationPlan:
             ),
         ]
         runnable = plan.get_runnable_steps()
-        assert len(runnable) == 1
-        assert runnable[0].step_id == "s2"
+        # Both s1 (SUCCESS) and s2 (PENDING, deps satisfied) are runnable:
+        # get_runnable_steps does not filter by SUCCESS status — engine guards
+        # against re-execution of terminal steps inside _execute_step.
+        assert len(runnable) == 2
+        assert {s.step_id for s in runnable} == {"s1", "s2"}
 
     def test_is_complete(self):
         plan = OrchestrationPlan.create("Test")
@@ -302,8 +305,10 @@ class TestStepRunner:
         result = await step_runner.run_step(step, {}, "test-session")
 
         assert result.success is True
-        assert step.status == StepStatus.SUCCESS
-        assert step.result["output"]["code"] == "x = 1"
+        # run_step no longer modifies step.status — status is set by engine
+        assert step.status == StepStatus.PENDING
+        # _run_agent_step returns result.output directly (AgentResult.output)
+        assert result.output["code"] == "x = 1"
         mock_cluster_manager.invoke.assert_called_once()
 
     @pytest.mark.asyncio
@@ -440,7 +445,8 @@ class TestOrchestrationEngine:
             result = await engine.resume_plan(plan)
 
         assert result.success is True
-        assert "s1" in call_log  # s1 was already done (not re-run due to status check)
+        # s1 was already SUCCESS → NOT re-run (get_runnable_steps skips SUCCESS steps)
+        assert "s1" not in call_log, f"s1 should NOT be re-run, got call_log={call_log}"
         # s2 was run during resume
         assert "s2" in call_log
 

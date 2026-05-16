@@ -145,11 +145,16 @@ class OrchestrationPlan:
         return [s for s in self.steps if s.status == status]
 
     def get_runnable_steps(self) -> list[TaskStep]:
-        """Steps whose dependencies are all satisfied (SUCCESS) and are currently PENDING or WAITING."""
+        """Steps whose dependencies are all satisfied (SUCCESS), regardless of current status.
+
+        Note: This method only checks dependency satisfaction.
+        Status filtering (PENDING/WAITING vs terminal states) is done inside
+        _execute_step after the per-step semaphore is acquired, to avoid
+        a race where Step A checks Step B's status before Step B has set it
+        to SUCCESS inside run_step.
+        """
         runnable = []
         for step in self.steps:
-            if step.status not in (StepStatus.PENDING, StepStatus.WAITING):
-                continue
             deps_done = all(
                 self.get_step(dep_id) and self.get_step(dep_id).status == StepStatus.SUCCESS
                 for dep_id in step.depends_on

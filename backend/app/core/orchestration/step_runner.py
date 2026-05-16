@@ -70,16 +70,19 @@ class StepRunner:
         """
         Execute a single TaskStep and return its result.
 
+        Note: This method does NOT modify step.status — that is handled by
+        _execute_step in the engine after this returns. This separation ensures
+        the engine's guard checks see the correct status.
+
         Args:
-            step: The step to execute
+            step: The step to execute (status is NOT modified here)
             shared_context: Shared variable store (previous step outputs)
             session_id: Current session ID for skill runs
 
         Returns:
             StepResult with success/output or failure/error
         """
-        step.status = StepStatus.RUNNING
-        step.started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(timezone.utc)
 
         # --- Template substitution: $key → value in instruction ---
         instruction = self._substitute_context(step.instruction, shared_context)
@@ -94,39 +97,24 @@ class StepRunner:
                 # === PATH 2: agent_cluster invoke (stub in Phase 0) ===
                 result_data = await self._run_agent_step(agent_type, instruction)
 
-            step.status = StepStatus.SUCCESS
-            step.finished_at = datetime.now(timezone.utc)
-            step.result = result_data
-
-            # Update shared_context with this step's output
-            shared_context[step.context_key] = result_data
-
-            # Save checkpoint after successful completion
-            if step.checkpoint_enabled:
-                self._save_checkpoint(step, shared_context)
+            finished_at = datetime.now(timezone.utc)
 
             return StepResult(
                 step_id=step.step_id,
                 success=True,
                 output=result_data,
-                duration_ms=int(
-                    (step.finished_at - step.started_at).total_seconds() * 1000
-                ),
+                duration_ms=int((finished_at - started_at).total_seconds() * 1000),
             )
 
         except Exception as e:
             logger.exception(f"Step {step.step_id} failed: {e}")
-            step.status = StepStatus.FAILED
-            step.error = str(e)
-            step.finished_at = datetime.now(timezone.utc)
+            finished_at = datetime.now(timezone.utc)
 
             return StepResult(
                 step_id=step.step_id,
                 success=False,
                 error=str(e),
-                duration_ms=int(
-                    (step.finished_at - step.started_at).total_seconds() * 1000
-                ),
+                duration_ms=int((finished_at - started_at).total_seconds() * 1000),
             )
 
     async def _run_skill_step(
@@ -193,12 +181,7 @@ class StepRunner:
             task=instruction,
             context=context,
         )
-        return {
-            "output": result.output,
-            "success": result.success,
-            "error": result.error,
-            "duration_ms": result.duration_ms,
-        }
+        return result.output
 
     def _substitute_context(self, template: str, context: dict[str, Any]) -> str:
         """

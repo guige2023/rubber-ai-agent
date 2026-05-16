@@ -147,166 +147,124 @@ class AutomationResult:
 
 
 # ------------------------------------------------------------------
-# Script Generation
+# Script Generation (writes data to temp file to avoid quoting issues)
 # ------------------------------------------------------------------
 
 
-def _escape_py_string(s: str) -> str:
-    """Escape a string for embedding in a Python script."""
-    return json.dumps(s)[1:-1]  # strip surrounding quotes from json.dumps
-
-
-def _generate_form_fill_script(
-    url: str,
-    fields: list[FormField],
-    submit_selector: str,
-    submit_text: Optional[str] = None,
-    wait_for_selectors: Optional[list[str]] = None,
-    screenshot_on_error: bool = True,
-) -> str:
-    """Generate a browser-use script for filling and submitting a form."""
-    fields_json = json.dumps([f.to_dict() for f in fields])
-    wait_str = json.dumps(wait_for_selectors or [])
-    submit_text_val = json.dumps(submit_text or "")
-
-    return f"""
+_FORM_FILL_TEMPLATE = """
 import sys
-import asyncio
 import json
+import time as _time
 from pathlib import Path
 from browser_use import Controller
 from playwright.sync_api import sync_playwright
 
-fields = json.loads({json.dumps(fields_json)})
-submit_text = {submit_text_val}
-wait_for_selectors = json.loads({json.dumps(wait_str)})
+data_path = sys.argv[1] if len(sys.argv) > 1 else None
+if data_path:
+    with open(data_path) as f:
+        data = json.load(f)
+else:
+    data = {}
+
+url = data.get("url", "")
+fields = data.get("fields", [])
+submit_selector = data.get("submit_selector", "")
+wait_for_selectors = data.get("wait_for_selectors", [])
+screenshot_on_error = data.get("screenshot_on_error", True)
 
 controller = Controller()
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page()
-    
+    result = {"success": False, "error": None, "url": None, "title": None, "screenshot": None}
+
     try:
         # Navigate
-        page.goto({_escape_py_string(url)}, wait_until="domcontentloaded", timeout=30000)
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=15000)
-        
+
         # Fill fields
         for field_def in fields:
             selector = field_def["selector"]
             value = field_def["value"]
-            field_type = field_def["field_type"]
-            
+            field_type = field_def.get("field_type", "text")
+
             if field_type == "checkbox":
-                is_checked = page.is_checked(selector, timeout=3000)
-                if is_checked != field_def.get("checked", True):
-                    page.check(selector, timeout=3000) if field_def.get("checked", True) else page.uncheck(selector, timeout=3000)
+                is_checked = page.is_checked(selector, timeout=3000) if page.query_selector(selector) else False
+                target_checked = field_def.get("checked", True)
+                if is_checked != target_checked:
+                    page.check(selector, timeout=3000) if target_checked else page.uncheck(selector, timeout=3000)
             elif field_type == "select":
-                page.select_option(selector, value=value, timeout=3000)
+                val = field_def.get("option_value") or field_def.get("option_label", "")
+                if val:
+                    page.select_option(selector, value=val, timeout=3000)
             else:
                 page.fill(selector, value, timeout=5000)
-        
+
         # Click submit
-        if {submit_text_val!r}:
-            page.click(submit_selector, timeout=5000)
-        else:
-            page.click(submit_selector, timeout=5000)
-        
-        # Wait for navigation or result
-        if wait_for_selectors:
-            for sel in wait_for_selectors:
-                try:
-                    page.wait_for_selector(sel, timeout=10000)
-                except Exception:
-                    pass
-        
-        # Capture state
-        result = {{
-            "success": True,
-            "url": page.url,
-            "title": page.title(),
-            "screenshot": None,
-            "error": None
-        }}
-        
-        # Take screenshot on error path only
-        error_selector = None
-        
-    except Exception as e:
-        result = {{
-            "success": False,
-            "error": str(e),
-            "url": page.url if 'page' in dir() else None,
-            "title": page.title() if 'page' in dir() else None,
-            "screenshot": None
-        }}
-        if {json.dumps(screenshot_on_error)}:
+        page.click(submit_selector, timeout=5000)
+
+        # Wait for result selectors
+        for sel in wait_for_selectors:
             try:
-                import base64
-                ss = page.screenshot(full_page=False)
-                result["screenshot"] = base64.b64encode(ss).decode()
+                page.wait_for_selector(sel, timeout=10000)
             except Exception:
                 pass
-    
+
+        result["success"] = True
+        result["url"] = page.url
+        result["title"] = page.title()
+
+    except Exception as e:
+        result["success"] = False
+        result["error"] = str(e)
+        result["url"] = page.url
+        result["title"] = page.title()
+        if screenshot_on_error:
+            try:
+                ss = page.screenshot(full_page=False)
+                result["screenshot"] = __import__("base64").b64encode(ss).decode()
+            except Exception:
+                pass
+
     print(json.dumps(result))
     browser.close()
 """
 
 
-def _generate_login_script(
-    login_flow: LoginFlow,
-    screenshot_on_error: bool = True,
-) -> str:
-    """Generate a browser-use script for a login flow."""
-    flow_dict = {
-        "name": login_flow.name,
-        "url": login_flow.url,
-        "username_field": login_flow.username_field,
-        "password_field": login_flow.password_field,
-        "username": login_flow.username,
-        "password": login_flow.password,
-        "submit_button": login_flow.submit_button,
-        "success_indicators": login_flow.success_indicators,
-        "failure_indicators": login_flow.failure_indicators,
-        "extra_steps": [
-            {
-                "step_type": s.step_type.value if isinstance(s.step_type, StepType) else s.step_type,
-                "selector": s.selector,
-                "text": s.text,
-                "timeout_ms": s.timeout_ms,
-            }
-            for s in login_flow.extra_steps
-        ],
-    }
-    flow_json = json.dumps(flow_dict)
-
-    return f"""
+_LOGIN_TEMPLATE = """
 import sys
-import asyncio
 import json
+import time as _time
 from browser_use import Controller
 from playwright.sync_api import sync_playwright
 
-flow = json.loads({json.dumps(flow_json)!r})
+data_path = sys.argv[1] if len(sys.argv) > 1 else None
+if data_path:
+    with open(data_path) as f:
+        flow = json.load(f)
+else:
+    flow = {}
 
 controller = Controller()
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page()
-    
+    result = {"success": False, "error": None, "url": None, "title": None, "screenshot": None}
+
     try:
         # Navigate to login page
         page.goto(flow["url"], wait_until="domcontentloaded", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=15000)
-        
+
         # Fill username
         page.fill(flow["username_field"], flow["username"], timeout=5000)
-        
+
         # Fill password
         page.fill(flow["password_field"], flow["password"], timeout=5000)
-        
+
         # Extra pre-submit steps (e.g., accept terms, select org)
         for step in flow.get("extra_steps", []):
             stype = step["step_type"]
@@ -315,172 +273,153 @@ with sync_playwright() as p:
             elif stype == "type":
                 page.fill(step["selector"], step["text"], timeout=3000)
             elif stype == "wait":
-                import time
-                time.sleep(step["timeout_ms"] / 1000)
+                _time.sleep(step["timeout_ms"] / 1000)
             elif stype == "wait_selector":
                 page.wait_for_selector(step["selector"], timeout=step["timeout_ms"])
-        
+
         # Click submit
         page.click(flow["submit_button"], timeout=5000)
-        
-        # Wait a bit for response
+
+        # Wait for response
         page.wait_for_load_state("domcontentloaded", timeout=10000)
-        await asyncio.sleep(2)
-        
+        _time.sleep(2)
+
         # Check for failure indicators
-        page_text = page.inner_text("body")
+        page_text = page.inner_text("body") if page.query_selector("body") else ""
         for failure in flow.get("failure_indicators", []):
             if failure.lower() in page_text.lower():
-                raise Exception(f"Login failed: detected failure indicator '{{failure}}'")
-        
+                raise Exception(f"Login failed: detected failure indicator '{failure}'")
+
         # Check for success indicators
         success_found = True
         if flow.get("success_indicators"):
             success_found = any(
-                ind.lower() in page.inner_text("body").lower()
+                ind.lower() in page_text.lower()
                 for ind in flow["success_indicators"]
             )
-        
-        result = {{
-            "success": success_found,
-            "url": page.url,
-            "title": page.title(),
-            "screenshot": None,
-            "error": None if success_found else "Login success indicators not found"
-        }}
-        
+
+        result["success"] = success_found
+        result["url"] = page.url
+        result["title"] = page.title()
+        result["error"] = None if success_found else "Login success indicators not found"
+
     except Exception as e:
-        result = {{
-            "success": False,
-            "error": str(e),
-            "url": page.url if 'page' in dir() else None,
-            "title": page.title() if 'page' in dir() else None,
-            "screenshot": None
-        }}
-        if {json.dumps(screenshot_on_error)}:
-            try:
-                import base64
-                ss = page.screenshot(full_page=False)
-                result["screenshot"] = base64.b64encode(ss).decode()
-            except Exception:
-                pass
-    
+        result["success"] = False
+        result["error"] = str(e)
+        result["url"] = page.url
+        result["title"] = page.title()
+        try:
+            ss = page.screenshot(full_page=False)
+            result["screenshot"] = __import__("base64").b64encode(ss).decode()
+        except Exception:
+            pass
+
     print(json.dumps(result))
     browser.close()
 """
 
 
-def _generate_multi_step_script(
-    steps: list[AutomationStep],
-    capture_screenshot: bool = False,
-    capture_text: bool = False,
-) -> str:
-    """Generate a browser-use script for a multi-step workflow."""
-    steps_json = json.dumps(
-        [
-            {
-                "step_type": s.step_type.value if isinstance(s.step_type, StepType) else s.step_type,
-                "selector": s.selector,
-                "text": s.text,
-                "url": s.url,
-                "timeout_ms": s.timeout_ms,
-                "option_value": s.option_value,
-                "option_label": s.option_label,
-                "keys": s.keys,
-                "checked": s.checked,
-                "wait_for_url": s.wait_for_url,
-            }
-            for s in steps
-        ]
-    )
-
-    return f"""
+_MULTI_STEP_TEMPLATE = """
 import sys
-import asyncio
 import json
+import time as _time
 from browser_use import Controller
 from playwright.sync_api import sync_playwright
 
-steps = json.loads({json.dumps(steps_json)!r})
+data_path = sys.argv[1] if len(sys.argv) > 1 else None
+if data_path:
+    with open(data_path) as f:
+        data = json.load(f)
+else:
+    data = {}
+
+steps = data.get("steps", [])
+capture_screenshot = data.get("capture_screenshot", False)
+capture_text = data.get("capture_text", False)
 
 controller = Controller()
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page()
-    
+
     results = []
     error = None
-    
+
     try:
         for i, step in enumerate(steps):
             stype = step["step_type"]
-            
+
             if stype == "navigate":
                 page.goto(step["url"], wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_load_state("networkidle", timeout=15000)
-                
+
             elif stype == "click":
                 page.click(step["selector"], timeout=5000)
-                
+
             elif stype == "type":
                 page.fill(step["selector"], step["text"], timeout=5000)
-                
+
             elif stype == "press":
                 page.press(step["selector"] or "body", step["keys"], timeout=3000)
-                
+
             elif stype == "wait":
-                import time
-                time.sleep(step["timeout_ms"] / 1000)
-                
+                _time.sleep(step["timeout_ms"] / 1000)
+
             elif stype == "wait_selector":
                 page.wait_for_selector(step["selector"], timeout=step["timeout_ms"])
-                
+
             elif stype == "wait_navigation":
                 page.wait_for_load_state("domcontentloaded", timeout=step["timeout_ms"])
-                
+
             elif stype == "select_dropdown":
-                val = step["option_value"] or step["option_label"]
+                val = step.get("option_value") or step.get("option_label", "")
                 if val:
                     page.select_option(step["selector"], value=val, timeout=3000)
-                    
+
             elif stype == "check":
-                is_checked = page.is_checked(step["selector"], timeout=3000)
+                is_checked = page.is_checked(step["selector"], timeout=3000) if page.query_selector(step["selector"]) else False
                 target = step.get("checked", True)
                 if is_checked != target:
-                    page.check(step["selector"]) if target else page.uncheck(step["selector"])
-                    
+                    page.check(step["selector"], timeout=3000) if target else page.uncheck(step["selector"], timeout=3000)
+
             elif stype == "hover":
                 page.hover(step["selector"], timeout=3000)
-                
+
             elif stype == "screenshot":
-                import base64
                 ss = page.screenshot(full_page=False)
-                results.append({{"step": i, "screenshot": base64.b64encode(ss).decode()}})
-                
+                results.append({"step": i, "screenshot": __import__("base64").b64encode(ss).decode()})
+
             elif stype == "snapshot":
                 html = page.content()
-                results.append({{"step": i, "html_length": len(html)}})
-            
-            results.append({{"step": i, "done": True}})
-            
+                results.append({"step": i, "html_length": len(html)})
+
+            results.append({"step": i, "done": True})
+
     except Exception as e:
         error = str(e)
         try:
-            import base64
             ss = page.screenshot(full_page=False)
-            results.append({{"step": len(steps), "screenshot": base64.b64encode(ss).decode()}})
+            results.append({"step": len(steps), "screenshot": __import__("base64").b64encode(ss).decode()})
         except Exception:
             pass
-    
+
     final_text = None
-    if {json.dumps(capture_text)}:
+    if capture_text:
         try:
             final_text = page.inner_text("body")
         except Exception:
             pass
-    
-    output = {{
+
+    final_screenshot = None
+    if capture_screenshot:
+        try:
+            ss = page.screenshot(full_page=False)
+            final_screenshot = __import__("base64").b64encode(ss).decode()
+        except Exception:
+            pass
+
+    output = {
         "success": error is None,
         "steps_completed": len(results),
         "total_steps": len(steps),
@@ -489,9 +428,9 @@ with sync_playwright() as p:
         "error": error,
         "results": results,
         "captured_text": final_text,
-        "screenshot": results[-1].get("screenshot") if results and "screenshot" in results[-1] else None
-    }}
-    
+        "screenshot": final_screenshot,
+    }
+
     print(json.dumps(output))
     browser.close()
 """
@@ -534,17 +473,28 @@ class BrowserAutomation:
         except Exception:
             return False
 
-    def _run_script(self, script_content: str, timeout: int = 120) -> dict[str, Any]:
-        """Execute a generated script via the browser-use venv."""
+    def _run_script(self, script_content: str, data: dict, timeout: int = 120) -> dict[str, Any]:
+        """
+        Execute a generated script via the browser-use venv.
+        Data is written to a temp JSON file and passed as argv[1].
+        """
+        # Write script to temp file
         with tempfile.NamedTemporaryFile(
             mode="w", suffix="_browser_automation.py", delete=False
         ) as f:
             f.write(script_content)
             script_path = f.name
 
+        # Write data to temp JSON file
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix="_data.json", delete=False
+        ) as f:
+            json.dump(data, f)
+            data_path = f.name
+
         try:
             result = subprocess.run(
-                [self.python_path, script_path],
+                [self.python_path, script_path, data_path],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -570,6 +520,7 @@ class BrowserAutomation:
             return output
         finally:
             Path(script_path).unlink(missing_ok=True)
+            Path(data_path).unlink(missing_ok=True)
 
     # ------------------------------------------------------------------
     # Public API
@@ -580,8 +531,8 @@ class BrowserAutomation:
         url: str,
         fields: list[FormField],
         submit_selector: str,
-        submit_text: Optional[str] = None,
         wait_for_selectors: Optional[list[str]] = None,
+        screenshot_on_error: bool = True,
     ) -> AutomationResult:
         """
         Fill a web form and submit it.
@@ -590,8 +541,8 @@ class BrowserAutomation:
             url: The page URL to navigate to
             fields: List of FormField definitions
             submit_selector: CSS selector for the submit button
-            submit_text: Optional text that must appear on the submit button
             wait_for_selectors: Selectors to wait for after submission
+            screenshot_on_error: Capture screenshot on failure
 
         Returns:
             AutomationResult with success status and captured state
@@ -604,14 +555,14 @@ class BrowserAutomation:
                 error="browser-use venv not available",
             )
 
-        script = _generate_form_fill_script(
-            url=url,
-            fields=fields,
-            submit_selector=submit_selector,
-            submit_text=submit_text,
-            wait_for_selectors=wait_for_selectors,
-        )
-        raw = self._run_script(script)
+        data = {
+            "url": url,
+            "fields": [f.to_dict() for f in fields],
+            "submit_selector": submit_selector,
+            "wait_for_selectors": wait_for_selectors or [],
+            "screenshot_on_error": screenshot_on_error,
+        }
+        raw = self._run_script(_FORM_FILL_TEMPLATE, data)
         return AutomationResult(
             success=raw.get("success", False),
             steps_completed=raw.get("steps_completed", 0) if raw.get("success") else 0,
@@ -640,8 +591,27 @@ class BrowserAutomation:
                 error="browser-use venv not available",
             )
 
-        script = _generate_login_script(login_flow)
-        raw = self._run_script(script)
+        flow_data = {
+            "name": login_flow.name,
+            "url": login_flow.url,
+            "username_field": login_flow.username_field,
+            "password_field": login_flow.password_field,
+            "username": login_flow.username,
+            "password": login_flow.password,
+            "submit_button": login_flow.submit_button,
+            "success_indicators": login_flow.success_indicators,
+            "failure_indicators": login_flow.failure_indicators,
+            "extra_steps": [
+                {
+                    "step_type": s.step_type.value if isinstance(s.step_type, StepType) else s.step_type,
+                    "selector": s.selector,
+                    "text": s.text,
+                    "timeout_ms": s.timeout_ms,
+                }
+                for s in login_flow.extra_steps
+            ],
+        }
+        raw = self._run_script(_LOGIN_TEMPLATE, flow_data)
         return AutomationResult(
             success=raw.get("success", False),
             steps_completed=raw.get("steps_completed", 0) if raw.get("success") else 0,
@@ -677,12 +647,27 @@ class BrowserAutomation:
                 error="browser-use venv not available",
             )
 
-        script = _generate_multi_step_script(
-            steps=steps,
-            capture_screenshot=capture_screenshot,
-            capture_text=capture_text,
-        )
-        raw = self._run_script(script, timeout=180)
+        steps_data = [
+            {
+                "step_type": s.step_type.value if isinstance(s.step_type, StepType) else s.step_type,
+                "selector": s.selector,
+                "text": s.text,
+                "url": s.url,
+                "timeout_ms": s.timeout_ms,
+                "option_value": s.option_value,
+                "option_label": s.option_label,
+                "keys": s.keys,
+                "checked": s.checked,
+                "wait_for_url": s.wait_for_url,
+            }
+            for s in steps
+        ]
+        data = {
+            "steps": steps_data,
+            "capture_screenshot": capture_screenshot,
+            "capture_text": capture_text,
+        }
+        raw = self._run_script(_MULTI_STEP_TEMPLATE, data, timeout=180)
         return AutomationResult(
             success=raw.get("success", False),
             steps_completed=raw.get("steps_completed", 0),

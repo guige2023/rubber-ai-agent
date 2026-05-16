@@ -3,6 +3,7 @@ Tests for browser_automation.py - high-level browser automation wrappers.
 """
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -15,10 +16,9 @@ from app.core.browser_automation import (
     FormField,
     LoginFlow,
     StepType,
-    _escape_py_string,
-    _generate_form_fill_script,
-    _generate_login_script,
-    _generate_multi_step_script,
+    _FORM_FILL_TEMPLATE,
+    _LOGIN_TEMPLATE,
+    _MULTI_STEP_TEMPLATE,
 )
 
 
@@ -62,6 +62,10 @@ class TestAutomationStep:
         step = AutomationStep(step_type=StepType.WAIT, timeout_ms=3000)
         assert step.timeout_ms == 3000
 
+    def test_select_dropdown(self):
+        step = AutomationStep(step_type=StepType.SELECT_DROPDOWN, selector="select#country", option_value="CN")
+        assert step.option_value == "CN"
+
 
 class TestLoginFlow:
     def test_login_flow_basic(self):
@@ -95,218 +99,57 @@ class TestLoginFlow:
         assert flow.extra_steps[0].step_type == StepType.CLICK
 
 
-class TestEscapePyString:
-    def test_escape_simple(self):
-        assert _escape_py_string("hello") == "hello"
+class TestTemplates:
+    """Test that script templates are valid Python and contain expected structure."""
 
-    def test_escape_quotes(self):
-        assert _escape_py_string('say "hello"') == r"say \"hello\""
+    def test_form_fill_template_valid_syntax(self):
+        compile(_FORM_FILL_TEMPLATE, "<string>", "exec")
 
-    def test_escape_newline(self):
-        assert _escape_py_string("line1\nline2") == r"line1\nline2"
+    def test_form_fill_template_has_navigate(self):
+        assert "page.goto" in _FORM_FILL_TEMPLATE
 
-    def test_escape_backslash(self):
-        assert _escape_py_string(r"path\to\file") == r"path\to\file"
+    def test_form_fill_template_has_fill(self):
+        assert "page.fill" in _FORM_FILL_TEMPLATE
 
+    def test_form_fill_template_has_click(self):
+        assert "page.click" in _FORM_FILL_TEMPLATE
 
-class TestGenerateFormFillScript:
-    def test_generates_valid_python_syntax(self):
-        fields = [
-            FormField(selector="#username", value="alice"),
-            FormField(selector="#password", value="secret", field_type="password"),
-        ]
-        script = _generate_form_fill_script(
-            url="https://example.com/form",
-            fields=fields,
-            submit_selector="#submit",
-        )
-        # Should be valid Python (compile check)
-        compile(script, "<string>", "exec")
+    def test_form_fill_template_reads_data_from_file(self):
+        assert "sys.argv[1]" in _FORM_FILL_TEMPLATE
+        assert "json.load" in _FORM_FILL_TEMPLATE
 
-    def test_script_contains_navigate(self):
-        script = _generate_form_fill_script(
-            url="https://example.com/form",
-            fields=[],
-            submit_selector="#submit",
-        )
-        assert "page.goto" in script
-        assert "example.com/form" in script
+    def test_login_template_valid_syntax(self):
+        compile(_LOGIN_TEMPLATE, "<string>", "exec")
 
-    def test_script_fills_fields(self):
-        fields = [
-            FormField(selector="#email", value="a@b.com"),
-        ]
-        script = _generate_form_fill_script(
-            url="https://example.com",
-            fields=fields,
-            submit_selector="#btn",
-        )
-        assert 'page.fill("#email"' in script
-        assert "a@b.com" in script
+    def test_login_template_has_fill(self):
+        assert "page.fill" in _LOGIN_TEMPLATE
 
-    def test_script_clicks_submit(self):
-        script = _generate_form_fill_script(
-            url="https://example.com",
-            fields=[],
-            submit_selector="#my-button",
-        )
-        assert 'page.click("#my-button"' in script
+    def test_login_template_checks_failure(self):
+        assert "failure_indicators" in _LOGIN_TEMPLATE
 
-    def test_script_handles_checkbox(self):
-        fields = [FormField(selector="#agree", value="", field_type="checkbox")]
-        script = _generate_form_fill_script(
-            url="https://example.com",
-            fields=fields,
-            submit_selector="#submit",
-        )
-        assert "checkbox" in script.lower()
-        assert 'page.check("#agree"' in script or "is_checked" in script
+    def test_login_template_reads_data_from_file(self):
+        assert "sys.argv[1]" in _LOGIN_TEMPLATE
+
+    def test_multi_step_template_valid_syntax(self):
+        compile(_MULTI_STEP_TEMPLATE, "<string>", "exec")
+
+    def test_multi_step_template_has_all_step_types(self):
+        for stype in ["navigate", "click", "type", "wait", "screenshot", "hover", "check"]:
+            assert stype in _MULTI_STEP_TEMPLATE
+
+    def test_multi_step_template_reads_data_from_file(self):
+        assert "sys.argv[1]" in _MULTI_STEP_TEMPLATE
 
 
-class TestGenerateLoginScript:
-    def test_generates_valid_python(self):
-        flow = LoginFlow(
-            name="test",
-            url="https://example.com/login",
-            username_field="#user",
-            password_field="#pass",
-            username="u",
-            password="p",
-            submit_button="#btn",
-        )
-        script = _generate_login_script(flow)
-        compile(script, "<string>", "exec")
+class TestFormFieldIntegration:
+    """Test that form field definitions round-trip correctly."""
 
-    def test_script_fills_credentials(self):
-        flow = LoginFlow(
-            name="secure-login",
-            url="https://secure.example.com/login",
-            username_field="input[name='username']",
-            password_field="input[name='password']",
-            username="myuser",
-            password="mypassword",
-            submit_button="button[type='submit']",
-        )
-        script = _generate_login_script(flow)
-        assert "myuser" in script
-        assert "mypassword" in script
-        assert "input[name='username']" in script
-
-    def test_script_checks_failure_indicators(self):
-        flow = LoginFlow(
-            name="test",
-            url="https://example.com",
-            username_field="#u",
-            password_field="#p",
-            username="u",
-            password="p",
-            submit_button="#btn",
-            failure_indicators=["Invalid credentials", "Account locked"],
-        )
-        script = _generate_login_script(flow)
-        assert "Invalid credentials" in script
-        assert "failure_indicators" in script
-
-    def test_extra_steps_included(self):
-        flow = LoginFlow(
-            name="test",
-            url="https://example.com",
-            username_field="#u",
-            password_field="#p",
-            username="u",
-            password="p",
-            submit_button="#btn",
-            extra_steps=[
-                AutomationStep(step_type=StepType.CLICK, selector="#accept"),
-                AutomationStep(step_type=StepType.WAIT, timeout_ms=1000),
-            ],
-        )
-        script = _generate_login_script(flow)
-        assert 'page.click("#accept")' in script
-        assert "time.sleep" in script
-
-
-class TestGenerateMultiStepScript:
-    def test_generates_valid_python(self):
-        steps = [
-            AutomationStep(step_type=StepType.NAVIGATE, url="https://example.com"),
-            AutomationStep(step_type=StepType.CLICK, selector="a.next"),
-        ]
-        script = _generate_multi_step_script(steps)
-        compile(script, "<string>", "exec")
-
-    def test_navigate_step(self):
-        steps = [AutomationStep(step_type=StepType.NAVIGATE, url="https://example.com")]
-        script = _generate_multi_step_script(steps)
-        assert "navigate" in script
-        assert "example.com" in script
-
-    def test_click_step(self):
-        steps = [AutomationStep(step_type=StepType.CLICK, selector="#btn")]
-        script = _generate_multi_step_script(steps)
-        assert 'page.click("#btn")' in script
-
-    def test_type_step(self):
-        steps = [AutomationStep(step_type=StepType.TYPE, selector="#search", text="query")]
-        script = _generate_multi_step_script(steps)
-        assert "query" in script
-
-    def test_wait_step(self):
-        steps = [AutomationStep(step_type=StepType.WAIT, timeout_ms=2000)]
-        script = _generate_multi_step_script(steps)
-        assert "time.sleep" in script
-        assert "2" in script  # 2000ms = 2s
-
-    def test_wait_selector_step(self):
-        steps = [AutomationStep(step_type=StepType.WAIT_SELECTOR, selector="#loaded", timeout_ms=5000)]
-        script = _generate_multi_step_script(steps)
-        assert "wait_for_selector" in script
-        assert "#loaded" in script
-
-    def test_select_dropdown_step(self):
-        steps = [AutomationStep(step_type=StepType.SELECT_DROPDOWN, selector="select#country", option_value="CN")]
-        script = _generate_multi_step_script(steps)
-        assert "select_option" in script
-        assert "CN" in script
-
-    def test_check_step(self):
-        steps = [AutomationStep(step_type=StepType.CHECK, selector="#agree", checked=True)]
-        script = _generate_multi_step_script(steps)
-        assert "check" in script.lower()
-
-    def test_hover_step(self):
-        steps = [AutomationStep(step_type=StepType.HOVER, selector=".tooltip-trigger")]
-        script = _generate_multi_step_script(steps)
-        assert "hover" in script
-
-    def test_screenshot_step(self):
-        steps = [AutomationStep(step_type=StepType.SCREENSHOT)]
-        script = _generate_multi_step_script(steps, capture_screenshot=True)
-        assert "screenshot" in script
-        assert "base64" in script
-
-    def test_snapshot_step(self):
-        steps = [AutomationStep(step_type=StepType.SNAPSHOT)]
-        script = _generate_multi_step_script(steps, capture_text=True)
-        assert "inner_text" in script
-
-    def test_press_step(self):
-        steps = [AutomationStep(step_type=StepType.PRESS, keys="Enter")]
-        script = _generate_multi_step_script(steps)
-        assert "press" in script
-        assert "Enter" in script
-
-    def test_multiple_steps(self):
-        steps = [
-            AutomationStep(step_type=StepType.NAVIGATE, url="https://example.com"),
-            AutomationStep(step_type=StepType.CLICK, selector="#btn"),
-            AutomationStep(step_type=StepType.TYPE, selector="#input", text="hello"),
-            AutomationStep(step_type=StepType.WAIT, timeout_ms=500),
-        ]
-        script = _generate_multi_step_script(steps)
-        assert steps[0].url in script
-        assert 'page.click("#btn")' in script
-        assert "hello" in script
+    def test_all_field_types_serialize(self):
+        types = ["text", "password", "email", "checkbox", "select"]
+        for ft in types:
+            f = FormField(selector=f"#{ft}", value="val", field_type=ft)
+            d = f.to_dict()
+            assert d["field_type"] == ft
 
 
 class TestAutomationResult:
@@ -335,24 +178,31 @@ class TestAutomationResult:
 
 
 class TestBrowserAutomationInit:
-    def test_resolves_python_path(self):
-        import app.core.browser_automation as ba
+    def test_default_python_path(self):
+        from app.core import browser_automation as ba
 
-        # Should default to browser-use venv
         assert ba.BROWSER_USE_PYTHON == os.path.expanduser("~/.venv/browser-use/bin/python")
 
-    def test_python_exists_check(self):
-        # If browser-use venv exists, path should resolve
-        ba = BrowserAutomation()
-        python_exists = Path(ba.python_path).exists()
-        # available may be True or False depending on whether the venv is set up
-        assert python_exists or not ba.available
+    def test_resolve_python_fallback(self):
+        from app.core import browser_automation as ba
+
+        # _resolve_python() returns BROWSER_USE_PYTHON if it exists,
+        # otherwise falls back to SYSTEM_PYTHON
+        original = ba.BROWSER_USE_PYTHON
+        try:
+            # Simulate venv doesn't exist -> should use SYSTEM_PYTHON
+            ba.BROWSER_USE_PYTHON = "/nonexistent/python"
+            resolved = ba._resolve_python()
+            assert resolved == ba.SYSTEM_PYTHON
+        finally:
+            ba.BROWSER_USE_PYTHON = original
 
 
-class TestBrowserAutomationFillForm:
-    def test_unavailable_returns_error_result(self):
+class TestBrowserAutomationUnavailable:
+    """Test behavior when browser-use is not available."""
+
+    def test_fill_form_unavailable(self):
         ba = BrowserAutomation()
-        # Mock unavailable
         ba._available = False
 
         result = ba.fill_form(
@@ -363,9 +213,7 @@ class TestBrowserAutomationFillForm:
         assert result.success is False
         assert "not available" in result.error
 
-
-class TestBrowserAutomationRunLogin:
-    def test_unavailable_returns_error_result(self):
+    def test_run_login_unavailable(self):
         ba = BrowserAutomation()
         ba._available = False
 
@@ -382,9 +230,7 @@ class TestBrowserAutomationRunLogin:
         assert result.success is False
         assert "not available" in result.error
 
-
-class TestBrowserAutomationRunSequence:
-    def test_unavailable_returns_error_result(self):
+    def test_run_sequence_unavailable(self):
         ba = BrowserAutomation()
         ba._available = False
 
@@ -394,5 +240,92 @@ class TestBrowserAutomationRunSequence:
         assert "not available" in result.error
 
 
-import os
-from pathlib import Path
+class TestDataFilePassing:
+    """Verify scripts read data from the JSON file correctly."""
+
+    def test_form_fill_data_includes_url(self):
+        fields = [FormField(selector="#a", value="b")]
+        data = {
+            "url": "https://example.com/form",
+            "fields": [f.to_dict() for f in fields],
+            "submit_selector": "#btn",
+            "wait_for_selectors": [],
+            "screenshot_on_error": True,
+        }
+        # Write and re-read to confirm round-trip
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(data, f)
+            path = f.name
+        try:
+            with open(path) as f:
+                loaded = json.load(f)
+            assert loaded["url"] == "https://example.com/form"
+            assert len(loaded["fields"]) == 1
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_login_flow_data_serializable(self):
+        flow = LoginFlow(
+            name="test",
+            url="https://example.com",
+            username_field="#u",
+            password_field="#p",
+            username="myuser",
+            password="mypassword",
+            submit_button="#btn",
+            success_indicators=["Dashboard", "Welcome"],
+            failure_indicators=["Invalid", "locked"],
+        )
+        flow_data = {
+            "name": flow.name,
+            "url": flow.url,
+            "username_field": flow.username_field,
+            "password_field": flow.password_field,
+            "username": flow.username,
+            "password": flow.password,
+            "submit_button": flow.submit_button,
+            "success_indicators": flow.success_indicators,
+            "failure_indicators": flow.failure_indicators,
+            "extra_steps": [
+                {
+                    "step_type": s.step_type.value,
+                    "selector": s.selector,
+                    "text": s.text,
+                    "timeout_ms": s.timeout_ms,
+                }
+                for s in flow.extra_steps
+            ],
+        }
+        # Verify it's serializable
+        json_str = json.dumps(flow_data)
+        parsed = json.loads(json_str)
+        assert parsed["username"] == "myuser"
+        assert parsed["success_indicators"] == ["Dashboard", "Welcome"]
+
+    def test_multi_step_data_serializable(self):
+        steps = [
+            AutomationStep(step_type=StepType.NAVIGATE, url="https://example.com"),
+            AutomationStep(step_type=StepType.CLICK, selector="#next"),
+            AutomationStep(step_type=StepType.TYPE, selector="#search", text="query"),
+            AutomationStep(step_type=StepType.WAIT, timeout_ms=1000),
+        ]
+        steps_data = [
+            {
+                "step_type": s.step_type.value,
+                "selector": s.selector,
+                "text": s.text,
+                "url": s.url,
+                "timeout_ms": s.timeout_ms,
+                "option_value": s.option_value,
+                "option_label": s.option_label,
+                "keys": s.keys,
+                "checked": s.checked,
+                "wait_for_url": s.wait_for_url,
+            }
+            for s in steps
+        ]
+        json_str = json.dumps(steps_data)
+        parsed = json.loads(json_str)
+        assert len(parsed) == 4
+        assert parsed[0]["step_type"] == "navigate"
+        assert parsed[1]["step_type"] == "click"

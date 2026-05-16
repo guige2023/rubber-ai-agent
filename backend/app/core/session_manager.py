@@ -42,6 +42,18 @@ class SessionManager:
             return db_session.get(SessionModel, session_id) is not None
 
     @staticmethod
+    def get_recent_sessions(limit: int = 10) -> list[SessionModel]:
+        """Return the most recent sessions ordered by updated_at desc."""
+        with get_session() as db_session:
+            return list(
+                db_session.exec(
+                    select(SessionModel)
+                    .order_by(SessionModel.updated_at.desc())
+                    .limit(limit)
+                ).all()
+            )
+
+    @staticmethod
     def ensure_session(
             session_id: str,
             *,

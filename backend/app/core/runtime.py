@@ -110,26 +110,41 @@ class RabAiAgentRuntime:
 
     async def start(self) -> None:
         """Start all runtime systems."""
+        # Inject skill_manager into evolution manager so _process_skill_review can write skills
+        self.evolution_manager.set_skill_manager(self.skill_manager)
+
         # Set up heartbeat handler that processes signals via evolution manager
         async def heartbeat_handler(tasks: list[dict]) -> None:
             for task in tasks:
-                # Extract prompt from heartbeat task
-                task_prompt = task.get("prompt", "")
-                if not task_prompt:
+                task_name = task.get("name", "")
+
+                # Load the most recent session and its real conversation
+                recent = self.session_manager.get_recent_sessions(limit=1)
+                if not recent:
                     continue
 
-                # Detect signals from the heartbeat task
+                session_id = recent[0].id
+                messages = self.session_manager.load_chat_messages(session_id)
+
+                # Build user_message / agent_response from real DB content
+                user_msgs = [m.content_ or "" for m in messages if m.role == "user"]
+                agent_msgs = [m.content_ or "" for m in messages if m.role == "assistant"]
+                user_message = (user_msgs[-1] if user_msgs else "") or task.get("prompt", "")
+                agent_response = agent_msgs[-1] if agent_msgs else ""
+
+                # Detect signals from REAL conversation content, not task templates
                 signals = self.evolution_manager.detect_signals(
-                    user_message=task_prompt,
-                    agent_response="",
+                    user_message=user_message,
+                    agent_response=agent_response,
                     tool_calls=[],
                 )
 
                 # Process any detected signals
                 if signals:
+                    logger.info(f"Heartbeat '{task_name}': detected {len(signals)} signal(s), processing...")
                     await self.evolution_manager.process_signals(
                         signals,
-                        {"source": "heartbeat", "task_name": task.get("name", "unknown")},
+                        {"source": "heartbeat", "session_id": session_id, "task_name": task_name},
                     )
 
         self.heartbeat_runner.set_heartbeat_handler(heartbeat_handler)

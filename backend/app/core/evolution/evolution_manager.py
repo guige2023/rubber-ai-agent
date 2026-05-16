@@ -95,6 +95,13 @@ class EvolutionManager:
         """
         self._evolution_handler = handler
 
+    def set_skill_manager(self, skill_manager: "SkillManager") -> None:
+        """
+        Inject the shared SkillManager so evolution can write skills to the
+        same registry used by the rest of the application.
+        """
+        self._skill_manager = skill_manager
+
     def on_user_turn(self) -> bool:
         """
         Called after each user turn.

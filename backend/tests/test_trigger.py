@@ -8,6 +8,8 @@ import asyncio
 import hashlib
 import hmac
 import json
+import os
+import tempfile
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -22,6 +24,8 @@ from app.core.trigger_manager import (
     TriggerNotFoundError,
     TriggerValidationError,
 )
+from app.core.triggers.file_watcher import FileWatchConfig, FileWatchTrigger
+from app.core.triggers.schedule_trigger import ScheduleTrigger, ScheduleTriggerConfig
 from app.core.triggers.webhook_handler import WebhookConfig, WebhookTrigger
 from app.models.database import TriggerModel
 
@@ -364,3 +368,247 @@ class TestTriggerManagerIntegration:
         result = await trigger_manager.trigger_now(created.id, event_type="test")
         # Should succeed (handler registered, debounce allows)
         assert result["status"] in ("triggered", "debounced", "no_handler")
+
+
+# =============================================================================
+# FileWatchTrigger Tests
+# =============================================================================
+
+class TestFileWatchConfig:
+    def test_file_watch_config_defaults(self):
+        config = FileWatchConfig(watch_path="/tmp")
+        assert config.watch_path == "/tmp"
+        assert config.patterns == ["*"]
+        assert config.ignore_patterns == []
+        assert config.recursive is True
+        assert config.debounce_ms == 500
+        assert config.events == ["created", "modified", "deleted"]
+
+    def test_file_watch_config_custom(self):
+        config = FileWatchConfig(
+            watch_path="/var/log",
+            patterns=["*.log", "*.txt"],
+            ignore_patterns=["*.tmp"],
+            recursive=False,
+            debounce_ms=2000,
+            events=["created", "deleted"],
+        )
+        assert config.watch_path == "/var/log"
+        assert config.patterns == ["*.log", "*.txt"]
+        assert config.ignore_patterns == ["*.tmp"]
+        assert config.recursive is False
+        assert config.debounce_ms == 2000
+        assert config.events == ["created", "deleted"]
+
+
+class TestFileWatchTriggerPatternMatching:
+    def test_should_process_event_created_match(self):
+        config = FileWatchConfig(watch_path="/tmp", patterns=["*.py"])
+        trigger = FileWatchTrigger(
+            trigger_id="test",
+            config=config,
+            runtime=FakeRuntime(),
+            instruction="test",
+        )
+        assert trigger._should_process_event("/tmp/main.py", "created") is True
+
+    def test_should_process_event_no_match(self):
+        config = FileWatchConfig(watch_path="/tmp", patterns=["*.py"])
+        trigger = FileWatchTrigger(
+            trigger_id="test",
+            config=config,
+            runtime=FakeRuntime(),
+            instruction="test",
+        )
+        assert trigger._should_process_event("/tmp/main.txt", "created") is False
+
+    def test_should_process_event_ignored(self):
+        config = FileWatchConfig(watch_path="/tmp", ignore_patterns=["*.tmp"])
+        trigger = FileWatchTrigger(
+            trigger_id="test",
+            config=config,
+            runtime=FakeRuntime(),
+            instruction="test",
+        )
+        assert trigger._should_process_event("/tmp/file.tmp", "created") is False
+
+    def test_should_process_event_wrong_event_type(self):
+        config = FileWatchConfig(watch_path="/tmp", events=["created"])
+        trigger = FileWatchTrigger(
+            trigger_id="test",
+            config=config,
+            runtime=FakeRuntime(),
+            instruction="test",
+        )
+        assert trigger._should_process_event("/tmp/main.py", "modified") is False
+
+
+@pytest.mark.asyncio
+class TestFileWatchTriggerIntegration:
+    async def test_file_watch_trigger_lifecycle(self, trigger_manager):
+        """File watch triggers can be created, synced, and deleted."""
+        created = await trigger_manager.create_trigger(
+            name="File Watch Test",
+            type="file_watch",
+            config={"watch_path": "/tmp", "patterns": ["*.txt"]},
+            instruction="Process file change",
+        )
+        await trigger_manager.sync_trigger(created.id)
+
+        # Should be registered
+        assert created.id in trigger_manager._file_watch_triggers
+
+        # Cleanup
+        await trigger_manager.delete_trigger(created.id)
+        assert created.id not in trigger_manager._file_watch_triggers
+
+    async def test_trigger_now_routes_to_file_watch(self, trigger_manager):
+        """trigger_now should acknowledge file_watch triggers."""
+        created = await trigger_manager.create_trigger(
+            name="File Watch Trigger Now",
+            type="file_watch",
+            config={"watch_path": "/tmp"},
+            instruction="Process",
+        )
+        await trigger_manager.sync_trigger(created.id)
+
+        result = await trigger_manager.trigger_now(created.id)
+        assert result["status"] in ("triggered", "no_handler")
+
+
+# =============================================================================
+# ScheduleTrigger Tests
+# =============================================================================
+
+class TestScheduleTriggerConfig:
+    def test_schedule_trigger_config_defaults(self):
+        config = ScheduleTriggerConfig(cron="0 9 * * *")
+        assert config.cron == "0 9 * * *"
+        assert config.timezone == "Asia/Shanghai"
+        assert config.enabled is True
+
+    def test_schedule_trigger_config_custom(self):
+        config = ScheduleTriggerConfig(
+            cron="0 */2 * * *",
+            timezone="UTC",
+            enabled=False,
+        )
+        assert config.cron == "0 */2 * * *"
+        assert config.timezone == "UTC"
+        assert config.enabled is False
+
+
+class TestScheduleTriggerActivation:
+    def test_schedule_trigger_validate_cron(self):
+        config = ScheduleTriggerConfig(cron="0 9 * * *")
+        trigger = ScheduleTrigger(
+            trigger_id="test",
+            config=config,
+            runtime=FakeRuntime(),
+            instruction="test",
+        )
+        # activate() should not raise for valid cron
+        # (it will fail if ScheduleManager is not mocked, but validates cron)
+        # We just test construction here
+        assert trigger.trigger_id == "test"
+        assert trigger.is_active is False
+
+
+@pytest.mark.asyncio
+class TestScheduleTriggerIntegration:
+    async def test_schedule_trigger_lifecycle(self, trigger_manager):
+        """Schedule triggers can be created, synced, and deleted."""
+        created = await trigger_manager.create_trigger(
+            name="Schedule Test",
+            type="schedule",
+            config={"cron": "0 9 * * *", "timezone": "UTC"},
+            instruction="Process daily",
+        )
+        await trigger_manager.sync_trigger(created.id)
+
+        # Should be registered
+        assert created.id in trigger_manager._schedule_triggers
+
+        # Cleanup
+        await trigger_manager.delete_trigger(created.id)
+        assert created.id not in trigger_manager._schedule_triggers
+
+    async def test_trigger_now_routes_to_schedule(self, trigger_manager):
+        """trigger_now should acknowledge schedule triggers."""
+        created = await trigger_manager.create_trigger(
+            name="Schedule Trigger Now",
+            type="schedule",
+            config={"cron": "0 9 * * *"},
+            instruction="Process",
+        )
+        await trigger_manager.sync_trigger(created.id)
+
+        result = await trigger_manager.trigger_now(created.id)
+        assert result["status"] in ("triggered", "no_handler")
+
+
+# =============================================================================
+# TriggerManager CRUD for file_watch and schedule
+# =============================================================================
+
+@pytest.mark.asyncio
+class TestTriggerManagerFileWatchAndSchedule:
+    async def test_create_file_watch_trigger(self, trigger_manager):
+        trigger = await trigger_manager.create_trigger(
+            name="File Watch CRUD",
+            type="file_watch",
+            config={"watch_path": "/tmp", "patterns": ["*.md"]},
+            instruction="Watch markdown files",
+        )
+        assert trigger.type == "file_watch"
+        assert trigger.config["watch_path"] == "/tmp"
+        assert trigger.config["patterns"] == ["*.md"]
+
+    async def test_create_schedule_trigger(self, trigger_manager):
+        trigger = await trigger_manager.create_trigger(
+            name="Schedule CRUD",
+            type="schedule",
+            config={"cron": "0 8 * * 1-5", "timezone": "America/New_York"},
+            instruction="Weekday morning",
+        )
+        assert trigger.type == "schedule"
+        assert trigger.config["cron"] == "0 8 * * 1-5"
+        assert trigger.config["timezone"] == "America/New_York"
+
+    async def test_list_triggers_file_watch_filter(self, trigger_manager):
+        await trigger_manager.create_trigger(name="FW", type="file_watch", config={}, instruction="i1")
+        await trigger_manager.create_trigger(name="SCH", type="schedule", config={}, instruction="i2")
+        triggers, _ = trigger_manager.list_triggers(type_filter="file_watch")
+        assert len(triggers) == 1
+        assert triggers[0].name == "FW"
+
+    async def test_list_triggers_schedule_filter(self, trigger_manager):
+        await trigger_manager.create_trigger(name="FW2", type="file_watch", config={}, instruction="i1")
+        await trigger_manager.create_trigger(name="SCH2", type="schedule", config={}, instruction="i2")
+        triggers, _ = trigger_manager.list_triggers(type_filter="schedule")
+        assert len(triggers) == 1
+        assert triggers[0].name == "SCH2"
+
+    async def test_delete_file_watch_cleans_up_handler(self, trigger_manager):
+        created = await trigger_manager.create_trigger(
+            name="Delete File Watch",
+            type="file_watch",
+            config={"watch_path": "/tmp"},
+            instruction="test",
+        )
+        await trigger_manager.sync_trigger(created.id)
+        assert created.id in trigger_manager._file_watch_triggers
+        await trigger_manager.delete_trigger(created.id)
+        assert created.id not in trigger_manager._file_watch_triggers
+
+    async def test_delete_schedule_cleans_up_handler(self, trigger_manager):
+        created = await trigger_manager.create_trigger(
+            name="Delete Schedule",
+            type="schedule",
+            config={"cron": "0 9 * * *"},
+            instruction="test",
+        )
+        await trigger_manager.sync_trigger(created.id)
+        assert created.id in trigger_manager._schedule_triggers
+        await trigger_manager.delete_trigger(created.id)
+        assert created.id not in trigger_manager._schedule_triggers

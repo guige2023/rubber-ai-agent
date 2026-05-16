@@ -36,6 +36,7 @@ class NotificationChannel(ABC):
         """Send an INFO notification — override if channel should filter these."""
         return await self.send(event)
 
-    def _log_result(self, event: NotificationEvent, success: bool, error: str | None = None) -> None:
+    def _log_result(self, event: NotificationEvent | None, success: bool, error: str | None = None) -> None:
         status = "OK" if success else f"FAIL ({error})"
-        logger.info(f"[{self.name}] {status} | {event.severity.value} | {event.title}")
+        event_info = f"{event.severity.value} | {event.title}" if event else "no event"
+        logger.info(f"[{self.name}] {status} | {event_info}")

@@ -3,7 +3,7 @@ StepRunner - executes individual TaskSteps using agent_cluster or SkillToolkit.
 
 Phase 0 bridges to existing infrastructure:
 - "skill:xxx" → SkillToolkit.run_skill (real LLM calls via pydantic_ai sub-agent)
-- Other agents → cluster_manager.invoke (stub implementation in Phase 0)
+- Other agents → cluster_manager.invoke_skill_toolkit (SkillToolkit-powered execution)
 """
 
 from __future__ import annotations
@@ -41,13 +41,13 @@ class StepRunner:
     Executes individual TaskSteps.
 
     Phase 0 strategy:
-    - skill:xxx → call SkillToolkit.run_skill() via agent_manager
-    - other agents → call cluster_manager.invoke() (stub agents, but full machinery works)
+    - skill:xxx → call SkillToolkit.run_skill() via agent_manager.build_skill_agent
+    - other agents → call cluster_manager.invoke_skill_toolkit() (real LLM via SkillToolkit)
 
     Each step execution:
     1. Loads checkpoint if resuming
     2. Injects shared_context variables into instruction
-    3. Runs the step
+    3. Runs the step via SkillToolkit
     4. Saves checkpoint on completion
     """
 
@@ -91,11 +91,16 @@ class StepRunner:
             agent_type, skill_name = _parse_agent_name(step.agent_name)
 
             if agent_type == "skill" and skill_name:
-                # === PATH 1: SkillToolkit (real LLM calls) ===
+                # === PATH 1: Explicit skill:xxx → call SkillToolkit directly ===
                 result_data = await self._run_skill_step(skill_name, instruction, session_id)
             else:
-                # === PATH 2: agent_cluster invoke (stub in Phase 0) ===
-                result_data = await self._run_agent_step(agent_type, instruction)
+                # === PATH 2: Named agent → also call SkillToolkit (real LLM execution) ===
+                # All 22 agents are now SkillToolkit-powered; agent_name is used as skill hint
+                result_data = await self._run_agent_via_skilltool(
+                    agent_name=step.agent_name,
+                    instruction=instruction,
+                    session_id=session_id,
+                )
 
             finished_at = datetime.now(timezone.utc)
 
@@ -126,62 +131,70 @@ class StepRunner:
         """
         Run a skill via SkillToolkit.
 
-        SkillToolkit.run_skill() needs:
-        - RunContext[AgentDeps] → we construct from deps
-        - skill_name
-        - instruction
-
-        In Phase 0 we call agent_manager.build_skill_agent() directly,
-        bypassing the ToolContext wrapper, to avoid the pydantic_ai RunContext machinery.
+        SkillToolkit.run_skill() needs a RunContext[AgentDeps].
+        We construct one from agent_manager's deps and call build_skill_agent.
         """
-        from app.core.agent_manager import AgentManager
         from pydantic_ai.usage import UsageLimits
 
-        if not isinstance(self._agent_manager, AgentManager):
-            # Fallback if agent_manager is not the expected type
-            logger.warning(f"agent_manager is not AgentManager, skill '{skill_name}' fallback skipped")
+        if not self._has_real_agent_manager():
+            logger.warning(f"agent_manager not configured for skills, skill '{skill_name}' skipped")
             return {"error": f"agent_manager not configured for skills"}
 
-        # Get skill_deps from the current running context
-        # In practice, this would be injected. Here we use a minimal approach.
-        skill_agent = self._agent_manager.build_skill_agent(
-            skill_name,
-            session_id=session_id,
-            run_id=None,
-            usage_tracker=None,
-        )
+        try:
+            skill_agent = self._agent_manager.build_skill_agent(
+                skill_name,
+                session_id=session_id,
+                run_id=None,
+                usage_tracker=None,
+            )
 
-        # Run the skill sub-agent directly
-        result = await skill_agent.run(
-            instruction,
-            deps=self._agent_manager._deps,  # type: ignore
-            usage_limits=UsageLimits(request_limit=100),
-        )
+            result = await skill_agent.run(
+                instruction,
+                deps=self._agent_manager._deps,  # type: ignore[attr-defined]
+                usage_limits=UsageLimits(request_limit=100),
+            )
 
-        return {
-            "output": str(result.output),
-            "usage": {
-                "input_tokens": result.usage().input_tokens,
-                "output_tokens": result.usage().output_tokens,
-                "total_tokens": result.usage().total_tokens,
-            },
-        }
+            return {
+                "output": str(result.output),
+                "usage": {
+                    "input_tokens": result.usage().input_tokens,
+                    "output_tokens": result.usage().output_tokens,
+                    "total_tokens": result.usage().total_tokens,
+                },
+            }
+        except Exception as e:
+            logger.exception(f"Skill '{skill_name}' failed: {e}")
+            return {"error": str(e), "skill_name": skill_name}
 
-    async def _run_agent_step(
+    async def _run_agent_via_skilltool(
         self,
         agent_name: str,
         instruction: str,
+        session_id: str,
     ) -> dict[str, Any]:
-        """Run via agent_cluster (stub in Phase 0)."""
-        context: Optional[AgentContext] = None
-        from app.core.agent_cluster.base import AgentContext as AC
+        """
+        Run a named agent via cluster_manager's SkillToolkit bridge.
 
-        result = await self._cluster.invoke(
-            agent_name=agent_name,
-            task=instruction,
-            context=context,
-        )
-        return result.output
+        This replaces stub agent implementations with real LLM calls.
+        The agent_name acts as a skill hint — cluster_manager.invoke_skill_toolkit
+        sets up the proper AgentDeps context and calls SkillToolkit.
+        """
+        try:
+            result = await self._cluster.invoke_skill_toolkit(
+                skill_hint=agent_name,
+                instruction=instruction,
+                session_id=session_id,
+            )
+            return result
+        except Exception as e:
+            logger.exception(f"Agent '{agent_name}' via SkillToolkit failed: {e}")
+            return {"error": str(e), "agent_name": agent_name}
+
+    def _has_real_agent_manager(self) -> bool:
+        """Check if agent_manager is a real AgentManager instance."""
+        from app.core.agent_manager import AgentManager
+
+        return isinstance(self._agent_manager, AgentManager)
 
     def _substitute_context(self, template: str, context: dict[str, Any]) -> str:
         """

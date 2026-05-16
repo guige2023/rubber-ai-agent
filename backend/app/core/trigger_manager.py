@@ -60,6 +60,8 @@ class TriggerManager:
     def __init__(self, runtime: "RabAiAgentRuntime") -> None:
         self.runtime = runtime
         self._webhook_handlers: dict[str, asyncio.Task] = {}
+        self._file_watch_triggers: dict[str, object] = {}
+        self._schedule_triggers: dict[str, object] = {}
         self._lock = asyncio.Lock()
 
     # -------------------------------------------------------------------------
@@ -238,6 +240,87 @@ class TriggerManager:
         logger.info(f"Unregistered webhook handler for trigger {trigger_id}")
 
     # -------------------------------------------------------------------------
+    # File Watch Management
+    # -------------------------------------------------------------------------
+
+    async def register_file_watch_handler(
+        self,
+        trigger_id: str,
+        config: dict,
+        instruction: str,
+    ) -> None:
+        """Register a file watch trigger handler."""
+        from app.core.triggers.file_watcher import FileWatchTrigger, FileWatchConfig
+
+        file_config = FileWatchConfig(
+            watch_path=config.get("watch_path", "."),
+            patterns=config.get("patterns", ["*"]),
+            ignore_patterns=config.get("ignore_patterns", []),
+            recursive=config.get("recursive", True),
+            debounce_ms=config.get("debounce_ms", 500),
+            events=config.get("events", ["created", "modified", "deleted"]),
+        )
+
+        trigger_instance = FileWatchTrigger(
+            trigger_id=trigger_id,
+            config=file_config,
+            runtime=self.runtime,
+            instruction=instruction,
+        )
+
+        # Start the file watcher
+        trigger_instance.start()
+
+        self._file_watch_triggers[trigger_id] = trigger_instance
+        logger.info(f"Registered file watch handler for trigger {trigger_id}")
+
+    async def unregister_file_watch_handler(self, trigger_id: str) -> None:
+        """Unregister a file watch trigger handler."""
+        trigger = self._file_watch_triggers.pop(trigger_id, None)
+        if trigger:
+            trigger.stop()
+            logger.info(f"Unregistered file watch handler for trigger {trigger_id}")
+
+    # -------------------------------------------------------------------------
+    # Schedule Management
+    # -------------------------------------------------------------------------
+
+    async def register_schedule_handler(
+        self,
+        trigger_id: str,
+        config: dict,
+        instruction: str,
+    ) -> None:
+        """Register a schedule trigger handler."""
+        from app.core.triggers.schedule_trigger import ScheduleTrigger, ScheduleTriggerConfig
+
+        sched_config = ScheduleTriggerConfig(
+            cron=config.get("cron", "0 9 * * *"),
+            timezone=config.get("timezone", "Asia/Shanghai"),
+            enabled=config.get("enabled", True),
+        )
+
+        trigger_instance = ScheduleTrigger(
+            trigger_id=trigger_id,
+            config=sched_config,
+            runtime=self.runtime,
+            instruction=instruction,
+        )
+
+        # Activate the schedule
+        trigger_instance.activate()
+
+        self._schedule_triggers[trigger_id] = trigger_instance
+        logger.info(f"Registered schedule handler for trigger {trigger_id}")
+
+    async def unregister_schedule_handler(self, trigger_id: str) -> None:
+        """Unregister a schedule trigger handler."""
+        trigger = self._schedule_triggers.pop(trigger_id, None)
+        if trigger:
+            trigger.deactivate()
+            logger.info(f"Unregistered schedule handler for trigger {trigger_id}")
+
+    # -------------------------------------------------------------------------
     # Trigger Execution
     # -------------------------------------------------------------------------
 
@@ -281,12 +364,39 @@ class TriggerManager:
                 "trigger_id": trigger_id,
                 "message": "Webhook handler not registered",
             }
+        elif trigger.type == "file_watch":
+            # File watch triggers can be triggered manually too
+            file_watch = self._file_watch_triggers.get(trigger_id)
+            if file_watch:
+                return {
+                    "status": "triggered",
+                    "trigger_id": trigger_id,
+                    "message": "File watch trigger acknowledged (manual trigger does not simulate file events)",
+                }
+            return {
+                "status": "no_handler",
+                "trigger_id": trigger_id,
+                "message": "File watch handler not registered",
+            }
+        elif trigger.type == "schedule":
+            sched = self._schedule_triggers.get(trigger_id)
+            if sched:
+                return {
+                    "status": "triggered",
+                    "trigger_id": trigger_id,
+                    "message": "Schedule trigger acknowledged",
+                }
+            return {
+                "status": "no_handler",
+                "trigger_id": trigger_id,
+                "message": "Schedule handler not registered",
+            }
         else:
             return {
                 "status": "unsupported_type",
                 "trigger_id": trigger_id,
                 "type": trigger.type,
-                "message": f"trigger_now only supports webhook type currently",
+                "message": f"trigger_now: unsupported type {trigger.type}",
             }
 
     # -------------------------------------------------------------------------
@@ -311,14 +421,36 @@ class TriggerManager:
         """
         trigger = self.get_trigger(trigger_id)
 
-        if trigger.type == "webhook" and trigger.enabled:
+        # First unregister any existing handler
+        if trigger.type == "webhook":
+            await self.unregister_webhook_handler(trigger_id)
+        elif trigger.type == "file_watch":
+            await self.unregister_file_watch_handler(trigger_id)
+        elif trigger.type == "schedule":
+            await self.unregister_schedule_handler(trigger_id)
+
+        # Then register if enabled
+        if not trigger.enabled:
+            return
+
+        if trigger.type == "webhook":
             await self.register_webhook_handler(
                 trigger_id=trigger.id,
                 config=trigger.config or {},
                 instruction=trigger.instruction,
             )
-        else:
-            await self.unregister_webhook_handler(trigger_id)
+        elif trigger.type == "file_watch":
+            await self.register_file_watch_handler(
+                trigger_id=trigger.id,
+                config=trigger.config or {},
+                instruction=trigger.instruction,
+            )
+        elif trigger.type == "schedule":
+            await self.register_schedule_handler(
+                trigger_id=trigger.id,
+                config=trigger.config or {},
+                instruction=trigger.instruction,
+            )
 
     async def sync_all(self) -> None:
         """Sync all enabled triggers on startup."""

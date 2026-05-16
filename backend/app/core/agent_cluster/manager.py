@@ -240,6 +240,123 @@ class AgentClusterManager:
 
         return result  # Last failure result
 
+    async def invoke_skill_toolkit(
+        self,
+        skill_hint: str,
+        instruction: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """
+        Invoke SkillToolkit for real LLM execution, bypassing stub agents.
+
+        This bridges the agent_cluster to the pydantic_ai-based SkillToolkit:
+        1. Locates the skill via runtime's skill_manager
+        2. Builds a skill agent via runtime's agent_manager
+        3. Runs it with the given instruction
+        4. Returns structured output
+
+        Args:
+            skill_hint: Agent name used as skill hint (e.g. "coder", "research")
+            instruction: Task instruction for the skill
+            session_id: Current session ID
+
+        Returns:
+            dict with output/error and usage metadata
+        """
+        from pydantic_ai.usage import UsageLimits
+
+        # Get the global runtime which holds the real AgentManager and SkillManager
+        from app.core.runtime import RabAiAgentRuntime
+        runtime = RabAiAgentRuntime.get_instance() if hasattr(RabAiAgentRuntime, "get_instance") else None
+
+        if runtime is None:
+            # Fallback: try to get from current asyncio task
+            try:
+                import asyncio
+                task = asyncio.current_task()
+                if task:
+                    logger.debug(f"invoke_skill_toolkit: no global runtime, skill_hint={skill_hint}")
+            except Exception:
+                pass
+
+            logger.warning(
+                f"invoke_skill_toolkit: RabAiAgentRuntime not available, "
+                f"skill '{skill_hint}' cannot execute via SkillToolkit"
+            )
+            return {
+                "error": f"RabAiAgentRuntime not available for skill '{skill_hint}'",
+                "skill_hint": skill_hint,
+            }
+
+        skill_manager = runtime.skill_manager
+        agent_manager = runtime.agent_manager
+        prompt_builder = runtime.prompt_builder
+
+        # Check if the skill exists in skill_manager
+        if skill_hint not in skill_manager.skills:
+            logger.warning(
+                f"invoke_skill_toolkit: skill '{skill_hint}' not found in skill_manager, "
+                f"available: {list(skill_manager.skills.keys())[:10]}..."
+            )
+            return {
+                "error": f"Skill '{skill_hint}' not registered in skill_manager",
+                "skill_hint": skill_hint,
+            }
+
+        try:
+            logger.info(f"invoke_skill_toolkit: executing skill '{skill_hint}'")
+
+            # Build the skill agent
+            skill_agent = agent_manager.build_skill_agent(
+                skill_hint,
+                session_id=session_id,
+                run_id=None,
+                usage_tracker=None,
+            )
+
+            # Augment instruction with runtime context
+            augmented_instruction = prompt_builder.build_runtime_augmented_instruction(
+                instruction,
+                session_id,
+                skill_name=skill_hint,
+            )
+
+            # Create minimal deps for the skill run
+            deps = runtime.create_agent_deps(
+                session_id=session_id,
+                run_id=f"skill-{skill_hint}-{datetime.now(timezone.utc).timestamp()}",
+                skill_name=skill_hint,
+            )
+
+            result = await skill_agent.run(
+                augmented_instruction,
+                deps=deps,
+                usage_limits=UsageLimits(request_limit=150),
+            )
+
+            usage = result.usage()
+            logger.info(
+                f"invoke_skill_toolkit: skill '{skill_hint}' completed, "
+                f"tokens={usage.total_tokens}"
+            )
+
+            return {
+                "output": str(result.output),
+                "usage": {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "total_tokens": usage.total_tokens,
+                },
+                "skill_hint": skill_hint,
+            }
+
+        except Exception as e:
+            logger.exception(f"invoke_skill_toolkit: skill '{skill_hint}' failed: {e}")
+            return {
+                "error": str(e),
+                "skill_hint": skill_hint,
+            }
+
     def get_status(self) -> dict[str, Any]:
         """
         Get cluster status.

@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import IntEnum
 from typing import Optional
 
 from app.core.notification.events import NotificationEvent, NotificationSeverity
 from app.core.notification.channels.base import NotificationChannel
 from app.core.notification.channels.feishu import FeishuNotifier
 from app.core.notification.channels.email import EmailNotifier
+from app.core.notification.channels.system import SystemNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,14 @@ def _in_quiet_hours() -> bool:
     return hour >= _QUIET_START or hour < _QUIET_END
 
 
+class NotificationPriority(IntEnum):
+    """Notification delivery priority (lower = higher priority)."""
+    CRITICAL = 0
+    HIGH = 1
+    NORMAL = 2
+    LOW = 3
+
+
 @dataclass
 class NotificationConfig:
     """Global notification configuration."""
@@ -45,6 +55,11 @@ class NotificationConfig:
     critical_threshold: int = 1
     warning_threshold: int = 3
     quiet_hours: tuple[int, int] = (_QUIET_START, _QUIET_END)
+    # Retry config
+    max_retries: int = 3
+    retry_base_delay: float = 2.0  # seconds (exponential backoff)
+    # System notification
+    system_enabled: bool = True
 
     @property
     def quiet_start(self) -> int:
@@ -65,12 +80,22 @@ class _DedupeKey:
         return hash((self.source, self.title))
 
 
+@dataclass
+class _RetryEntry:
+    """Retry state for a notification event."""
+    event: NotificationEvent
+    channel: NotificationChannel
+    attempt: int = 0
+    last_error: Optional[str] = None
+
+
 class NotificationManager:
     """
     Central notification dispatcher.
 
-    Routes NotificationEvents to the appropriate channels (Feishu, Email, etc.)
-    based on severity and configuration. Handles deduplication and quiet hours.
+    Routes NotificationEvents to the appropriate channels (Feishu, Email, System, etc.)
+    based on severity and configuration. Handles deduplication, quiet hours,
+    priority queuing, and automatic retry with exponential backoff.
     """
 
     def __init__(self, config: Optional[NotificationConfig] = None) -> None:
@@ -78,6 +103,13 @@ class NotificationManager:
         self._channels: list[NotificationChannel] = []
         self._dedupe: dict[_DedupeKey, float] = {}
         self._dedupe_ttl_seconds = 300  # 5 minutes
+
+        # Priority queue: sorted list of pending events
+        self._queue: list[tuple[NotificationPriority, NotificationEvent]] = []
+        self._queue_lock = asyncio.Lock()
+        self._worker_task: Optional[asyncio.Task[None]] = None
+        self._retry_entries: dict[str, _RetryEntry] = {}
+        self._retry_lock = asyncio.Lock()
 
         self._setup_channels()
 
@@ -100,6 +132,25 @@ class NotificationManager:
             )
             self._channels.append(email)
             logger.info("[NotificationManager] Email channel enabled")
+
+        if self.config.system_enabled:
+            system = SystemNotifier(enabled=True)
+            self._channels.append(system)
+            logger.info("[NotificationManager] System channel enabled")
+
+    def _start_worker(self) -> None:
+        """Start the background queue worker if not already running."""
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(self._queue_worker())
+
+    def _priority_of(self, event: NotificationEvent) -> NotificationPriority:
+        """Map severity to delivery priority."""
+        mapping = {
+            NotificationSeverity.CRITICAL: NotificationPriority.CRITICAL,
+            NotificationSeverity.WARNING: NotificationPriority.HIGH,
+            NotificationSeverity.INFO: NotificationPriority.NORMAL,
+        }
+        return mapping.get(event.severity, NotificationPriority.NORMAL)
 
     def _is_dupe(self, event: NotificationEvent) -> bool:
         """Check if event is a duplicate (within dedupe window)."""
@@ -135,6 +186,9 @@ class NotificationManager:
         """
         Dispatch a notification event to all appropriate channels.
 
+        Queues the event for delivery, then returns immediately.
+        Actual delivery happens in the background worker.
+
         Args:
             event: The notification event to send.
         """
@@ -146,23 +200,91 @@ class NotificationManager:
             logger.debug(f"[NotificationManager] Dedupe: {event.title}")
             return
 
-        logger.info(f"[NotificationManager] Dispatching: [{event.severity.value}] {event.title}")
+        priority = self._priority_of(event)
+        logger.info(f"[NotificationManager] Enqueuing: [{event.severity.value}] {event.title} (priority={priority.name})")
 
-        # Send to all channels in parallel
+        async with self._queue_lock:
+            # Insert in priority order
+            self._queue.append((priority, event))
+            self._queue.sort(key=lambda x: x[0])  # Lower priority value = higher priority
+            self._start_worker()
+
+    async def _queue_worker(self) -> None:
+        """Background worker that drains the priority queue."""
+        while True:
+            async with self._queue_lock:
+                if not self._queue:
+                    self._worker_task = None
+                    break
+                _priority, event = self._queue.pop(0)
+
+            await self._deliver_to_all_channels(event)
+
+            # Small delay between batches to avoid hammering
+            await asyncio.sleep(0.1)
+
+    async def _deliver_to_all_channels(self, event: NotificationEvent) -> None:
+        """Send event to all channels, with retry on failure."""
         tasks = []
         for channel in self._channels:
             if event.severity == NotificationSeverity.CRITICAL:
-                tasks.append(channel.send_critical(event))
+                tasks.append(self._send_with_retry(channel, event, NotificationSeverity.CRITICAL))
             elif event.severity == NotificationSeverity.WARNING:
-                tasks.append(channel.send_warning(event))
+                tasks.append(self._send_with_retry(channel, event, NotificationSeverity.WARNING))
             else:
-                tasks.append(channel.send_info(event))
+                tasks.append(self._send_with_retry(channel, event, NotificationSeverity.INFO))
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for channel, result in zip(self._channels, results):
                 if isinstance(result, Exception):
                     logger.warning(f"[{channel.name}] Exception: {result}")
+
+    async def _send_with_retry(
+        self,
+        channel: NotificationChannel,
+        event: NotificationEvent,
+        severity: NotificationSeverity,
+    ) -> bool:
+        """Send to a channel with exponential backoff retry."""
+        # Select the right method
+        if severity == NotificationSeverity.CRITICAL:
+            send_fn = channel.send_critical
+        elif severity == NotificationSeverity.WARNING:
+            send_fn = channel.send_warning
+        else:
+            send_fn = channel.send_info
+
+        retry_key = f"{channel.name}:{event.source}:{event.title}"
+
+        for attempt in range(self.config.max_retries + 1):
+            try:
+                success = await send_fn(event)
+                if success:
+                    if attempt > 0:
+                        logger.info(f"[{channel.name}] Retry {attempt} succeeded for: {event.title}")
+                    return True
+                if attempt < self.config.max_retries:
+                    delay = self.config.retry_base_delay * (2 ** attempt)
+                    logger.debug(f"[{channel.name}] Attempt {attempt + 1} failed, retrying in {delay:.1f}s: {event.title}")
+                    await asyncio.sleep(delay)
+            except Exception as e:
+                if attempt < self.config.max_retries:
+                    delay = self.config.retry_base_delay * (2 ** attempt)
+                    logger.warning(f"[{channel.name}] Error on attempt {attempt + 1}: {e}, retrying in {delay:.1f}s")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"[{channel.name}] All {self.config.max_retries + 1} attempts failed for: {event.title}: {e}")
+
+        # All retries exhausted — record for monitoring
+        async with self._retry_lock:
+            self._retry_entries[retry_key] = _RetryEntry(
+                event=event,
+                channel=channel,
+                attempt=self.config.max_retries,
+                last_error="max retries exceeded",
+            )
+        return False
 
     async def dispatch_batch(self, events: list[NotificationEvent]) -> None:
         """Dispatch multiple notification events."""
@@ -176,5 +298,26 @@ class NotificationManager:
             "channels": [ch.name for ch in self._channels],
             "feishu_enabled": self.config.feishu_enabled,
             "email_enabled": self.config.email_enabled,
+            "system_enabled": self.config.system_enabled,
             "quiet_hours": f"{self.config.quiet_start}:00-{self.config.quiet_end}:00 UTC+8",
+            "queue_depth": len(self._queue),
+            "worker_running": self._worker_task is not None and not self._worker_task.done(),
+            "max_retries": self.config.max_retries,
+            "retry_base_delay_s": self.config.retry_base_delay,
         }
+
+    def get_failed_notifications(self) -> list[dict]:
+        """Get list of notifications that failed after all retries (sync snapshot)."""
+        # Sync snapshot of retry entries (avoids needing async context)
+        entries = list(self._retry_entries.values())
+        return [
+            {
+                "channel": entry.channel.name,
+                "source": entry.event.source,
+                "title": entry.event.title,
+                "severity": entry.event.severity.value,
+                "attempt": entry.attempt,
+                "last_error": entry.last_error,
+            }
+            for entry in entries
+        ]

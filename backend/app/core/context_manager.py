@@ -33,7 +33,7 @@ from app.models.schemas import SessionMemory
 logger = logging.getLogger(__name__)
 
 COMPACTION_MEMORY_SCHEMA_VERSION = 1
-COMPACTION_THRESHOLD_TOKENS_DEFAULT = 102400  # ~80% of 128k context window
+COMPACTION_THRESHOLD_TOKENS_DEFAULT = 160000  # ~80% of 200k context window (largest supported model)
 COMPACTION_CHUNK_TOKENS_DEFAULT = 48000
 COMPACTION_GUARD_SECONDS_DEFAULT = 60
 COMPACTION_TAIL_TOKENS_DEFAULT = 4000

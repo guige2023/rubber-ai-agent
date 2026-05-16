@@ -1,32 +1,90 @@
 """
 Concrete Agent Implementations.
 
-Each agent specializes in a specific domain.
+All agents delegate to SkillToolkit via AgentClusterManager.invoke_skill_toolkit,
+providing real LLM-powered execution instead of stub responses.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-from datetime import datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from .base import AgentContext, AgentResult, BaseAgent
 from .protocol import AgentProtocol
 
+if TYPE_CHECKING:
+    pass
+
 logger = logging.getLogger(__name__)
+
+
+def _run_via_skilltool(
+    skill_hint: str,
+    instruction: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """
+    Shared helper to run a task via SkillToolkit through the global cluster.
+
+    Returns a dict with 'output' or 'error' key.
+    This is called from async context so we use asyncio.get_event_loop().run_until_complete
+    for the awaitable — but since invoke_skill_toolkit itself is async, we need to be
+    in an async context. Use _run_via_skilltool_async instead from async code.
+    """
+    import asyncio
+    from .manager import get_cluster
+
+    try:
+        loop = asyncio.get_running_loop()
+        # If we're already in an async context, schedule and wait
+        future = asyncio.ensure_future(
+            get_cluster().invoke_skill_toolkit(
+                skill_hint=skill_hint,
+                instruction=instruction,
+                session_id=session_id,
+            )
+        )
+        # Cannot block on a future in a running loop — return placeholder
+        # The async version should be used instead
+        logger.warning(f"_run_via_skilltool called from async context for {skill_hint}, use async variant")
+        return {"output": f"[async task scheduled for {skill_hint}]", "skill_hint": skill_hint}
+    except RuntimeError:
+        # No running loop — use run_until_complete
+        return asyncio.get_event_loop().run_until_complete(
+            get_cluster().invoke_skill_toolkit(
+                skill_hint=skill_hint,
+                instruction=instruction,
+                session_id=session_id,
+            )
+        )
+
+
+async def _run_via_skilltool_async(
+    skill_hint: str,
+    instruction: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Async version — call invoke_skill_toolkit directly."""
+    from .manager import get_cluster
+
+    try:
+        return await get_cluster().invoke_skill_toolkit(
+            skill_hint=skill_hint,
+            instruction=instruction,
+            session_id=session_id,
+        )
+    except Exception as e:
+        logger.exception(f"SkillToolkit delegate failed for '{skill_hint}': {e}")
+        return {"error": str(e), "skill_hint": skill_hint}
 
 
 class CoderAgent(BaseAgent):
     """
     Code generation and modification agent.
 
-    Capabilities:
-    - Generate code snippets
-    - Fix bugs
-    - Write tests
-    - Code review
+    Delegates to SkillToolkit for real LLM-powered code generation,
+    bug fixing, test writing, and code review.
     """
 
     name = "coder"
@@ -36,73 +94,29 @@ class CoderAgent(BaseAgent):
     heartbeat_tasks = ["check_code_quality", "scan_dependencies"]
     capabilities = ["code_generation", "bug_fixing", "test_generation", "refactoring"]
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._language_defaults = {
-            "python": {"indent": "    ", "eol": "\n"},
-            "javascript": {"indent": "  ", "eol": "\n"},
-            "typescript": {"indent": "  ", "eol": "\n"},
-        }
-
     async def _invoke_impl(
         self,
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle coding tasks."""
-        task_lower = task.lower()
-
-        if "generate" in task_lower or "write" in task_lower:
-            return await self._generate_code(task, context)
-        elif "fix" in task_lower or "bug" in task_lower:
-            return await self._fix_bug(task, context)
-        elif "test" in task_lower:
-            return await self._write_tests(task, context)
-        else:
-            return await self._generate_code(task, context)
-
-    async def _generate_code(
-        self,
-        task: str,
-        context: Optional[AgentContext],
-    ) -> AgentResult:
-        """Generate code based on task."""
-        # Simplified - real implementation would use LLM
-        code = f"# Generated code for: {task}\nprint('Hello, World!')"
-        return AgentResult(success=True, output={"code": code, "language": "python"})
-
-    async def _fix_bug(
-        self,
-        task: str,
-        context: Optional[AgentContext],
-    ) -> AgentResult:
-        """Fix a bug based on description."""
-        return AgentResult(
-            success=True,
-            output={"fix": f"# Bug fix for: {task}", "status": "applied"},
+        """Handle coding tasks via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
-
-    async def _write_tests(
-        self,
-        task: str,
-        context: Optional[AgentContext],
-    ) -> AgentResult:
-        """Write tests for given code."""
-        return AgentResult(
-            success=True,
-            output={"tests": f"# Tests for: {task}", "framework": "pytest"},
-        )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class ReviewerAgent(BaseAgent):
     """
     Code review agent.
 
-    Capabilities:
-    - Review code quality
-    - Check style compliance
-    - Identify security issues
-    - Suggest improvements
+    Delegates to SkillToolkit for real LLM-powered code review,
+    style compliance, security scanning, and quality assurance.
     """
 
     name = "reviewer"
@@ -117,27 +131,24 @@ class ReviewerAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Review code."""
-        return AgentResult(
-            success=True,
-            output={
-                "review": {
-                    "issues": [],
-                    "score": 9.5,
-                    "summary": f"Code review for: {task}",
-                }
-            },
+        """Review code via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class MemoryAgent(BaseAgent):
     """
     Memory management agent.
 
-    Capabilities:
-    - Consolidate memories
-    - Search memories
-    - Manage L1/L2/L3 tiers
+    Delegates to SkillToolkit for memory consolidation,
+    search, and L1/L2/L3 tier management.
     """
 
     name = "memory"
@@ -160,53 +171,41 @@ class MemoryAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle memory tasks."""
+        """Handle memory tasks via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
         task_lower = task.lower()
 
-        if "consolidate" in task_lower:
-            return await self._consolidate()
-        elif "search" in task_lower:
-            return await self._search(task)
-        elif "stats" in task_lower or "status" in task_lower:
-            return await self._get_stats()
-        else:
-            return await self._consolidate()
+        # First try SkillToolkit for LLM-powered memory operations
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
+        )
+        if "error" not in result_data:
+            return AgentResult(success=True, output=result_data)
 
-    async def _consolidate(self) -> AgentResult:
-        """Consolidate memories across tiers."""
-        if not self._memory_manager:
-            return AgentResult(success=False, output=None, error="Memory manager not set")
+        # Fallback to memory_manager for direct tier operations
+        if self._memory_manager is not None:
+            if "consolidate" in task_lower:
+                stats = await self._memory_manager.consolidate()
+                return AgentResult(success=True, output={"stats": stats})
+            elif "search" in task_lower:
+                query = task.replace("search", "").strip()
+                results = await self._memory_manager.l2_search(query)
+                return AgentResult(success=True, output={"results": results, "query": query})
+            elif "stats" in task_lower or "status" in task_lower:
+                stats = await self._memory_manager.get_stats()
+                return AgentResult(success=True, output=stats)
 
-        stats = await self._memory_manager.consolidate()
-        return AgentResult(success=True, output={"stats": stats})
-
-    async def _search(self, task: str) -> AgentResult:
-        """Search memories."""
-        if not self._memory_manager:
-            return AgentResult(success=False, output=None, error="Memory manager not set")
-
-        # Extract query from task
-        query = task.replace("search", "").strip()
-        results = await self._memory_manager.l2_search(query)
-        return AgentResult(success=True, output={"results": results, "query": query})
-
-    async def _get_stats(self) -> AgentResult:
-        """Get memory statistics."""
-        if not self._memory_manager:
-            return AgentResult(success=False, output=None, error="Memory manager not set")
-
-        stats = await self._memory_manager.get_stats()
-        return AgentResult(success=True, output=stats)
+        return AgentResult(success=False, output=None, error=result_data.get("error", "Memory manager not available"))
 
 
 class MonitorAgent(BaseAgent):
     """
     System monitoring agent.
 
-    Capabilities:
-    - Check system health
-    - Report metrics
-    - Detect anomalies
+    Delegates to SkillToolkit for health checks, metrics,
+    and anomaly detection.
     """
 
     name = "monitor"
@@ -221,29 +220,24 @@ class MonitorAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Monitor system."""
-        return AgentResult(
-            success=True,
-            output={
-                "status": "healthy",
-                "metrics": {
-                    "cpu": 45.2,
-                    "memory": 62.1,
-                    "disk": 38.5,
-                },
-                "timestamp": datetime.utcnow().isoformat(),
-            },
+        """Monitor system via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class SchedulerAgent(BaseAgent):
     """
     Task scheduling agent.
 
-    Capabilities:
-    - Schedule tasks
-    - Trigger scheduled runs
-    - Manage cron expressions
+    Delegates to SkillToolkit for scheduling decisions,
+    cron management, and task trigger logic.
     """
 
     name = "scheduler"
@@ -258,25 +252,24 @@ class SchedulerAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle scheduling tasks."""
-        return AgentResult(
-            success=True,
-            output={
-                "scheduled": True,
-                "task": task,
-                "next_run": datetime.utcnow().isoformat(),
-            },
+        """Handle scheduling via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class SecurityAgent(BaseAgent):
     """
     Security scanning agent.
 
-    Capabilities:
-    - Scan for vulnerabilities
-    - Check access logs
-    - Security compliance
+    Delegates to SkillToolkit for vulnerability scanning,
+    access log analysis, and security compliance checks.
     """
 
     name = "security"
@@ -291,25 +284,24 @@ class SecurityAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Perform security scan."""
-        return AgentResult(
-            success=True,
-            output={
-                "scan_type": "vulnerability",
-                "vulnerabilities_found": 0,
-                "severity": "none",
-            },
+        """Perform security scan via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class ReporterAgent(BaseAgent):
     """
     Report generation agent.
 
-    Capabilities:
-    - Generate status reports
-    - Create summaries
-    - Format output
+    Delegates to SkillToolkit for status report generation,
+    summarization, and formatted output.
     """
 
     name = "reporter"
@@ -324,26 +316,24 @@ class ReporterAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Generate report."""
-        return AgentResult(
-            success=True,
-            output={
-                "report": f"Report for: {task}",
-                "format": "markdown",
-                "sections": ["summary", "details", "recommendations"],
-            },
+        """Generate report via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class ResearchAgent(BaseAgent):
     """
     Research agent for information gathering.
 
-    Capabilities:
-    - Web research
-    - Fact checking
-    - Data collection
-    - Source verification
+    Delegates to SkillToolkit for web research, fact checking,
+    data collection, and source verification.
     """
 
     name = "research"
@@ -358,27 +348,24 @@ class ResearchAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Perform research."""
-        return AgentResult(
-            success=True,
-            output={
-                "query": task,
-                "results": [],
-                "sources": [],
-                "summary": f"Research completed for: {task}",
-            },
+        """Perform research via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class SearchAgent(BaseAgent):
     """
     Search agent for web and internal search.
 
-    Capabilities:
-    - Web search
-    - Internal search
-    - Index management
-    - Result ranking
+    Delegates to SkillToolkit for search operations,
+    index management, and result ranking.
     """
 
     name = "search"
@@ -393,26 +380,24 @@ class SearchAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Perform search."""
-        return AgentResult(
-            success=True,
-            output={
-                "query": task,
-                "results": [],
-                "total_found": 0,
-            },
+        """Perform search via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class AnalyticsAgent(BaseAgent):
     """
     Analytics agent for data analysis.
 
-    Capabilities:
-    - Data aggregation
-    - Trend analysis
-    - Statistics
-    - Visualization data
+    Delegates to SkillToolkit for data aggregation,
+    trend analysis, statistics, and visualization.
     """
 
     name = "analytics"
@@ -427,25 +412,24 @@ class AnalyticsAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Analyze data."""
-        return AgentResult(
-            success=True,
-            output={
-                "analysis": f"Analysis for: {task}",
-                "metrics": {"count": 0, "avg": 0.0, "trend": "stable"},
-            },
+        """Analyze data via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class EmailAgent(BaseAgent):
     """
     Email processing agent.
 
-    Capabilities:
-    - Send emails
-    - Read emails
-    - Email filtering
-    - Auto-responses
+    Delegates to SkillToolkit for email composition,
+    filtering, and auto-response generation.
     """
 
     name = "email"
@@ -460,26 +444,24 @@ class EmailAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Process email task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "email_sent" if "send" in task.lower() else "processed",
-                "to": "user@example.com",
-                "subject": task[:50],
-            },
+        """Process email task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class CalendarAgent(BaseAgent):
     """
     Calendar management agent.
 
-    Capabilities:
-    - Schedule events
-    - Check availability
-    - Send reminders
-    - Calendar sync
+    Delegates to SkillToolkit for event scheduling,
+    availability checking, and reminder generation.
     """
 
     name = "calendar"
@@ -494,26 +476,24 @@ class CalendarAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle calendar task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "event_scheduled",
-                "event": task,
-                "time": datetime.utcnow().isoformat(),
-            },
+        """Handle calendar task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class FileAgent(BaseAgent):
     """
     File management agent.
 
-    Capabilities:
-    - File operations
-    - Directory management
-    - File search
-    - Content indexing
+    Delegates to SkillToolkit for file operations,
+    directory management, and content organization.
     """
 
     name = "file"
@@ -528,26 +508,24 @@ class FileAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle file task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "file_operation",
-                "task": task,
-                "files_affected": 0,
-            },
+        """Handle file task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class ShellAgent(BaseAgent):
     """
     Shell command execution agent.
 
-    Capabilities:
-    - Run commands
-    - Script execution
-    - Output parsing
-    - Error handling
+    Delegates to SkillToolkit for command generation,
+    script creation, and output parsing.
     """
 
     name = "shell"
@@ -562,27 +540,24 @@ class ShellAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Execute shell command."""
-        return AgentResult(
-            success=True,
-            output={
-                "command": task,
-                "exit_code": 0,
-                "stdout": "",
-                "stderr": "",
-            },
+        """Execute shell task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class BrowserAgent(BaseAgent):
     """
     Browser automation agent.
 
-    Capabilities:
-    - Web navigation
-    - Form filling
-    - Screenshot capture
-    - Web scraping
+    Delegates to SkillToolkit for web navigation,
+    form filling, and screenshot analysis.
     """
 
     name = "browser"
@@ -597,26 +572,24 @@ class BrowserAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle browser task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "browser_navigated",
-                "url": "https://example.com",
-                "screenshot": None,
-            },
+        """Handle browser task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class APIAgent(BaseAgent):
     """
     API management agent.
 
-    Capabilities:
-    - API calls
-    - Response parsing
-    - Rate limiting
-    - API documentation
+    Delegates to SkillToolkit for API call generation,
+    response parsing, and documentation.
     """
 
     name = "api"
@@ -631,26 +604,24 @@ class APIAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle API task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "api_called",
-                "endpoint": task,
-                "status_code": 200,
-            },
+        """Handle API task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class DatabaseAgent(BaseAgent):
     """
     Database operations agent.
 
-    Capabilities:
-    - Query execution
-    - Schema management
-    - Data backup
-    - Performance monitoring
+    Delegates to SkillToolkit for query generation,
+    schema analysis, and backup planning.
     """
 
     name = "database"
@@ -665,25 +636,24 @@ class DatabaseAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle database task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "query_executed",
-                "rows_affected": 0,
-            },
+        """Handle database task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class TestAgent(BaseAgent):
     """
     Test generation and execution agent.
 
-    Capabilities:
-    - Unit test generation
-    - Integration tests
-    - Test execution
-    - Coverage reporting
+    Delegates to SkillToolkit for unit test generation,
+    integration test creation, and coverage analysis.
     """
 
     name = "test"
@@ -698,27 +668,24 @@ class TestAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle test task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "tests_generated",
-                "test_count": 0,
-                "passed": 0,
-                "failed": 0,
-            },
+        """Handle test task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class DebugAgent(BaseAgent):
     """
     Debugging and troubleshooting agent.
 
-    Capabilities:
-    - Error analysis
-    - Stack trace parsing
-    - Log analysis
-    - Issue diagnosis
+    Delegates to SkillToolkit for error analysis,
+    stack trace parsing, and issue diagnosis.
     """
 
     name = "debug"
@@ -733,26 +700,24 @@ class DebugAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle debug task."""
-        return AgentResult(
-            success=True,
-            output={
-                "analysis": f"Debug analysis for: {task}",
-                "issues_found": [],
-                "recommendations": [],
-            },
+        """Handle debug task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class DocAgent(BaseAgent):
     """
     Documentation generation agent.
 
-    Capabilities:
-    - API documentation
-    - README generation
-    - Code documentation
-    - Doc formatting
+    Delegates to SkillToolkit for API documentation,
+    README generation, and code documentation.
     """
 
     name = "doc"
@@ -767,26 +732,24 @@ class DocAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle documentation task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "docs_generated",
-                "format": "markdown",
-                "file": f"docs/{task}.md",
-            },
+        """Handle documentation task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class BackupAgent(BaseAgent):
     """
     Backup management agent.
 
-    Capabilities:
-    - Backup execution
-    - Restore operations
-    - Backup verification
-    - Schedule management
+    Delegates to SkillToolkit for backup strategy,
+    restore planning, and verification.
     """
 
     name = "backup"
@@ -801,26 +764,24 @@ class BackupAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle backup task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "backup_completed",
-                "backup_size": "0MB",
-                "files_backed_up": 0,
-            },
+        """Handle backup task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class AlertAgent(BaseAgent):
     """
     Alert management agent.
 
-    Capabilities:
-    - Alert generation
-    - Alert routing
-    - Escalation
-    - Notification management
+    Delegates to SkillToolkit for alert generation,
+    routing logic, and escalation decisions.
     """
 
     name = "alert"
@@ -835,26 +796,24 @@ class AlertAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle alert task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "alert_sent",
-                "severity": "info",
-                "message": task,
-            },
+        """Handle alert task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 class WorkflowAgent(BaseAgent):
     """
     Workflow orchestration agent.
 
-    Capabilities:
-    - Workflow execution
-    - Task dependencies
-    - State management
-    - Parallel execution
+    Delegates to SkillToolkit for workflow execution,
+    task dependency analysis, and state management.
     """
 
     name = "workflow"
@@ -869,15 +828,16 @@ class WorkflowAgent(BaseAgent):
         task: str,
         context: Optional[AgentContext] = None,
     ) -> AgentResult:
-        """Handle workflow task."""
-        return AgentResult(
-            success=True,
-            output={
-                "action": "workflow_started",
-                "workflow": task,
-                "status": "running",
-            },
+        """Handle workflow task via SkillToolkit."""
+        session_id = context.session_id if context else "agent"
+        result_data = await _run_via_skilltool_async(
+            skill_hint=self.name,
+            instruction=task,
+            session_id=session_id,
         )
+        if "error" in result_data:
+            return AgentResult(success=False, output=None, error=result_data["error"])
+        return AgentResult(success=True, output=result_data)
 
 
 # Registry of all available agents (22 agents)

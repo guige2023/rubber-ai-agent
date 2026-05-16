@@ -19,8 +19,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_runtime_instance: "RabAiAgentRuntime | None" = None
+
+
 class RabAiAgentRuntime:
     """Composition root for the RabAiAgent local sidecar runtime."""
+
+    @classmethod
+    def get_instance(cls) -> "RabAiAgentRuntime | None":
+        """Get the global runtime instance if one has been created."""
+        return _runtime_instance
+
+    @classmethod
+    def set_instance(cls, instance: "RabAiAgentRuntime") -> None:
+        """Set the global runtime instance (called by the application entry point)."""
+        global _runtime_instance
+        _runtime_instance = instance
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -29,6 +43,8 @@ class RabAiAgentRuntime:
         init_db()
         settings.seed_runtime_defaults()
         self._init_managers(settings)
+        # Register this instance as the global singleton
+        RabAiAgentRuntime.set_instance(self)
 
     def _init_managers(self, settings: Settings) -> None:
         from app.core.agent_manager import AgentManager

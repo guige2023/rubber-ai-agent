@@ -287,14 +287,8 @@ class TestStepRunner:
 
     @pytest.mark.asyncio
     async def test_run_step_agent_cluster(self, step_runner, mock_cluster_manager):
-        """Step with a regular agent_name → cluster.invoke()"""
-        from app.core.agent_cluster.base import AgentResult
-
-        mock_cluster_manager.invoke.return_value = AgentResult(
-            success=True,
-            output={"code": "x = 1"},
-            duration_ms=100,
-        )
+        """Step with a regular agent_name → cluster.invoke_skill_toolkit()"""
+        mock_cluster_manager.invoke_skill_toolkit = AsyncMock(return_value={"code": "x = 1"})
 
         step = TaskStep(
             step_id="s1",
@@ -307,19 +301,14 @@ class TestStepRunner:
         assert result.success is True
         # run_step no longer modifies step.status — status is set by engine
         assert step.status == StepStatus.PENDING
-        # _run_agent_step returns result.output directly (AgentResult.output)
+        # _run_agent_via_skilltool returns the dict directly
         assert result.output["code"] == "x = 1"
-        mock_cluster_manager.invoke.assert_called_once()
+        mock_cluster_manager.invoke_skill_toolkit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_run_step_uses_context_in_instruction(self, step_runner, mock_cluster_manager):
-        """$variable substitution in instruction"""
-        from app.core.agent_cluster.base import AgentResult
-
-        mock_cluster_manager.invoke.return_value = AgentResult(
-            success=True,
-            output={},
-        )
+        """$variable substitution in instruction before calling SkillToolkit"""
+        mock_cluster_manager.invoke_skill_toolkit = AsyncMock(return_value={})
 
         step = TaskStep(
             step_id="s1",
@@ -330,9 +319,10 @@ class TestStepRunner:
 
         await step_runner.run_step(step, shared_ctx, "test-session")
 
-        # The instruction passed to invoke should have $language substituted
-        call_args = mock_cluster_manager.invoke.call_args
-        assert "write Python code" in call_args.kwargs["task"] or "write Python code" in call_args[1]["task"]
+        # The instruction passed to invoke_skill_toolkit should have $language substituted
+        call_args = mock_cluster_manager.invoke_skill_toolkit.call_args
+        instruction_passed = call_args.kwargs.get("instruction") or call_args[1].get("instruction")
+        assert instruction_passed == "write Python code"
 
 
 # =============================================================================

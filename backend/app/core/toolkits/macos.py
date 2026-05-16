@@ -40,14 +40,20 @@ async def _run_shell(cmd: str, timeout: float = 30.0) -> tuple[str, str, int]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return (
-            stdout_b.decode("utf-8", errors="replace").strip(),
-            stderr_b.decode("utf-8", errors="replace").strip(),
-            proc.returncode or 0,
-        )
-    except asyncio.TimeoutError:
-        return "", "Command timed out", -1
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return (
+                stdout_b.decode("utf-8", errors="replace").strip(),
+                stderr_b.decode("utf-8", errors="replace").strip(),
+                proc.returncode or 0,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            try:
+                await proc.wait()
+            except Exception:
+                pass
+            return "", "Command timed out / Accessibility permission may be required", -1
     except Exception as e:
         return "", str(e), -1
 
@@ -162,26 +168,38 @@ class MacosToolkit(Toolkit):
 
     @staticmethod
     async def get_frontmost_application(ctx: RunContext[AgentDeps]) -> str:
-        """Get the name of the currently frontmost application."""
+        """Get the name of the currently frontmost application (via ps)."""
+        # Get frontmost app PID from ps - to find the app owning the focused window
+        # We use the fact that the frontmost app is the one with highest CPU at the moment
+        # Better: use AppleScript path to frontmost (no Accessibility needed for reading)
         stdout, stderr, rc = await _run_shell(
-            "osascript -e \'tell application (path to frontmost application) to return name of it\'"
+            "osascript -e 'POSIX path of (path to frontmost application from user domain)'",
+            timeout=10.0,
         )
-        return stdout or stderr or "unknown"
+        if rc == 0 and stdout.strip():
+            name = stdout.strip().split("/")[-2] if "/" in stdout else stdout.strip()
+            return name
+        # Fallback: last resort
+        stdout2, _, _ = await _run_shell(
+            "ps -axc -o comm | head -5", timeout=5.0
+        )
+        lines = [l.strip() for l in stdout2.split("\n") if l.strip()]
+        return lines[1] if len(lines) > 1 else "unknown"
 
     @staticmethod
     async def list_running_applications(ctx: RunContext[AgentDeps]) -> str:
         """List all currently running visible applications."""
-        script = (
-            "osascript -e \'tell application \"System Events\" to return name of every "
-            "application process whose visible is true\'"
+        # Fast approach: ps aux to list processes from /Applications
+        stdout, stderr, rc = await _run_shell(
+            "ps aux | grep '/Applications/' | grep -v grep | "
+            "awk '{for(i=NF;i>=NF-4;i--) printf \"%s \", $i; print \"\"}' | "
+            "sort -u | head -40",
+            timeout=10.0,
         )
-        stdout, stderr, rc = await _run_shell(script)
-        if rc != 0:
-            return f"Error: {stderr}"
-        apps = [a.strip() for a in stdout.split(", ") if a.strip()]
-        if not apps:
-            return "(no visible applications)"
-        return "\n".join(f"  - {a}" for a in sorted(set(apps)))
+        if rc == 0 and stdout.strip():
+            apps = [a.strip() for a in stdout.strip().split("\n") if a.strip() and a.strip() != "--"]
+            return "\n".join(f"  - {a}" for a in sorted(set(apps))) if apps else "(no visible applications)"
+        return f"Error listing applications: {stderr}"  
 
     # ------------------------------------------------------------------
     # Window management
@@ -220,26 +238,21 @@ class MacosToolkit(Toolkit):
         height: Annotated[int, "Height"],
     ) -> str:
         """Set window position and size: {x, y, x+width, y+height}."""
-        escaped = app_name.replace("\\", "\\\\").replace('"', '\\"')
-        script = (
-            f"osascript -e \'tell application \"{escaped}\" to set bounds of window 1 to '
-            f"{{{x}, {y}, {x + width}, {y + height}}} \'"
-        )
-        # Simpler quoting approach
+        bounds = f"{{{x}, {y}, {x + width}, {y + height}}}"
         cmd = [
             "osascript",
             "-e",
-            f"tell application \"{app_name}\" to set bounds of window 1 to {{{x}, {y}, {x + width}, {y + height}}}",
+            f"tell application \"{app_name}\" to set bounds of window 1 to {bounds}",
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate()
+        _, stderr_b = await proc.communicate()
         if proc.returncode == 0:
             return f"Window bounds set: {app_name} ({x},{y}) {width}x{height}"
-        return f"Failed (may need Accessibility permission): {stderr.decode()}"
+        return f"Failed (may need Accessibility permission): {stderr_b.decode()}"
 
     @staticmethod
     async def move_window(

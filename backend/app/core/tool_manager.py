@@ -25,6 +25,7 @@ from app.core.toolkits.hermes.browser_toolkit import BrowserToolkit
 from app.core.toolkits.image import ImageToolkit
 from app.core.toolkits.pricing import PricingToolkit
 from app.core.toolkits.skill import SkillToolkit
+from app.core.toolkits.macos import MacosToolkit
 from app.core.toolkits.system import SystemToolkit
 from app.core.toolkits.task import TaskToolkit
 from app.core.toolkits.time import TimeToolkit
@@ -40,6 +41,7 @@ DEFAULT_TOOLKITS: tuple[type[Toolkit], ...] = (
     SystemToolkit,  # Full system access - OpenCLAW style
     FileToolkit,
     BrowserToolkit,  # Browser automation + computer use (CUA)
+    MacosToolkit,  # Native macOS desktop control (keyboard/mouse/window/screenshot)
     WebToolkit,
     TaskToolkit,
     TimeToolkit,

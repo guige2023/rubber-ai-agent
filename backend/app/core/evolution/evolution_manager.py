@@ -240,20 +240,30 @@ Please:
 Focus on skills that capture reusable patterns, not one-off responses.
 """
 
-    def _on_review_task(self, task: ReviewTask) -> tuple[str, str]:
+    async def _on_review_task(self, task: ReviewTask) -> tuple[str, str]:
         """
-        Handle a background review task.
+        Handle a background review task (async-safe).
 
         Returns:
             (result, error)
         """
+        import inspect
+
         try:
             if self._evolution_handler:
-                result = self._evolution_handler(
-                    task.task_type,
-                    task.prompt,
-                    getattr(task, "context", {}),
-                )
+                handler = self._evolution_handler
+                if inspect.iscoroutinefunction(handler):
+                    result = await handler(
+                        task.task_type,
+                        task.prompt,
+                        getattr(task, "context", {}),
+                    )
+                else:
+                    result = handler(
+                        task.task_type,
+                        task.prompt,
+                        getattr(task, "context", {}),
+                    )
                 return result, ""
 
             # Default handling: process skill_review tasks to create/update skills

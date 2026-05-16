@@ -14,6 +14,10 @@ from app.core.runtime import RabAiAgentRuntime
 from app.rpc.registry import register_rpc_methods
 from app.rpc.sessions import reconcile_stale_pending_runs_on_startup
 from app.rpc.websocket import register_websocket
+from app.rpc.health import router as health_router
+
+# P1-SEC-3: Patch logging config to inject redaction
+from app.core.security.log_redactor import patch_dict_config_logging
 
 logger = logging.getLogger(__name__)
 
@@ -244,45 +248,137 @@ async def _create_gateway_agent_handler(fastapi_app: FastAPI):
     """
     Create the agent handler for the Gateway.
 
-    This bridges the Gateway to the RabAiAgent runtime's agent.
+    This bridges the Gateway to the RabAiAgent runtime's agent system.
+    P0-API-3: Real implementation that runs messages through the agent pipeline.
     """
     from app.gateway import GatewayRouter, AgentResponse, SessionContext
+    import uuid
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     async def handle(session_ctx: SessionContext) -> AgentResponse:
         runtime = fastapi_app.state.runtime
-
-        # Process through the existing agent system
-        # This is a simplified bridge - full implementation would
-        # need to map SessionContext to the agent's session management
         content = session_ctx.content or ""
+        session_key = session_ctx.session_key
 
-        # Placeholder: In full implementation, this would:
-        # 1. Look up or create a session in session_manager
-        # 2. Run the agent with the message
-        # 3. Return the response
+        if not content:
+            return AgentResponse(
+                session_key=session_key,
+                content="No content provided.",
+            )
 
-        return AgentResponse(
-            session_key=session_ctx.session_key,
-            content=f"Gateway received: {content[:100]}...",
-        )
+        try:
+            # Map platform session_key to a RabAi session_id
+            # Use the session_key as the session_id (shortuuid format)
+            import hashlib
+            session_id = hashlib.sha256(session_key.encode()).hexdigest()[:22]
+
+            # Ensure the session exists in session_manager
+            runtime.session_manager.ensure_session(
+                session_id=session_id,
+                metadata={
+                    "platform": session_ctx.platform,
+                    "session_key": session_key,
+                },
+            )
+
+            # Generate a unique run_id
+            run_id = str(uuid.uuid4())
+
+            # Create agent deps
+            deps = runtime.create_agent_deps(
+                session_id=session_id,
+                run_id=run_id,
+            )
+
+            # Run the master agent (this is the real agent pipeline)
+            result = await runtime.agent_manager.run_master_agent(
+                instruction=content,
+                session_id=session_id,
+                run_id=run_id,
+                deps=deps,
+            )
+
+            # Extract text response from result
+            response_content = ""
+            if isinstance(result, dict):
+                response_content = result.get("content", "")
+                if isinstance(response_content, list):
+                    # Handle result parts
+                    parts_text = []
+                    for part in response_content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            parts_text.append(part.get("content", ""))
+                    response_content = "\n".join(parts_text)
+                elif not isinstance(response_content, str):
+                    response_content = str(response_content)
+            elif isinstance(result, str):
+                response_content = result
+
+            if not response_content:
+                response_content = "Agent completed without output."
+
+            logger.info({
+                "message": {
+                    "event": "gateway_agent_run",
+                    "session_key": session_key,
+                    "session_id": session_id,
+                    "response_length": len(response_content),
+                }
+            })
+
+            return AgentResponse(
+                session_key=session_key,
+                content=response_content,
+            )
+
+        except Exception as e:
+            logger.exception(f"Gateway agent error for {session_key}: {e}")
+            return AgentResponse(
+                session_key=session_key,
+                content=f"Error processing request: {str(e)}",
+            )
 
     return handle
 
 
 register_rpc_methods()
 
-app = FastAPI(title="RabAiAgent Sidecar", lifespan=lifespan)
+app = FastAPI(title="RabAiAgent Sidecar", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CorrelationIdMiddleware, update_request_header=True)  # type:ignore
 register_websocket(app)
 
-# Register Feishu webhook router
-from app.rpc.feishu import router as feishu_router
-app.include_router(feishu_router)
+# P1-DEVOPS-2 + P1-MON-1: Health check endpoints (no /api/v1 prefix for k8s probes)
+app.include_router(health_router)
 
-# Register trigger router
+# Register REST API routers under /api/v1 prefix (P0-API-1)
+from fastapi import APIRouter
+
+# Feishu REST endpoints
+from app.rpc.feishu import router as feishu_router
+feishu_v1_router = APIRouter(prefix="/api/v1")
+feishu_v1_router.include_router(feishu_router)
+app.include_router(feishu_v1_router)
+
+# Trigger REST endpoints
 from app.rpc.trigger import router as trigger_router, webhook_router as trigger_webhook_router
-app.include_router(trigger_router)
-app.include_router(trigger_webhook_router)
+trigger_v1_router = APIRouter(prefix="/api/v1")
+trigger_v1_router.include_router(trigger_router)
+trigger_v1_router.include_router(trigger_webhook_router)
+app.include_router(trigger_v1_router)
+
+# Legacy routes (without /api/v1 prefix) — DEPRECATED, mapped for backwards compat
+# These will be removed in a future version
+app.include_router(feishu_router)  # /feishu/* (no /api/v1)
+app.include_router(trigger_router)  # /triggers/* (no /api/v1)
+app.include_router(trigger_webhook_router)  # /webhooks/* (no /api/v1)
+
+# P1-SEC-3: Inject log redaction into existing handlers (after all routers registered)
+try:
+    patch_dict_config_logging()
+except Exception:
+    pass  # Non-fatal, logging may not be configured yet
 
 
 if __name__ == "__main__":

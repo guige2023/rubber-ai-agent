@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import sys
+import threading
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,6 +42,9 @@ COMPACTION_TAIL_TOKENS_DEFAULT = 20000
 TOKEN_ESTIMATE_ENCODING = "o200k_base"
 O200K_BASE_CACHE_KEY = "fb374d419588a4632f3f557e76b4b70aebbca790"
 
+# Thread lock for token encoder - tiktoken encode() is not guaranteed thread-safe
+_ENCODER_LOCK = threading.Lock()
+
 
 def _utc_text(value: datetime) -> str:
     if value.tzinfo is None:
@@ -61,6 +66,13 @@ def _get_token_encoder():
     import tiktoken
 
     return tiktoken.get_encoding(TOKEN_ESTIMATE_ENCODING)
+
+
+def _encode_text(text: str) -> list[int]:
+    """Thread-safe text encoding using a lock."""
+    encoder = _get_token_encoder()
+    with _ENCODER_LOCK:
+        return encoder.encode(text)
 
 
 def _local_tiktoken_cache_dir() -> Path:
@@ -101,7 +113,7 @@ class ContextManager:
             return 0
 
         try:
-            return len(_get_token_encoder().encode(text))
+            return len(_encode_text(text))
         except Exception as e:
             logger.warning(f"failed to tokenize text:{text} with exception:{e}")
             return max(1, (len(text) + 3) // 4)
@@ -247,7 +259,10 @@ class ContextManager:
         )
 
     def get_session_messages(self, session_id: str) -> list[ModelMessage]:
-        """Load session context as system prompt + compaction summary + tail messages."""
+        """Load session context as system prompt + compaction summary + tail messages.
+        
+        Uses a single DB session to avoid opening two connections.
+        """
         history: list[ModelMessage] = [
             ModelRequest(parts=[SystemPromptPart(content=self._build_system_prompt(session_id))])
         ]
@@ -261,6 +276,7 @@ class ContextManager:
                         ModelResponse(parts=[TextPart(content=self.build_compaction_reference(summary))])
                     )
 
+            # Pass db_session to avoid opening a second connection
             db_messages = self.load_compactable_messages(db_session, session_id, cutoff_created_at)
             for msg in db_messages:
                 if msg.role == "user":
@@ -270,6 +286,10 @@ class ContextManager:
             return history
 
     async def maybe_compact_session(self, session_id: str) -> None:
+        """Compact session history to stay within token limits.
+        
+        The LLM call runs in a thread pool to avoid blocking the event loop.
+        """
         threshold = int(
             self._settings.get("system.llm.compaction_threshold_tokens", COMPACTION_THRESHOLD_TOKENS_DEFAULT)
         )
@@ -325,7 +345,9 @@ class ContextManager:
             db_session.commit()
 
         try:
-            compaction_result = await self.get_compaction_agent().run(summary_input)
+            # Run LLM compaction in thread pool to avoid blocking the event loop
+            # Using loop.run_in_executor for Python 3.14 compatibility
+            compaction_result = await self._run_compaction_in_executor(summary_input)
             compacted_summary = str(compaction_result.output).strip()
             if not compacted_summary:
                 logger.warning(f"Session compaction produced an empty summary for session {session_id}")
@@ -365,3 +387,14 @@ class ContextManager:
                 db_session.commit()
         except Exception as e:
             logger.warning(f"Session compaction skipped for session {session_id}: {e}")
+
+    async def _run_compaction_in_executor(self, summary_input: str):
+        """Run compaction LLM call in a thread pool to avoid blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        compaction_agent = self.get_compaction_agent()
+
+        def _run() -> object:
+            # Use asyncio.run() in the thread since we don't have a running loop there
+            return asyncio.run(compaction_agent.run(summary_input))
+
+        return await loop.run_in_executor(None, _run)

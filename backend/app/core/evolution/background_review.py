@@ -55,11 +55,13 @@ class BackgroundReviewer:
         handler: Callable[[ReviewTask], tuple[str, str]],
     ) -> None:
         """
-        Set the handler that executes review tasks.
+        Set the handler that executes review tasks (sync or async).
 
         The handler receives a ReviewTask and returns (result, error).
 
-        The handler should use the memory and skill tools to perform reviews.
+        Supports both sync and async callables:
+          - sync: Callable[[ReviewTask], tuple[str, str]]
+          - async: Callable[[ReviewTask], Awaitable[tuple[str, str]]]
         """
         self._review_handler = handler
 
@@ -114,6 +116,8 @@ class BackgroundReviewer:
 
     async def _execute_review(self, task: ReviewTask) -> None:
         """Execute a review task."""
+        import inspect
+
         task.started_at = datetime.utcnow()
 
         async with self._lock:
@@ -123,12 +127,16 @@ class BackgroundReviewer:
 
         try:
             if self._review_handler:
-                result, error = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._review_handler(task),
-                )
-                task.result = result
-                task.error = error
+                handler = self._review_handler
+                if inspect.iscoroutinefunction(handler):
+                    # Async handler — await in the worker
+                    task.result, task.error = await handler(task)
+                else:
+                    # Sync handler — run in executor to avoid blocking the event loop
+                    task.result, task.error = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: handler(task),
+                    )
             else:
                 # No handler set - simulate review
                 await asyncio.sleep(1)  # Simulate work

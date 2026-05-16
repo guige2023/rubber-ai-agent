@@ -441,15 +441,20 @@ def auto_migrate_schema():
                     raise e
 
 def init_db():
-    """Create tables if they don't exist and migrate schema."""
+    """Create tables if they don't exist and run migrations."""
     SQLModel.metadata.create_all(engine)
     try:
+        # Run legacy one-time migrations (datetime, memory normalization, etc.)
         auto_migrate_schema()
         migrate_session_memory_json_payloads()
         migrate_datetime_columns_to_utc_storage()
         migrate_model_routing_threshold_default()
         migrate_model_routing_flash_default()
         migrate_remove_doubao_provider_config()
+
+        # Run formal versioned migrations (P0-DB-2)
+        from app.core.migrations import run_migrations
+        run_migrations()
     except Exception as e:
         logger.exception("🚨 DB Initialization Error")
         # Re-raise to prevent the app from starting in a broken state

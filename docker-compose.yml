@@ -1,0 +1,88 @@
+# ============================================================
+# RabAiAgent - Docker Compose (Development + Production)
+# ============================================================
+
+services:
+  # ── Backend API ──────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rabaiagent-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Required
+      - RABAIAGENT_BEARER_TOKEN=${RABAIAGENT_BEARER_TOKEN:?RABAIAGENT_BEARER_TOKEN must be set}
+      # Optional
+      - RABAIAGENT_ROOT_DIR=/app/data
+      - RABAIAGENT_LOG_LEVEL=${RABAIAGENT_LOG_LEVEL:-INFO}
+      - FEISHU_APP_ID=${FEISHU_APP_ID:-}
+      - FEISHU_APP_SECRET=${FEISHU_APP_SECRET:-}
+      - RABAIAGENT_BUNDLED_SKILLS_DIR=/app/skills
+      # Python / venv
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Persist all data (db, logs, user skills)
+      - rabaiagent-data:/app/data
+      # Bind-mount bundled skills for development
+      - ./backend/app:/app/app:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - rabai-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Redis (Cache + Session Store) ────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rabaiagent-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - rabai-net
+
+  # ── Optional: Frontend (Tauri Desktop) ───────────────────
+  # Uncomment if running frontend in container (not typical - Tauri runs locally)
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: rabaiagent-frontend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - VITE_API_URL=http://backend:8000
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - rabai-net
+
+networks:
+  rabai-net:
+    driver: bridge
+
+volumes:
+  # Named volumes survive container restarts
+  rabaiagent-data:
+    driver: local
+  redis-data:
+    driver: local

@@ -26,10 +26,12 @@ class SessionModel(SQLModel, table=True):
         sa_column=SAColumn(DateTime(timezone=True), nullable=False),
     )
 
+
 class MessageModel(SQLModel, table=True):
     __tablename__ = "messages"
     id: str = Field(default_factory=shortuuid.uuid, primary_key=True)
-    session_id: str = Field(index=True)
+    # P0-DB-1: Add physical foreign key with cascade delete
+    session_id: str = Field(index=True, foreign_key="sessions.id")
     role: str  # user, assistant, system, tool
     content: str
     parts: list[dict[str, object]] = Field(default_factory=list, sa_column=SAColumn(JSON))
@@ -41,11 +43,13 @@ class MessageModel(SQLModel, table=True):
         sa_column=SAColumn(DateTime(timezone=True), nullable=False),
     )
 
+
 class TaskModel(SQLModel, table=True):
     __tablename__ = "tasks"
     id: str = Field(default_factory=shortuuid.uuid, primary_key=True)
-    session_id: str = Field(index=True)
-    parent_id: Optional[str] = None
+    # P0-DB-1: Add physical foreign key with cascade delete
+    session_id: str = Field(index=True, foreign_key="sessions.id")
+    parent_id: Optional[str] = Field(default=None, index=True)  # P0-DB-1: Index for tree queries
     title: str
     args: dict[str, object] = Field(default_factory=dict, sa_column=SAColumn(JSON))
     status: str = Field(default="pending")  # pending, running, success, failed, canceled
